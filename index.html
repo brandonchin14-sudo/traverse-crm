@@ -350,15 +350,15 @@ const SB_URL='https://dwmpunbcwrprhhzwduyx.supabase.co';
 const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR3bXB1bmJjd3JwcmhoendkdXl4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk3NTc5MDgsImV4cCI6MjA5NTMzMzkwOH0.3Y4eUIXDWoBX7K_HgBSswMLDo4me_eDxcAw4SQVZxZM';
 const EMAIL_FN=SB_URL+'/functions/v1/send-email';
 const PHASES=[
-  {name:'Phase 1 — Quote Request',short:'Quote Request',cls:'ph1'},
-  {name:'Phase 2 — Enquire Suppliers',short:'Enquire Suppliers',cls:'ph2'},
-  {name:'Phase 3 — Client Approval',short:'Client Approval',cls:'ph3'},
-  {name:'Phase 4 — Freighting',short:'Freighting',cls:'ph4'}
+  {name:'Phase 1 &#8212; Quote Request',short:'Quote Request',cls:'ph1'},
+  {name:'Phase 2 &#8212; Enquire Suppliers',short:'Enquire Suppliers',cls:'ph2'},
+  {name:'Phase 3 &#8212; Client Approval',short:'Client Approval',cls:'ph3'},
+  {name:'Phase 4 &#8212; Freighting',short:'Freighting',cls:'ph4'}
 ];
 const DOTS=['dot-blue','dot-amber','dot-green','dot-teal'];
 let leads=[],currentLead=null,currentQuote=null,currentLineItems=[],authToken=null,currentUser=null;
 
-/* ── AUTH ── */
+/* &#9472;&#9472; AUTH &#9472;&#9472; */
 function sbH(token){return{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+(token||SB_KEY)};}
 function sb(path,opts={}){return fetch(SB_URL+'/rest/v1/'+path,{headers:sbH(authToken),...opts});}
 function sbRpc(fn,params={}){return fetch(SB_URL+'/rest/v1/rpc/'+fn,{method:'POST',headers:sbH(authToken),body:JSON.stringify(params)});}
@@ -386,8 +386,8 @@ function showApp(){
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('appScreen').style.display='block';
   document.getElementById('userEmail').textContent=currentUser?.email||'';
-  setStatus('driveDot','driveLabel',true,'Drive ✓');
-  setStatus('emailDot','emailLabel',true,'Email ✓');
+  setStatus('driveDot','driveLabel',true,'Drive &#10003;');
+  setStatus('emailDot','emailLabel',true,'Email &#10003;');
   loadLeads();
 }
 function doLogout(){
@@ -405,7 +405,7 @@ function checkSession(){
   if(t&&u){authToken=t;try{currentUser=JSON.parse(u);}catch(_){currentUser={};}showApp();}
 }
 
-/* ── TOAST / STATUS ── */
+/* &#9472;&#9472; TOAST / STATUS &#9472;&#9472; */
 function toast(msg,type='success'){
   const t=document.getElementById('toast');
   t.className='toast show '+type;
@@ -418,14 +418,14 @@ function setStatus(dId,lId,live,label){
   document.getElementById(lId).textContent=label;
 }
 
-/* ── LEADS ── */
+/* &#9472;&#9472; LEADS &#9472;&#9472; */
 async function loadLeads(){
   try{
     const r=await sb('leads?select=*&order=created_at.desc');
     if(r.status===401){doLogout();return;}
     if(!r.ok) throw new Error();
     leads=await r.json();
-    setStatus('sbDot','sbLabel',true,'DB ✓');
+    setStatus('sbDot','sbLabel',true,'DB &#10003;');
     populateClientFilter();renderBoard();
   }catch(e){setStatus('sbDot','sbLabel',false,'DB error');toast('Cannot connect to database','error');leads=[];renderBoard();}
 }
@@ -478,7 +478,7 @@ function renderBoard(){
   }).join('');
 }
 
-/* ── NEW LEAD ── */
+/* &#9472;&#9472; NEW LEAD &#9472;&#9472; */
 function openNewLead(){openNewLeadPhase(0);}
 function openNewLeadPhase(phase){
   document.getElementById('leadOverlay').classList.add('open');
@@ -502,11 +502,11 @@ function openNewLeadPhase(phase){
     <div style="display:flex;gap:20px;margin-bottom:14px">
       <label style="font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px">
         <input type="radio" name="f-type" id="f-type-wholesale" value="wholesale" checked style="accent-color:var(--accent);width:15px;height:15px">
-        <span><strong>Wholesale</strong> — for our own shops</span>
+        <span><strong>Wholesale</strong> &#8212; for our own shops</span>
       </label>
       <label style="font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px">
         <input type="radio" name="f-type" id="f-type-project" value="project" style="accent-color:var(--accent);width:15px;height:15px">
-        <span><strong>Project</strong> — client project</span>
+        <span><strong>Project</strong> &#8212; client project</span>
       </label>
     </div>
     <div style="display:flex;gap:16px;margin-bottom:16px">
@@ -540,22 +540,22 @@ async function saveLead(){
     await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:saved.id,action:'Lead created',detail:`New lead for ${comp}`})});
     closeModal('leadOverlay');
     await loadLeads();
-    toast('Lead saved ✓');
+    toast('Lead saved &#10003;');
     const lead=leads.find(l=>l.id===saved.id)||{...saved};
     if(createDrive) await createDriveFolderForLead(lead);
     if(sendEmail&&contact){
       const fn=name.split(' ')[0];
-      await sendEmailViaFunction(contact,`${name} Quote Enquiry`,`Hi ${fn},\n\nThank you for submitting a quote request with us!\n\nWe are currently checking with our suppliers and will keep you updated as soon as we receive a response.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au`,'Phase 1 — Quote acknowledgement',saved.id);
+      await sendEmailViaFunction(contact,`${name} Quote Enquiry`,`Hi ${fn},\n\nThank you for submitting a quote request with us!\n\nWe are currently checking with our suppliers and will keep you updated as soon as we receive a response.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au`,'Phase 1 &#8212; Quote acknowledgement',saved.id);
     }
   }catch(e){toast('Save failed: '+e.message,'error');btn.innerHTML='<i class="ti ti-device-floppy"></i> Save lead';btn.disabled=false;}
 }
 
-/* ── DETAIL ── */
+/* &#9472;&#9472; DETAIL &#9472;&#9472; */
 async function openDetail(id){
   currentLead=leads.find(l=>l.id===id);
   if(!currentLead) return;
   document.getElementById('detailName').textContent=currentLead.name;
-  document.getElementById('detailSub').textContent=(currentLead.company||'')+(currentLead.project?' · '+currentLead.project:'');
+  document.getElementById('detailSub').textContent=(currentLead.company||'')+(currentLead.project?' &#183; '+currentLead.project:'');
   document.getElementById('detailPhaseSelect').value=currentLead.phase;
   document.querySelectorAll('.detail-tab').forEach((t,i)=>t.classList.toggle('active',i===0));
   document.querySelectorAll('.detail-section').forEach((s,i)=>s.classList.toggle('active',i===0));
@@ -584,13 +584,13 @@ function renderDetailInfo(){
   const l=currentLead;
   document.getElementById('dtab-info').innerHTML=`
     <div class="info-grid">
-      <div class="info-item"><label>Email</label><p>${l.contact||'—'}</p></div>
-      <div class="info-item"><label>Mobile</label><p>${l.mobile||'—'}</p></div>
-      <div class="info-item"><label>Project ref</label><p>${l.project||'—'}</p></div>
-      <div class="info-item"><label>Quote status</label><p>${quoteStatusBadge(l.quote_status)||'—'}</p></div>
+      <div class="info-item"><label>Email</label><p>${l.contact||'&#8212;'}</p></div>
+      <div class="info-item"><label>Mobile</label><p>${l.mobile||'&#8212;'}</p></div>
+      <div class="info-item"><label>Project ref</label><p>${l.project||'&#8212;'}</p></div>
+      <div class="info-item"><label>Quote status</label><p>${quoteStatusBadge(l.quote_status)||'&#8212;'}</p></div>
       <div class="info-item"><label>Lead type</label><p><span style="font-size:12px;padding:3px 9px;border-radius:99px;font-weight:600;background:${l.lead_type==='project'?'var(--purple-light)':'var(--amber-light)'};color:${l.lead_type==='project'?'var(--purple)':'#633806'}">${l.lead_type==='project'?'Project':'Wholesale'}</span></p></div>
       <div class="info-item"><label>Emails sent</label><p>${l.emails_sent||0}</p></div>
-      <div class="info-item"><label>Drive folder</label><p>${l.drive_folder_id?'<span style="color:var(--green)">✓ Linked</span>':'Not created'}</p></div>
+      <div class="info-item"><label>Drive folder</label><p>${l.drive_folder_id?'<span style="color:var(--green)">&#10003; Linked</span>':'Not created'}</p></div>
     </div>
     ${l.doc_code?`<div style="margin-bottom:12px"><label class="form-label">Document code</label>
     <div style="font-size:12px;font-family:monospace;background:var(--bg-secondary);padding:8px 11px;border-radius:var(--radius-md)">${l.doc_code}</div></div>`:''}
@@ -601,7 +601,7 @@ function renderDetailInfo(){
     </div>`;
 }
 
-/* ── QUOTE TAB ── */
+/* &#9472;&#9472; QUOTE TAB &#9472;&#9472; */
 async function renderQuoteTab(){
   const el=document.getElementById('dtab-quote');
   if(currentQuote && currentQuote.status!=='draft'){
@@ -618,7 +618,7 @@ async function renderQuoteTab(){
 function renderDocumentScan(el){
   el.innerHTML=`
     <div style="margin-bottom:14px">
-      <div style="font-size:14px;font-weight:600;margin-bottom:4px">Step 1 — Upload supplier document</div>
+      <div style="font-size:14px;font-weight:600;margin-bottom:4px">Step 1 &#8212; Upload supplier document</div>
       <div style="font-size:13px;color:var(--text-secondary)">Drop a supplier quote, spec sheet, or invoice PDF/JPEG. Claude will scan it and extract line items automatically.</div>
     </div>
     <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)">
@@ -718,7 +718,7 @@ async function createDraftQuote(parsed,fileName){
     currentLineItems=await liRes.json();
   }
   await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Document scanned',detail:`${items.length} line items extracted from ${fileName}`})});
-  toast(`${items.length} items extracted ✓`);
+  toast(`${items.length} items extracted &#10003;`);
   renderPricingStep(document.getElementById('dtab-quote'));
 }
 
@@ -727,7 +727,7 @@ function renderPricingStep(el){
   el.innerHTML=`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
       <div>
-        <div style="font-size:14px;font-weight:600">Step 2 — Set your pricing</div>
+        <div style="font-size:14px;font-weight:600">Step 2 &#8212; Set your pricing</div>
         <div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Add your rate per item after speaking to suppliers and adding margin. Green fields = pricing only.</div>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
@@ -756,7 +756,7 @@ function renderPricingStep(el){
     </table>
     <button class="btn btn-sm" onclick="addLineItem()" style="margin-bottom:12px"><i class="ti ti-plus"></i> Add line item</button>
     <div class="totals-box" id="totalsBox"></div>
-    <div style="font-size:12px;color:var(--text-secondary);margin:10px 0 4px">* Rate fields highlighted green — fill these in after supplier discussions.</div>
+    <div style="font-size:12px;color:var(--text-secondary);margin:10px 0 4px">* Rate fields highlighted green &#8212; fill these in after supplier discussions.</div>
     <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end">
       <button class="btn" onclick="savePricing(false)"><i class="ti ti-device-floppy"></i> Save draft</button>
       <button class="btn btn-primary" onclick="savePricing(true)"><i class="ti ti-file-invoice"></i> Generate quote</button>
@@ -823,11 +823,11 @@ async function savePricing(andGenerate){
     currentLineItems=await lr.json();
   }
   currentQuote.client_name=clientName;currentQuote.client_address=clientAddress;currentQuote.expiry_date=expiryDate;currentQuote.subtotal=sub;currentQuote.gst_total=gst;currentQuote.total=total;
-  toast('Pricing saved ✓');
+  toast('Pricing saved &#10003;');
   if(andGenerate) showEditableQuote();
 }
 
-/* ── EDITABLE QUOTE TEMPLATE ── */
+/* &#9472;&#9472; EDITABLE QUOTE TEMPLATE &#9472;&#9472; */
 function showEditableQuote(){
   // Sync latest line items into editable state
   renderEditableQuoteModal();
@@ -837,7 +837,7 @@ function showEditableQuote(){
 function renderEditableQuoteModal(){
   const q=currentQuote;
   const today=new Date().toLocaleDateString('en-AU');
-  const expiry=q.expiry_date?new Date(q.expiry_date).toLocaleDateString('en-AU'):'—';
+  const expiry=q.expiry_date?new Date(q.expiry_date).toLocaleDateString('en-AU'):'&#8212;';
   document.getElementById('previewQuoteNum').textContent=q.quote_number;
 
   // Build editable line item rows
@@ -863,7 +863,7 @@ function renderEditableQuoteModal(){
   document.getElementById('quotePreviewContent').innerHTML=`
     <div style="background:#f0f7ff;border:0.5px solid #185FA5;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#0C447C;display:flex;align-items:center;gap:8px">
       <i class="ti ti-pencil" style="font-size:16px"></i>
-      <span><strong>Editable mode</strong> — all fields are live. Make amendments directly on the quote, then send to client when ready.</span>
+      <span><strong>Editable mode</strong> &#8212; all fields are live. Make amendments directly on the quote, then send to client when ready.</span>
     </div>
     <div class="quote-preview" style="font-family:'Times New Roman',serif">
       <div class="qp-header">
@@ -903,7 +903,7 @@ function renderEditableQuoteModal(){
           <div class="qp-totals-row total"><span>TOTAL</span><span id="eq-total" style="color:var(--accent)">A$${(q.total||0).toFixed(2)}</span></div>
         </div>
       </div>
-      <div class="qp-bank"><strong>Bank Details — Westpac Bank</strong><br>Branch: Pacific Fair Shopping Centre, Broadbeach QLD 4218<br>Swift Code: WPACAU2SXXX &nbsp;|&nbsp; BSB: 034-637 &nbsp;|&nbsp; Account: 21-1660</div>
+      <div class="qp-bank"><strong>Bank Details &#8212; Westpac Bank</strong><br>Branch: Pacific Fair Shopping Centre, Broadbeach QLD 4218<br>Swift Code: WPACAU2SXXX &nbsp;|&nbsp; BSB: 034-637 &nbsp;|&nbsp; Account: 21-1660</div>
       <div class="qp-thankyou">THANK YOU FOR YOUR BUSINESS!</div>
     </div>`;
 }
@@ -938,7 +938,7 @@ function removeEQItem(i){
 }
 
 async function sendQuoteToClient(){
-  if(!currentLead?.contact){toast('No client email on this lead — add one in Details first','error');return;}
+  if(!currentLead?.contact){toast('No client email on this lead &#8212; add one in Details first','error');return;}
   const btn=document.getElementById('previewSendBtn');
   btn.innerHTML='<i class="ti ti-loader"></i> Saving & sending...';btn.disabled=true;
   // Save latest edits back to DB first
@@ -954,9 +954,9 @@ async function sendQuoteToClient(){
     const toInsert=currentLineItems.map((item,i)=>({quote_id:currentQuote.id,item_name:item.item_name,description:item.description,quantity:item.quantity,rate:item.rate,gst_applicable:item.gst_applicable,amount:item.amount,sort_order:i}));
     await sb('quote_line_items',{method:'POST',body:JSON.stringify(toInsert)});
   }
-  const subject=`Quote ${currentQuote.quote_number} — Traverse Imports & Exports`;
+  const subject=`Quote ${currentQuote.quote_number} &#8212; Traverse Imports & Exports`;
   const fn=(currentLead.name||'').split(' ')[0];
-  const body=`Hi ${fn},\n\nPlease find your quote ${currentQuote.quote_number} below.\n\nTotal: A$${(currentQuote.total||0).toFixed(2)}\nExpiry: ${currentQuote.expiry_date?new Date(currentQuote.expiry_date).toLocaleDateString('en-AU'):'—'}\n\nPlease review and let us know if you\'d like to proceed, or if you have any changes.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au`;
+  const body=`Hi ${fn},\n\nPlease find your quote ${currentQuote.quote_number} below.\n\nTotal: A$${(currentQuote.total||0).toFixed(2)}\nExpiry: ${currentQuote.expiry_date?new Date(currentQuote.expiry_date).toLocaleDateString('en-AU'):'&#8212;'}\n\nPlease review and let us know if you\'d like to proceed, or if you have any changes.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au`;
   try{
     const res=await fetch(EMAIL_FN,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify({to:currentLead.contact,subject,body})});
     const data=await res.json();
@@ -969,7 +969,7 @@ async function sendQuoteToClient(){
     closeModal('previewOverlay');
     renderBoard();
     renderQuoteReview(document.getElementById('dtab-quote'));
-    toast(`Quote sent to ${currentLead.contact} ✓`);
+    toast(`Quote sent to ${currentLead.contact} &#10003;`);
   }catch(e){toast('Send failed: '+e.message,'error');btn.innerHTML='<i class="ti ti-send"></i> Send to client';btn.disabled=false;}
 }
 
@@ -991,8 +991,8 @@ function renderQuoteReview(el){
       </div>
     </div>
     <div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:12px 16px;margin-bottom:14px">
-      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-secondary)">Client</span><span>${q.client_name||'—'}</span></div>
-      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-secondary)">Expiry</span><span>${q.expiry_date?new Date(q.expiry_date).toLocaleDateString('en-AU'):'—'}</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-secondary)">Client</span><span>${q.client_name||'&#8212;'}</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-secondary)">Expiry</span><span>${q.expiry_date?new Date(q.expiry_date).toLocaleDateString('en-AU'):'&#8212;'}</span></div>
       <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-secondary)">Subtotal</span><span>A$${(q.subtotal||0).toFixed(2)}</span></div>
       <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-secondary)">GST</span><span>A$${(q.gst_total||0).toFixed(2)}</span></div>
       <div style="display:flex;justify-content:space-between;font-weight:700;font-size:15px;border-top:0.5px solid var(--border-t);padding-top:8px;margin-top:6px"><span>Total</span><span style="color:var(--accent)">A$${(q.total||0).toFixed(2)}</span></div>
@@ -1005,7 +1005,7 @@ function renderQuoteReview(el){
         <td style="text-align:right">${(item.quantity||1).toFixed(0)}</td>
         <td style="text-align:right;color:var(--green);font-weight:600">A$${(item.rate||0).toFixed(2)}</td>
         <td style="text-align:right;font-weight:500">A$${(item.amount||0).toFixed(2)}</td>
-        <td style="text-align:center;font-size:12px">${item.gst_applicable?'✓':'—'}</td>
+        <td style="text-align:center;font-size:12px">${item.gst_applicable?'&#10003;':'&#8212;'}</td>
       </tr>`).join('')}</tbody>
     </table>
     ${q.status==='sent'?`<div style="background:#FAEEDA;border:0.5px solid #633806;border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:#633806"><i class="ti ti-clock"></i> <strong>Awaiting client approval.</strong> Click "Revise quote" if the client requests changes, or "Client approved" once confirmed.</div>`:''}
@@ -1021,31 +1021,31 @@ async function reviseQuote(){
   const idx=leads.findIndex(l=>l.id===currentLead.id);
   if(idx>-1) leads[idx].quote_status='draft';
   currentLead.quote_status='draft';
-  toast('Quote reopened for revision — make your changes then send again');
+  toast('Quote reopened for revision &#8212; make your changes then send again');
   showEditableQuote();
   document.getElementById('previewOverlay').classList.add('open');
 }
 
 async function generateQBInvoice(){
-  toast('QuickBooks integration requires admin access — contact your accountant to grant access, then this button will generate the invoice automatically.','info');
+  toast('QuickBooks integration requires admin access &#8212; contact your accountant to grant access, then this button will generate the invoice automatically.','info');
   await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'QB Invoice pending',detail:`Awaiting QuickBooks admin access to generate invoice for ${currentQuote.quote_number}`})});
 }
 
-/* ── EMAIL ── */
+/* &#9472;&#9472; EMAIL &#9472;&#9472; */
 function renderDetailEmails(){
   const l=currentLead;
   const fn=(l.name||'').split(' ')[0];
   const templates=[
     {phase:'Phase 1',name:'Quote acknowledgement',subj:`${l.name||''} Quote Enquiry`,body:`Hi ${fn},\n\nThank you for submitting a quote request with us!\n\nWe are currently checking with our suppliers and will keep you updated as soon as we receive a response.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au`},
     {phase:'Phase 2',name:'Supplier enquiry',subj:`Quote Request for ${l.company||''}`,body:`Hi [Supplier],\n\nI hope this email finds you well.\n\nWe've received a request from our client and would like to enquire about availability and pricing.\n\nCould you please provide a quote with lead times?\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au`},
-    {phase:'Phase 3',name:'Client approval & PO',subj:`Purchase Order — ${l.company||''}`,body:`Hi [Supplier],\n\nOur client has approved the provided quote. Please find the attached purchase order.\n\nIf you could keep us updated on lead times that would be greatly appreciated.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au`},
-    {phase:'Phase 4',name:'Freight documentation',subj:`Freight Documentation — ${l.company||''} cargo`,body:`Hi [Freight partner],\n\nPlease see attached documentation for the cargo we will be dropping off. We will provide a hard copy once dropped off.\n\nCheers,\nTraverse Exports\nsales@traverse-exports.com.au`},
+    {phase:'Phase 3',name:'Client approval & PO',subj:`Purchase Order &#8212; ${l.company||''}`,body:`Hi [Supplier],\n\nOur client has approved the provided quote. Please find the attached purchase order.\n\nIf you could keep us updated on lead times that would be greatly appreciated.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au`},
+    {phase:'Phase 4',name:'Freight documentation',subj:`Freight Documentation &#8212; ${l.company||''} cargo`,body:`Hi [Freight partner],\n\nPlease see attached documentation for the cargo we will be dropping off. We will provide a hard copy once dropped off.\n\nCheers,\nTraverse Exports\nsales@traverse-exports.com.au`},
   ];
   document.getElementById('dtab-emails').innerHTML=`
     <div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:9px 13px;margin-bottom:14px;font-size:12px;display:flex;align-items:center;gap:8px;border:0.5px solid var(--border-t)">
       <i class="ti ti-send" style="color:var(--purple)"></i>
       From <strong>sales@traverse-exports.com.au</strong>
-      ${l.contact?` → to <strong>${l.contact}</strong>`:'<span style="color:var(--danger)"> — add client email in Details first</span>'}
+      ${l.contact?` &#8594; to <strong>${l.contact}</strong>`:'<span style="color:var(--danger)"> &#8212; add client email in Details first</span>'}
     </div>
     ${templates.map((t,i)=>`<div class="email-template">
       <div class="email-phase">${t.phase}</div>
@@ -1067,7 +1067,7 @@ async function sendEmailViaFunction(to,subject,body,templateName,leadId){
     const res=await fetch(EMAIL_FN,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify({to,subject,body})});
     const data=await res.json();
     if(!res.ok) throw new Error(data.error||'Send failed');
-    if(lid) await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:lid,action:'Email sent',detail:`${templateName} → ${to}`})});
+    if(lid) await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:lid,action:'Email sent',detail:`${templateName} &#8594; ${to}`})});
     if(currentLead&&lid===currentLead.id){
       const emailsSent=(currentLead.emails_sent||0)+1;
       await sb(`leads?id=eq.${currentLead.id}`,{method:'PATCH',body:JSON.stringify({emails_sent:emailsSent,updated_at:new Date().toISOString()})});
@@ -1075,9 +1075,9 @@ async function sendEmailViaFunction(to,subject,body,templateName,leadId){
       const idx=leads.findIndex(l=>l.id===currentLead.id);
       if(idx>-1) leads[idx].emails_sent=emailsSent;
     }
-    setStatus('emailDot','emailLabel',true,'Email ✓');
+    setStatus('emailDot','emailLabel',true,'Email &#10003;');
     document.getElementById('toast').classList.remove('show');
-    toast(`Email sent to ${to} ✓`);
+    toast(`Email sent to ${to} &#10003;`);
     renderBoard();
     if(lid===currentLead?.id) await renderDetailActivity();
     return true;
@@ -1098,13 +1098,13 @@ async function sendFromTemplate(i,subject,name){
   if(ok){btn.innerHTML='<i class="ti ti-check"></i> Sent';status.textContent=`Sent ${new Date().toLocaleTimeString()}`;setTimeout(()=>{btn.innerHTML='<i class="ti ti-send"></i> Send';btn.disabled=false;status.textContent='';},4000);}
   else{btn.innerHTML='<i class="ti ti-send"></i> Send';btn.disabled=false;}
 }
-function copyEmailBody(i){navigator.clipboard?.writeText(document.getElementById('ebody-'+i).innerText);toast('Copied ✓');}
+function copyEmailBody(i){navigator.clipboard?.writeText(document.getElementById('ebody-'+i).innerText);toast('Copied &#10003;');}
 
-/* ── DRIVE ── */
+/* &#9472;&#9472; DRIVE &#9472;&#9472; */
 async function createDriveFolderForLead(lead){
-  toast('Creating Drive folder…','info');
+  toast('Creating Drive folder&#8230;','info');
   try{
-    const folderName=`${lead.doc_code||lead.name} — ${lead.company||''}`.trim();
+    const folderName=`${lead.doc_code||lead.name} &#8212; ${lead.company||''}`.trim();
     const prompt=`Using Google Drive, create a folder called exactly "${folderName}" in My Drive. Then inside that folder create 5 subfolders called: "Quotes", "Invoices", "Purchase Orders", "Freight Docs", "Receipts". Return ONLY a JSON object with key parentFolderId. No other text.`;
     const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:500,mcp_servers:[{type:'url',url:'https://drivemcp.googleapis.com/mcp/v1',name:'gdrive'}],messages:[{role:'user',content:prompt}]})});
     const data=await res.json();
@@ -1115,8 +1115,8 @@ async function createDriveFolderForLead(lead){
     await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:lead.id,action:'Drive folder created',detail:folderName})});
     const idx=leads.findIndex(l=>l.id===lead.id);
     if(idx>-1) leads[idx].drive_folder_id=folderId||'created';
-    setStatus('driveDot','driveLabel',true,'Drive ✓');
-    toast('Drive folder + subfolders created ✓');renderBoard();
+    setStatus('driveDot','driveLabel',true,'Drive &#10003;');
+    toast('Drive folder + subfolders created &#10003;');renderBoard();
   }catch(e){setStatus('driveDot','driveLabel',false,'Drive error');toast('Drive error: '+e.message,'error');}
 }
 
@@ -1136,7 +1136,7 @@ async function renderDriveView(){
     html+=withDrive.map(l=>`<div class="drive-lead-card" style="cursor:pointer" onclick="openDetail('${l.id}')">
       <i class="ti ti-folder" style="font-size:22px;color:var(--amber)"></i>
       <div style="flex:1"><div style="font-size:13px;font-weight:600">${l.doc_code||l.name}</div>
-      <div style="font-size:12px;color:var(--text-secondary)">${l.company||''} · ${l.project||''}</div></div>
+      <div style="font-size:12px;color:var(--text-secondary)">${l.company||''} &#183; ${l.project||''}</div></div>
       <span style="font-size:11px;color:var(--green)"><i class="ti ti-check"></i> Linked</span>
     </div>`).join('');
   }
@@ -1163,7 +1163,7 @@ function renderDetailFiles(){
       <div style="flex:1">
         <div style="font-size:13px;font-weight:600;margin-bottom:2px">${l.doc_code||l.name}</div>
         <div style="font-size:11px;font-family:monospace;color:var(--text-secondary)">/Traverse CRM / ${l.client||l.company||'Client'} / ${l.project||'Project'} /</div>
-        <div style="font-size:11px;color:var(--text-tertiary);margin-top:3px">Quotes · Invoices · Purchase Orders · Freight Docs · Receipts</div>
+        <div style="font-size:11px;color:var(--text-tertiary);margin-top:3px">Quotes &#183; Invoices &#183; Purchase Orders &#183; Freight Docs &#183; Receipts</div>
       </div>
       ${l.drive_folder_id?`<span style="font-size:12px;color:var(--green)"><i class="ti ti-check"></i> Linked</span>`:''}
     </div>
@@ -1172,7 +1172,7 @@ function renderDetailFiles(){
       :`<a href="https://drive.google.com" target="_blank" class="btn btn-green btn-sm"><i class="ti ti-brand-google-drive"></i> Open Google Drive</a>`}`;
 }
 
-/* ── ACTIVITY ── */
+/* &#9472;&#9472; ACTIVITY &#9472;&#9472; */
 async function renderDetailActivity(){
   document.getElementById('dtab-activity').innerHTML=`<div class="empty-state">Loading...</div>`;
   try{
@@ -1192,13 +1192,13 @@ async function renderDetailActivity(){
       ?`<div class="empty-state">No activity yet</div>`
       :rows.map(r=>{const c=cfg[r.action]||{cls:'',icon:'ti-point'};return `<div class="activity-item">
         <div class="act-icon ${c.cls}"><i class="ti ${c.icon}"></i></div>
-        <div style="flex:1"><div style="font-size:13px">${r.action}${r.detail?' — '+r.detail:''}</div>
+        <div style="flex:1"><div style="font-size:13px">${r.action}${r.detail?' &#8212; '+r.detail:''}</div>
         <div style="font-size:11px;color:var(--text-tertiary)">${(r.created_at||'').slice(0,16).replace('T',' ')} UTC</div></div>
       </div>`;}).join('');
   }catch(e){document.getElementById('dtab-activity').innerHTML=`<div class="empty-state" style="color:var(--danger)">Could not load activity</div>`;}
 }
 
-/* ── PHASE UPDATE ── */
+/* &#9472;&#9472; PHASE UPDATE &#9472;&#9472; */
 async function updatePhase(){
   if(!currentLead) return;
   const newPhase=parseInt(document.getElementById('detailPhaseSelect').value);
@@ -1206,11 +1206,11 @@ async function updatePhase(){
   const old=currentLead.phase;
   try{
     await sb(`leads?id=eq.${currentLead.id}`,{method:'PATCH',body:JSON.stringify({phase:newPhase,updated_at:new Date().toISOString()})});
-    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Phase changed',detail:`Phase ${old+1} → Phase ${newPhase+1}`})});
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Phase changed',detail:`Phase ${old+1} &#8594; Phase ${newPhase+1}`})});
     currentLead.phase=newPhase;
     const idx=leads.findIndex(l=>l.id===currentLead.id);
     if(idx>-1) leads[idx].phase=newPhase;
-    renderBoard();toast('Phase updated ✓');
+    renderBoard();toast('Phase updated &#10003;');
   }catch(e){toast('Update failed','error');}
 }
 
@@ -1220,7 +1220,7 @@ async function deleteLead(id){
   catch(e){toast('Delete failed','error');}
 }
 
-/* ── DETAIL TABS ── */
+/* &#9472;&#9472; DETAIL TABS &#9472;&#9472; */
 function switchDetailTab(tab,el){
   document.querySelectorAll('.detail-tab').forEach(t=>t.classList.remove('active'));
   document.querySelectorAll('.detail-section').forEach(s=>s.classList.remove('active'));
@@ -1231,7 +1231,7 @@ function switchDetailTab(tab,el){
   if(tab==='quote') renderQuoteTab();
 }
 
-/* ── REPORTS ── */
+/* &#9472;&#9472; REPORTS &#9472;&#9472; */
 function renderReports(){
   const total=leads.length;
   const totalVal=leads.reduce((s,l)=>s+0,0);
@@ -1280,11 +1280,11 @@ function renderReports(){
   document.getElementById('pipelineTable').innerHTML=`
     <tr><th style="width:20%">Lead</th><th style="width:18%">Company</th><th style="width:12%">Type</th><th style="width:12%">Phase</th><th style="width:14%">Quote</th><th style="width:12%">Drive</th><th style="width:12%">Emails</th></tr>
     ${leads.map(l=>`<tr>
-      <td>${l.name||'—'}</td><td style="color:var(--text-secondary)">${l.company||'—'}</td>
+      <td>${l.name||'&#8212;'}</td><td style="color:var(--text-secondary)">${l.company||'&#8212;'}</td>
       <td><span style="font-size:11px;padding:2px 7px;border-radius:99px;font-weight:600;background:${l.lead_type==='project'?'var(--purple-light)':'var(--amber-light)'};color:${l.lead_type==='project'?'var(--purple)':'#633806'}">${l.lead_type==='project'?'Project':'Wholesale'}</span></td>
       <td><span class="status-dot ${DOTS[l.phase||0]}"></span>Ph ${(l.phase||0)+1}</td>
-      <td>${quoteStatusBadge(l.quote_status)||'—'}</td>
-      <td style="text-align:center">${l.drive_folder_id?'<span style="color:var(--green)">✓</span>':'—'}</td>
+      <td>${quoteStatusBadge(l.quote_status)||'&#8212;'}</td>
+      <td style="text-align:center">${l.drive_folder_id?'<span style="color:var(--green)">&#10003;</span>':'&#8212;'}</td>
       <td style="text-align:center">${l.emails_sent||0}</td>
     </tr>`).join('')}`;
 }
@@ -1299,8 +1299,8 @@ function switchView(view,el){
 }
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 
-setStatus('driveDot','driveLabel',true,'Drive ✓');
-setStatus('emailDot','emailLabel',true,'Email ✓');
+setStatus('driveDot','driveLabel',true,'Drive &#10003;');
+setStatus('emailDot','emailLabel',true,'Email &#10003;');
 checkSession();
 </script>
 </body>

@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Traverse CRM</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg-primary:#ffffff;--bg-secondary:#f8f8f7;--bg-tertiary:#f3f2f0;
+  --text-primary:#1a1a1a;--text-secondary:#6b6b6b;--text-tertiary:#9b9b9b;
+  --border-tertiary:rgba(0,0,0,0.1);--border-secondary:rgba(0,0,0,0.18);--border-primary:rgba(0,0,0,0.28);
+  --accent:#185FA5;--accent-light:#E6F1FB;--accent-dark:#0C447C;
+  --green:#3B6D11;--green-light:#EAF3DE;
+  --purple:#533AB7;--purple-light:#EEEDFE;
+  --amber:#EF9F27;--amber-light:#FAEEDA;
+  --danger:#A32D2D;--danger-light:#FCEBEB;
+  --radius-md:8px;--radius-lg:12px;
+}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg-tertiary);color:var(--text-primary);min-height:100vh}
+.crm{min-height:100vh}
+
+/* Topbar */
+.topbar{background:var(--bg-primary);border-bottom:0.5px solid var(--border-tertiary);padding:0 24px;display:flex;align-items:center;gap:0;height:56px;position:sticky;top:0;z-index:50}
+.topbar-brand{font-size:15px;font-weight:600;color:var(--text-primary);margin-right:28px;display:flex;align-items:center;gap:8px}
+.status-pill{font-size:11px;padding:3px 8px;border-radius:99px;border:0.5px solid var(--border-tertiary);display:flex;align-items:center;gap:4px;margin-right:5px;background:var(--bg-secondary)}
+.dot{width:6px;height:6px;border-radius:50%;background:#ccc;flex-shrink:0;transition:background .3s}
+.dot.live{background:#639922}.dot.warn{background:#EF9F27}
+.nav-tab{padding:0 14px;height:56px;display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;text-decoration:none}
+.nav-tab:hover{color:var(--text-primary)}
+.nav-tab.active{color:var(--text-primary);border-bottom-color:var(--text-primary)}
+.main{padding:24px;max-width:1400px;margin:0 auto}
+.view{display:none}.view.active{display:block}
+
+/* Buttons */
+.btn{padding:8px 14px;font-size:13px;border-radius:var(--radius-md);border:0.5px solid var(--border-secondary);background:var(--bg-primary);color:var(--text-primary);cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:all .15s;font-family:inherit}
+.btn:hover{background:var(--bg-secondary)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:#E6F1FB}
+.btn-primary:hover{background:var(--accent-dark)}
+.btn-green{background:var(--green);border-color:var(--green);color:var(--green-light)}
+.btn-green:hover{background:#27500A}
+.btn-send{background:var(--purple);border-color:var(--purple);color:var(--purple-light)}
+.btn-send:hover{background:#3C3489}
+.btn-danger{background:var(--danger-light);border-color:var(--danger);color:var(--danger)}
+.btn-sm{padding:5px 10px;font-size:12px}
+
+/* Form */
+.form-input{width:100%;font-size:13px;padding:8px 10px;border:0.5px solid var(--border-secondary);border-radius:var(--radius-md);background:var(--bg-primary);color:var(--text-primary);font-family:inherit;transition:border-color .15s}
+.form-input:focus{outline:none;border-color:var(--accent)}
+.form-label{font-size:12px;color:var(--text-secondary);margin-bottom:4px;display:block}
+.form-group{margin-bottom:13px}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+
+/* Toast */
+.toast{position:fixed;bottom:20px;right:20px;background:var(--bg-primary);border:0.5px solid var(--border-secondary);border-radius:var(--radius-md);padding:11px 16px;font-size:13px;z-index:999;display:none;align-items:center;gap:8px;max-width:340px;box-shadow:0 4px 16px rgba(0,0,0,0.08)}
+.toast.show{display:flex}
+.toast.success{border-color:#639922;color:#3B6D11}
+.toast.error{border-color:var(--danger);color:var(--danger)}
+.toast.info{border-color:var(--accent);color:var(--accent-dark)}
+.toast.sending{border-color:var(--purple);color:var(--purple)}
+
+/* Pipeline */
+.pipeline-controls{display:flex;align-items:center;gap:10px;margin-bottom:18px;flex-wrap:wrap}
+.phases{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;align-items:start}
+@media(max-width:900px){.phases{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:600px){.phases{grid-template-columns:1fr}}
+.phase-col{background:var(--bg-secondary);border-radius:var(--radius-lg);padding:12px;border:0.5px solid var(--border-tertiary)}
+.phase-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.phase-title{font-size:11px;font-weight:600;padding:4px 10px;border-radius:99px;letter-spacing:.01em}
+.ph1{background:#E6F1FB;color:#0C447C}.ph2{background:#FAEEDA;color:#633806}
+.ph3{background:#EAF3DE;color:#27500A}.ph4{background:#E1F5EE;color:#085041}
+.card{background:var(--bg-primary);border-radius:var(--radius-md);border:0.5px solid var(--border-tertiary);padding:11px 12px;margin-bottom:8px;cursor:pointer;transition:border-color .15s,box-shadow .15s}
+.card:hover{border-color:var(--border-primary);box-shadow:0 2px 8px rgba(0,0,0,0.06)}
+.card-name{font-size:13px;font-weight:600;margin-bottom:3px}
+.card-company{font-size:12px;color:var(--text-secondary);margin-bottom:7px}
+.card-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.tag{font-size:10px;padding:2px 7px;border-radius:99px;border:0.5px solid var(--border-tertiary);color:var(--text-secondary);background:var(--bg-secondary)}
+.card-value{font-size:11px;font-weight:600;color:var(--accent);margin-left:auto}
+.card-indicators{display:flex;gap:8px;margin-top:6px}
+.indicator{font-size:10px;display:flex;align-items:center;gap:3px;color:var(--text-tertiary)}
+.indicator.on{color:var(--green)}
+.add-card-btn{width:100%;text-align:center;font-size:12px;color:var(--text-tertiary);padding:9px;border:0.5px dashed var(--border-tertiary);border-radius:var(--radius-md);cursor:pointer;background:none;font-family:inherit;transition:all .15s}
+.add-card-btn:hover{color:var(--text-secondary);background:var(--bg-primary);border-color:var(--border-secondary)}
+
+/* Modal / Overlay */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:200;display:none;align-items:flex-start;justify-content:center;padding:32px 16px;overflow-y:auto}
+.overlay.open{display:flex}
+.modal{background:var(--bg-primary);border-radius:var(--radius-lg);border:0.5px solid var(--border-tertiary);width:100%;max-width:580px;padding:22px;position:relative;margin:auto}
+.modal-lg{max-width:680px}
+.modal-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px}
+.modal-title{font-size:16px;font-weight:600}
+.modal-sub{font-size:12px;color:var(--text-secondary);margin-top:2px}
+.close-btn{background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-secondary);padding:2px;line-height:1;flex-shrink:0}
+.close-btn:hover{color:var(--text-primary)}
+.section-divider{font-size:11px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.07em;padding:12px 0 6px;border-top:0.5px solid var(--border-tertiary);margin-top:8px}
+
+/* Detail tabs */
+.detail-tabs{display:flex;border-bottom:0.5px solid var(--border-tertiary);margin-bottom:16px;overflow-x:auto;gap:0}
+.detail-tab{padding:9px 16px;font-size:13px;color:var(--text-secondary);cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;display:flex;align-items:center;gap:5px;transition:all .15s}
+.detail-tab:hover{color:var(--text-primary)}
+.detail-tab.active{color:var(--text-primary);border-bottom-color:var(--text-primary)}
+.detail-section{display:none}.detail-section.active{display:block}
+.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.info-item label{font-size:11px;color:var(--text-secondary);display:block;margin-bottom:3px;font-weight:500}
+.info-item p{font-size:13px}
+
+/* Email */
+.email-template{background:var(--bg-secondary);border-radius:var(--radius-md);border:0.5px solid var(--border-tertiary);padding:13px;margin-bottom:12px}
+.email-phase{font-size:10px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px}
+.email-subject-line{font-size:13px;font-weight:600;margin-bottom:9px}
+.email-body{font-size:12px;color:var(--text-secondary);line-height:1.65;white-space:pre-wrap;background:var(--bg-primary);border:0.5px solid var(--border-tertiary);border-radius:var(--radius-md);padding:11px;margin-bottom:10px;min-height:80px}
+.email-body:focus{outline:none;border-color:var(--accent)}
+.email-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.send-status{font-size:11px;color:var(--text-secondary);margin-left:auto}
+
+/* Activity */
+.activity-item{display:flex;gap:10px;padding:9px 0;border-bottom:0.5px solid var(--border-tertiary)}
+.activity-item:last-child{border-bottom:none}
+.act-icon{width:28px;height:28px;border-radius:50%;background:var(--bg-secondary);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.act-icon i{font-size:14px;color:var(--text-secondary)}
+.act-icon.email-icon{background:var(--purple-light)}.act-icon.email-icon i{color:var(--purple)}
+.act-icon.drive-icon{background:var(--green-light)}.act-icon.drive-icon i{color:var(--green)}
+
+/* Drive */
+.drive-lead-card{background:var(--bg-primary);border:0.5px solid var(--border-tertiary);border-radius:var(--radius-md);padding:12px 14px;margin-bottom:8px;display:flex;align-items:center;gap:12px;transition:border-color .15s}
+.drive-lead-card:hover{border-color:var(--border-secondary)}
+.file-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;margin-top:12px}
+.file-item{background:var(--bg-primary);border:0.5px solid var(--border-tertiary);border-radius:var(--radius-md);padding:11px;text-align:center;cursor:pointer;transition:border-color .15s}
+.file-item:hover{border-color:var(--border-secondary)}
+.file-icon-lg{font-size:26px;margin-bottom:5px;display:block}
+.file-name{font-size:10px;word-break:break-all;color:var(--text-primary)}
+.file-date{font-size:10px;color:var(--text-secondary);margin-top:2px}
+.doc-badge{display:inline-block;font-size:10px;padding:2px 6px;border-radius:4px;margin-top:3px}
+.badge-quo{background:#E6F1FB;color:#0C447C}.badge-inv{background:#EAF3DE;color:#27500A}
+.badge-po{background:#FAEEDA;color:#633806}.badge-bol,.badge-awb,.badge-ds,.badge-img,.badge-oth{background:var(--bg-secondary);color:var(--text-secondary)}
+.drive-folder-banner{background:var(--bg-secondary);border:0.5px solid var(--border-tertiary);border-radius:var(--radius-md);padding:12px 14px;margin-bottom:12px;display:flex;align-items:center;gap:12px}
+
+/* Reports */
+.report-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:20px}
+.metric{background:var(--bg-primary);border:0.5px solid var(--border-tertiary);border-radius:var(--radius-md);padding:14px}
+.metric-label{font-size:11px;color:var(--text-secondary);margin-bottom:4px;font-weight:500}
+.metric-val{font-size:24px;font-weight:700;color:var(--text-primary)}
+.metric-sub{font-size:11px;color:var(--text-tertiary);margin-top:3px}
+.chart-area{background:var(--bg-primary);border:0.5px solid var(--border-tertiary);border-radius:var(--radius-lg);padding:16px;margin-bottom:14px}
+.chart-title{font-size:13px;font-weight:600;margin-bottom:12px}
+.bar-chart{display:flex;align-items:flex-end;gap:8px;height:110px}
+.bar-wrap{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%;justify-content:flex-end}
+.bar{width:100%;background:#B5D4F4;border-radius:4px 4px 0 0;min-height:4px;transition:height .4s}
+.bar.hi{background:var(--accent)}
+.bar-label{font-size:10px;color:var(--text-secondary);text-align:center}
+.bar-val{font-size:10px;font-weight:600;color:var(--text-secondary)}
+.reports-row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:800px){.reports-row{grid-template-columns:1fr}}
+.pipeline-table{width:100%;font-size:12px;border-collapse:collapse;table-layout:fixed}
+.pipeline-table th{text-align:left;font-size:11px;color:var(--text-secondary);padding:6px 8px;border-bottom:0.5px solid var(--border-tertiary);font-weight:500}
+.pipeline-table td{padding:8px;border-bottom:0.5px solid var(--border-tertiary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-primary)}
+.status-dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:4px}
+.dot-blue{background:#378ADD}.dot-amber{background:#EF9F27}.dot-green{background:#639922}.dot-teal{background:#1D9E75}
+.empty-state{text-align:center;padding:28px;font-size:13px;color:var(--text-tertiary)}
+</style>
+</head>
+<body>
+<div class="crm">
+<div class="topbar">
+  <div class="topbar-brand">
+    <i class="ti ti-briefcase" style="font-size:20px;color:var(--accent)"></i>
+    Traverse CRM
+  </div>
+  <div class="status-pill"><div class="dot" id="sbDot"></div><span id="sbLabel" style="color:var(--text-secondary)">DB</span></div>
+  <div class="status-pill"><div class="dot" id="driveDot"></div><span id="driveLabel" style="color:var(--text-secondary)">Drive</span></div>
+  <div class="status-pill"><div class="dot" id="emailDot"></div><span id="emailLabel" style="color:var(--text-secondary)">Email</span></div>
+  <div class="nav-tab active" onclick="switchView('pipeline',this)"><i class="ti ti-layout-kanban"></i> Pipeline</div>
+  <div class="nav-tab" onclick="switchView('drive',this)"><i class="ti ti-brand-google-drive"></i> Drive</div>
+  <div class="nav-tab" onclick="switchView('reports',this)"><i class="ti ti-chart-bar"></i> Reports</div>
+  <div style="margin-left:auto"><button class="btn btn-primary" onclick="openNewLead()"><i class="ti ti-plus"></i> New lead</button></div>
+</div>
+
+<!-- PIPELINE -->
+<div id="view-pipeline" class="view active main">
+  <div class="pipeline-controls">
+    <input class="form-input" placeholder="Search leads, companies, materials..." id="searchInput" oninput="renderBoard()" style="max-width:280px">
+    <select class="form-input" style="width:auto" onchange="renderBoard()" id="clientFilter"><option value="">All clients</option></select>
+    <button class="btn" onclick="loadLeads()"><i class="ti ti-refresh"></i> Refresh</button>
+    <span style="font-size:12px;color:var(--text-secondary)" id="leadCount"></span>
+  </div>
+  <div class="phases" id="phasesBoard">
+    <div class="empty-state" style="grid-column:1/-1"><i class="ti ti-loader"></i> Loading from Supabase...</div>
+  </div>
+</div>
+
+<!-- DRIVE -->
+<div id="view-drive" class="view main">
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px">
+    <div style="flex:1">
+      <div style="font-size:16px;font-weight:600;margin-bottom:3px">Google Drive — Traverse CRM</div>
+      <div style="font-size:13px;color:var(--text-secondary)">Auto-structured folders per lead using your document coding system</div>
+    </div>
+    <button class="btn" onclick="renderDriveView()"><i class="ti ti-refresh"></i> Refresh</button>
+  </div>
+  <div id="driveView"></div>
+</div>
+
+<!-- REPORTS -->
+<div id="view-reports" class="view main">
+  <div class="report-grid" id="metricsGrid"></div>
+  <div class="reports-row">
+    <div>
+      <div class="chart-area"><div class="chart-title">Leads by phase</div><div class="bar-chart" id="phaseChart"></div></div>
+      <div class="chart-area"><div class="chart-title">Pipeline value by client</div><div class="bar-chart" id="clientChart"></div></div>
+    </div>
+    <div>
+      <div class="chart-area">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <div class="chart-title" style="margin:0">All leads</div>
+        </div>
+        <table class="pipeline-table" id="pipelineTable"></table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- NEW LEAD MODAL -->
+<div class="overlay" id="leadOverlay">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title">New lead</div><button class="close-btn" onclick="closeModal('leadOverlay')"><i class="ti ti-x"></i></button></div>
+    <div id="modalBody"></div>
+  </div>
+</div>
+
+<!-- DETAIL MODAL -->
+<div class="overlay" id="detailOverlay">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="detailName"></div>
+        <div class="modal-sub" id="detailSub"></div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select class="form-input" style="width:auto;font-size:12px" id="detailPhaseSelect" onchange="updatePhase()">
+          <option value="0">Phase 1 — Quote Request</option>
+          <option value="1">Phase 2 — Enquire Suppliers</option>
+          <option value="2">Phase 3 — Client Approval</option>
+          <option value="3">Phase 4 — Freighting</option>
+        </select>
+        <button class="close-btn" onclick="closeModal('detailOverlay')"><i class="ti ti-x"></i></button>
+      </div>
+    </div>
+    <div class="detail-tabs">
+      <div class="detail-tab active" onclick="switchDetailTab('info',this)">Details</div>
+      <div class="detail-tab" onclick="switchDetailTab('emails',this)"><i class="ti ti-send" style="font-size:12px;color:var(--purple)"></i> Send email</div>
+      <div class="detail-tab" onclick="switchDetailTab('files',this)"><i class="ti ti-brand-google-drive" style="font-size:12px;color:var(--amber)"></i> Drive files</div>
+      <div class="detail-tab" onclick="switchDetailTab('activity',this)">Activity</div>
+    </div>
+    <div class="detail-section active" id="dtab-info"></div>
+    <div class="detail-section" id="dtab-emails"></div>
+    <div class="detail-section" id="dtab-files"></div>
+    <div class="detail-section" id="dtab-activity"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+</div>
+
+<script>
+const SB_URL='https://dwmpunbcwrprhhzwduyx.supabase.co';
+const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR3bXB1bmJjd3JwcmhoendkdXl4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk3NTc5MDgsImV4cCI6MjA5NTMzMzkwOH0.3Y4eUIXDWoBX7K_HgBSswMLDo4me_eDxcAw4SQVZxZM';
+const SB_HDR={'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY};
+const EMAIL_FN=SB_URL+'/functions/v1/send-email';
+const PHASES=[
+  {name:'Phase 1 — Quote Request',short:'Quote Request',cls:'ph1'},
+  {name:'Phase 2 — Enquire Suppliers',short:'Enquire Suppliers',cls:'ph2'},
+  {name:'Phase 3 — Client Approval',short:'Client Approval',cls:'ph3'},
+  {name:'Phase 4 — Freighting',short:'Freighting',cls:'ph4'}
+];
+const DOTS=['dot-blue','dot-amber','dot-green','dot-teal'];
+let leads=[],currentLead=null;
+
+function sb(path,opts={}){return fetch(SB_URL+'/rest/v1/'+path,{headers:SB_HDR,...opts});}
+
+function toast(msg,type='success'){
+  const t=document.getElementById('toast');
+  t.className='toast show '+type;
+  const icons={success:'ti-check',error:'ti-alert-circle',info:'ti-info-circle',sending:'ti-send'};
+  t.innerHTML=`<i class="ti ${icons[type]||'ti-check'}"></i> ${msg}`;
+  if(type!=='sending') setTimeout(()=>t.classList.remove('show'),3500);
+}
+
+function setStatus(dotId,labelId,live,label){
+  document.getElementById(dotId).className='dot'+(live?' live':' warn');
+  document.getElementById(labelId).textContent=label;
+}
+
+async function loadLeads(){
+  try{
+    const r=await sb('leads?select=*&order=created_at.desc');
+    if(!r.ok) throw new Error();
+    leads=await r.json();
+    setStatus('sbDot','sbLabel',true,'DB ✓');
+    populateClientFilter();
+    renderBoard();
+  }catch(e){
+    setStatus('sbDot','sbLabel',false,'DB error');
+    toast('Cannot connect to Supabase','error');
+    leads=[];renderBoard();
+  }
+}
+
+function populateClientFilter(){
+  const clients=[...new Set(leads.map(l=>l.client).filter(Boolean))];
+  const sel=document.getElementById('clientFilter');
+  const cur=sel.value;
+  sel.innerHTML='<option value="">All clients</option>'+clients.map(c=>`<option ${c===cur?'selected':''}>${c}</option>`).join('');
+}
+
+function renderBoard(){
+  const search=document.getElementById('searchInput').value.toLowerCase();
+  const cf=document.getElementById('clientFilter').value;
+  const filtered=leads.filter(l=>
+    (!search||[l.name,l.company,l.materials,l.client].some(v=>(v||'').toLowerCase().includes(search)))&&
+    (!cf||l.client===cf)
+  );
+  document.getElementById('leadCount').textContent=filtered.length+' lead'+(filtered.length!==1?'s':'');
+  document.getElementById('phasesBoard').innerHTML=PHASES.map((p,i)=>{
+    const cols=filtered.filter(l=>l.phase===i);
+    return `<div class="phase-col">
+      <div class="phase-header"><span class="phase-title ${p.cls}">${p.short}</span><span style="font-size:11px;color:var(--text-secondary)">${cols.length}</span></div>
+      ${cols.length===0?`<div class="empty-state" style="padding:14px;font-size:12px">No leads</div>`:''}
+      ${cols.map(l=>`<div class="card" onclick="openDetail('${l.id}')">
+        <div class="card-name">${l.name||'Unnamed'}</div>
+        <div class="card-company">${l.company||''}</div>
+        <div class="card-meta">
+          <span class="tag">${(l.materials||'').substring(0,22)}${(l.materials||'').length>22?'…':''}</span>
+          <span class="card-value">${l.value||'TBD'}</span>
+        </div>
+        <div class="card-indicators">
+          <span class="indicator ${l.drive_folder_id?'on':''}"><i class="ti ti-brand-google-drive"></i> ${l.drive_folder_id?'Drive':'No folder'}</span>
+          <span class="indicator ${(l.emails_sent||0)>0?'on':''}"><i class="ti ti-mail"></i> ${l.emails_sent||0} sent</span>
+        </div>
+      </div>`).join('')}
+      <button class="add-card-btn" onclick="openNewLeadPhase(${i})"><i class="ti ti-plus"></i> Add lead</button>
+    </div>`;
+  }).join('');
+}
+
+async function sendEmailViaFunction(to,subject,body,templateName){
+  if(!to){toast('No email address on this lead','error');return false;}
+  toast('Sending email...','sending');
+  try{
+    const res=await fetch(EMAIL_FN,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY},body:JSON.stringify({to,subject,body})});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error||'Send failed');
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Email sent',detail:`${templateName} → ${to}`})});
+    const emailsSent=(currentLead.emails_sent||0)+1;
+    await sb(`leads?id=eq.${currentLead.id}`,{method:'PATCH',body:JSON.stringify({emails_sent:emailsSent,updated_at:new Date().toISOString()})});
+    currentLead.emails_sent=emailsSent;
+    const idx=leads.findIndex(l=>l.id===currentLead.id);
+    if(idx>-1) leads[idx].emails_sent=emailsSent;
+    setStatus('emailDot','emailLabel',true,'Email ✓');
+    document.getElementById('toast').classList.remove('show');
+    toast(`Email sent to ${to} ✓`);
+    renderBoard();
+    await renderDetailActivity();
+    return true;
+  }catch(e){
+    setStatus('emailDot','emailLabel',false,'Email error');
+    document.getElementById('toast').classList.remove('show');
+    toast('Send failed: '+e.message,'error');
+    return false;
+  }
+}
+
+function openNewLead(){openNewLeadPhase(0);}
+function openNewLeadPhase(phase){
+  document.getElementById('leadOverlay').classList.add('open');
+  document.getElementById('modalBody').innerHTML=`
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Client name *</label><input class="form-input" id="f-name" placeholder="First Last"></div>
+      <div class="form-group"><label class="form-label">Company</label><input class="form-input" id="f-company" placeholder="GEL Point Cruz" oninput="updateDocPreview()"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="f-contact" placeholder="client@email.com" type="email"></div>
+      <div class="form-group"><label class="form-label">Mobile</label><input class="form-input" id="f-mobile" placeholder="+61 400 000 000"></div>
+    </div>
+    <div class="form-group"><label class="form-label">Materials needed</label><input class="form-input" id="f-materials" placeholder="e.g. UPS Batteries 12V 5Ah" oninput="updateDocPreview()"></div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Quantity</label><input class="form-input" id="f-qty" placeholder="e.g. 20 units"></div>
+      <div class="form-group"><label class="form-label">Estimated value</label><input class="form-input" id="f-value" placeholder="$0.00"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Project ref</label><input class="form-input" id="f-project" placeholder="GPC-2024-01"></div>
+      <div class="form-group"><label class="form-label">Phase</label>
+        <select class="form-input" id="f-phase">${PHASES.map((p,i)=>`<option value="${i}" ${i===phase?'selected':''}>${p.name}</option>`).join('')}</select>
+      </div>
+    </div>
+    <div class="form-group"><label class="form-label">Notes</label><input class="form-input" id="f-notes" placeholder="Additional context..."></div>
+    <div class="section-divider">Document code (auto-generated)</div>
+    <div style="font-size:12px;font-family:monospace;background:var(--bg-secondary);padding:9px 11px;border-radius:var(--radius-md);color:var(--text-secondary);margin-bottom:12px" id="docPreview">Fill in materials and company above</div>
+    <div style="display:flex;gap:16px;margin-bottom:16px">
+      <label style="font-size:13px;cursor:pointer;display:flex;align-items:center;gap:7px"><input type="checkbox" id="f-drive" checked> <i class="ti ti-brand-google-drive" style="color:var(--amber)"></i> Create Drive folder</label>
+      <label style="font-size:13px;cursor:pointer;display:flex;align-items:center;gap:7px"><input type="checkbox" id="f-email"> <i class="ti ti-send" style="color:var(--purple)"></i> Send acknowledgement email</label>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn" onclick="closeModal('leadOverlay')">Cancel</button>
+      <button class="btn btn-primary" id="saveBtn" onclick="saveLead()"><i class="ti ti-device-floppy"></i> Save lead</button>
+    </div>`;
+}
+
+function updateDocPreview(){
+  const m=document.getElementById('f-materials')?.value||'';
+  const c=document.getElementById('f-company')?.value||'';
+  const d=new Date();
+  const ymd=String(d.getFullYear()).slice(2)+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0');
+  document.getElementById('docPreview').textContent=(m&&c)?`${ymd} - ${m.substring(0,18)} - [${c.substring(0,12)}]`:'Fill in materials and company above';
+}
+
+async function saveLead(){
+  const name=document.getElementById('f-name').value.trim();
+  if(!name){toast('Please enter a client name','error');return;}
+  const btn=document.getElementById('saveBtn');
+  btn.innerHTML='<i class="ti ti-loader"></i> Saving...';btn.disabled=true;
+  const d=new Date();
+  const ymd=String(d.getFullYear()).slice(2)+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0');
+  const mat=document.getElementById('f-materials').value;
+  const comp=document.getElementById('f-company').value;
+  const contact=document.getElementById('f-contact').value;
+  const createDrive=document.getElementById('f-drive')?.checked;
+  const sendEmail=document.getElementById('f-email')?.checked;
+  const payload={name,company:comp,contact,mobile:document.getElementById('f-mobile').value,materials:mat,qty:document.getElementById('f-qty').value,value:document.getElementById('f-value').value||'TBD',project:document.getElementById('f-project').value,phase:parseInt(document.getElementById('f-phase').value),notes:document.getElementById('f-notes').value,client:comp,emails_sent:0,doc_code:`${ymd}-${mat.substring(0,14)}-${comp.substring(0,10)}`};
+  try{
+    const res=await sb('leads',{method:'POST',body:JSON.stringify(payload),headers:{...SB_HDR,'Prefer':'return=representation'}});
+    if(!res.ok) throw new Error(await res.text());
+    const [saved]=await res.json();
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:saved.id,action:'Lead created',detail:`${mat} for ${comp}`})});
+    closeModal('leadOverlay');
+    await loadLeads();
+    toast('Lead saved ✓');
+    const lead=leads.find(l=>l.id===saved.id)||{...saved};
+    if(createDrive) await createDriveFolderForLead(lead);
+    if(sendEmail&&contact){
+      const fn=name.split(' ')[0];
+      await sendEmailViaFunction(contact,`${name} Quote Enquiry: ${mat}`,`Hi ${fn},\n\nThank you for submitting a quote request with us!\n\nWe are currently checking with our suppliers as to what products are best suited to your enquiry, and will keep you updated as soon as we receive a response.\n\nWe look forward to speaking with you shortly.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au`,'Phase 1 — Quote acknowledgement');
+    }
+  }catch(e){
+    toast('Save failed: '+e.message,'error');
+    btn.innerHTML='<i class="ti ti-device-floppy"></i> Save lead';btn.disabled=false;
+  }
+}
+
+async function createDriveFolderForLead(lead){
+  toast('Creating Drive folder…','info');
+  try{
+    const folderName=`${lead.doc_code||lead.name} — ${lead.company||''}`.trim();
+    const prompt=`Using Google Drive, create a folder called exactly "${folderName}" in My Drive. Then inside that folder create 5 subfolders called: "Quotes", "Invoices", "Purchase Orders", "Freight Docs", "Receipts". Return ONLY a JSON object with key parentFolderId. No other text.`;
+    const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:500,mcp_servers:[{type:'url',url:'https://drivemcp.googleapis.com/mcp/v1',name:'gdrive'}],messages:[{role:'user',content:prompt}]})});
+    const data=await res.json();
+    const textBlock=data.content?.find(b=>b.type==='text');
+    let folderId=null;
+    if(textBlock){try{const p=JSON.parse(textBlock.text.replace(/```json|```/g,'').trim());folderId=p.parentFolderId||p.folderId;}catch(_){}}
+    await sb(`leads?id=eq.${lead.id}`,{method:'PATCH',body:JSON.stringify({drive_folder_id:folderId||'created',updated_at:new Date().toISOString()})});
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:lead.id,action:'Drive folder created',detail:folderName})});
+    const idx=leads.findIndex(l=>l.id===lead.id);
+    if(idx>-1) leads[idx].drive_folder_id=folderId||'created';
+    setStatus('driveDot','driveLabel',true,'Drive ✓');
+    toast('Drive folder + subfolders created ✓');
+    renderBoard();
+  }catch(e){
+    setStatus('driveDot','driveLabel',false,'Drive error');
+    toast('Drive error: '+e.message,'error');
+  }
+}
+
+async function renderDriveView(){
+  const el=document.getElementById('driveView');
+  el.innerHTML=`<div class="empty-state"><i class="ti ti-loader"></i> Loading...</div>`;
+  const withDrive=leads.filter(l=>l.drive_folder_id);
+  const withoutDrive=leads.filter(l=>!l.drive_folder_id);
+  let html='';
+  if(withDrive.length>0){
+    html+=`<div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:8px">Linked folders (${withDrive.length})</div>`;
+    html+=withDrive.map(l=>`<div class="drive-lead-card" style="cursor:pointer" onclick="openDetail('${l.id}')">
+      <i class="ti ti-folder" style="font-size:22px;color:var(--amber)"></i>
+      <div style="flex:1"><div style="font-size:13px;font-weight:600">${l.doc_code||l.name}</div>
+      <div style="font-size:12px;color:var(--text-secondary)">${l.company||''} · ${l.materials||''}</div></div>
+      <span style="font-size:11px;color:var(--green)"><i class="ti ti-check"></i> Linked</span>
+    </div>`).join('');
+  }
+  if(withoutDrive.length>0){
+    html+=`<div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin:16px 0 8px">No folder yet (${withoutDrive.length})</div>`;
+    html+=withoutDrive.map(l=>`<div class="drive-lead-card">
+      <i class="ti ti-folder" style="font-size:22px;color:var(--text-tertiary)"></i>
+      <div style="flex:1"><div style="font-size:13px;font-weight:600">${l.name}</div>
+      <div style="font-size:12px;color:var(--text-secondary)">${l.company||''} · ${l.materials||''}</div></div>
+      <button class="btn btn-green btn-sm" onclick="event.stopPropagation();quickCreateFolder('${l.id}')"><i class="ti ti-brand-google-drive"></i> Create</button>
+    </div>`).join('');
+  }
+  if(leads.length===0) html=`<div class="empty-state">No leads yet — add one from the Pipeline tab.</div>`;
+  el.innerHTML=html;
+}
+
+async function quickCreateFolder(id){
+  const lead=leads.find(l=>l.id===id);
+  if(lead){await createDriveFolderForLead(lead);renderDriveView();}
+}
+
+async function openDetail(id){
+  currentLead=leads.find(l=>l.id===id);
+  if(!currentLead) return;
+  document.getElementById('detailName').textContent=currentLead.name;
+  document.getElementById('detailSub').textContent=(currentLead.company||'')+(currentLead.materials?' · '+currentLead.materials:'');
+  document.getElementById('detailPhaseSelect').value=currentLead.phase;
+  document.querySelectorAll('.detail-tab').forEach((t,i)=>t.classList.toggle('active',i===0));
+  document.querySelectorAll('.detail-section').forEach((s,i)=>s.classList.toggle('active',i===0));
+  renderDetailInfo();renderDetailEmails();
+  document.getElementById('dtab-files').innerHTML='';
+  await renderDetailActivity();
+  document.getElementById('detailOverlay').classList.add('open');
+}
+
+function renderDetailInfo(){
+  const l=currentLead;
+  document.getElementById('dtab-info').innerHTML=`
+    <div class="info-grid">
+      <div class="info-item"><label>Email</label><p>${l.contact||'—'}</p></div>
+      <div class="info-item"><label>Mobile</label><p>${l.mobile||'—'}</p></div>
+      <div class="info-item"><label>Materials</label><p>${l.materials||'—'}</p></div>
+      <div class="info-item"><label>Quantity</label><p>${l.qty||'—'}</p></div>
+      <div class="info-item"><label>Estimated value</label><p style="font-weight:700;color:var(--accent)">${l.value||'—'}</p></div>
+      <div class="info-item"><label>Project ref</label><p>${l.project||'—'}</p></div>
+      <div class="info-item"><label>Emails sent</label><p>${l.emails_sent||0}</p></div>
+      <div class="info-item"><label>Drive folder</label><p>${l.drive_folder_id?'<span style="color:var(--green)">✓ Linked</span>':'Not created'}</p></div>
+    </div>
+    ${l.doc_code?`<div style="margin-bottom:12px"><label class="form-label">Document code</label>
+    <div style="font-size:12px;font-family:monospace;background:var(--bg-secondary);padding:8px 11px;border-radius:var(--radius-md)">${l.doc_code}</div></div>`:''}
+    ${l.notes?`<div style="margin-bottom:12px"><label class="form-label">Notes</label><p style="font-size:13px;color:var(--text-secondary)">${l.notes}</p></div>`:''}
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+      ${!l.drive_folder_id?`<button class="btn btn-green" onclick="createFolderFromDetail()"><i class="ti ti-brand-google-drive"></i> Create Drive folder</button>`:''}
+      <button class="btn btn-danger" style="margin-left:auto" onclick="deleteLead('${l.id}')"><i class="ti ti-trash"></i> Delete lead</button>
+    </div>`;
+}
+
+function renderDetailEmails(){
+  const l=currentLead;
+  const fn=(l.name||'').split(' ')[0];
+  const templates=[
+    {phase:'Phase 1',name:'Quote acknowledgement',subj:`${l.name||''} Quote Enquiry: ${l.materials||''}`,body:`Hi ${fn},\n\nThank you for submitting a quote request with us!\n\nWe are currently checking with our suppliers as to what products are best suited to your enquiry, and will keep you updated as soon as we receive a response.\n\nWe look forward to speaking with you shortly.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au`},
+    {phase:'Phase 2',name:'Supplier enquiry',subj:`Quote Request: ${l.materials||''} for ${l.company||''}`,body:`Hi [Supplier],\n\nI hope this email finds you well.\n\nWe've received a request for ${l.materials||''} (qty: ${l.qty||''}) and would like to enquire about availability and pricing.\n\nWould you happen to have this product in stock, and if so, could we please get a quote with lead times?\n\nLook forward to hearing from you!\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au`},
+    {phase:'Phase 3',name:'Client approval & PO',subj:`Quote Request: ${l.materials||''} for ${l.company||''}`,body:`Hi [Supplier],\n\nThank you for your patience.\n\nOur client has approved the provided quote and would like us to action this with the attached purchase order.\n\nIf you could please keep us updated on lead times and when this can be delivered/collected that would be greatly appreciated.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au`},
+    {phase:'Phase 4',name:'Freight documentation',subj:`Freight Documentation for ${l.company||''} cargo`,body:`Hi [Freight partner],\n\nI hope this email finds you well.\n\nPlease see attached documentation for the cargo we will be dropping off. We will provide a hard copy once dropped off.\n\nCheers,\nTraverse Exports\nsales@traverse-exports.com.au`},
+  ];
+  document.getElementById('dtab-emails').innerHTML=`
+    <div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:9px 13px;margin-bottom:14px;font-size:12px;display:flex;align-items:center;gap:8px;border:0.5px solid var(--border-tertiary)">
+      <i class="ti ti-send" style="color:var(--purple)"></i>
+      Sending from <strong>sales@traverse-exports.com.au</strong>
+      ${l.contact?` → to <strong>${l.contact}</strong>`:'<span style="color:var(--danger)"> — add email in Details first</span>'}
+    </div>
+    ${templates.map((t,i)=>`<div class="email-template">
+      <div class="email-phase">${t.phase}</div>
+      <div class="email-subject-line">${t.subj}</div>
+      <div class="email-body" id="ebody-${i}" contenteditable="true">${t.body}</div>
+      <div class="email-actions">
+        <button class="btn btn-sm" onclick="copyEmailBody(${i})"><i class="ti ti-copy"></i> Copy</button>
+        <button class="btn btn-send btn-sm" id="sendBtn-${i}" onclick="sendFromTemplate(${i},'${t.subj.replace(/'/g,"\\'")}','${t.name}')"><i class="ti ti-send"></i> Send email</button>
+        <span class="send-status" id="sendStatus-${i}"></span>
+      </div>
+    </div>`).join('')}`;
+}
+
+async function sendFromTemplate(i,subject,name){
+  const body=document.getElementById('ebody-'+i).innerText;
+  const btn=document.getElementById('sendBtn-'+i);
+  const status=document.getElementById('sendStatus-'+i);
+  btn.disabled=true;btn.innerHTML='<i class="ti ti-loader"></i> Sending...';
+  const ok=await sendEmailViaFunction(currentLead?.contact,subject,body,name);
+  if(ok){
+    btn.innerHTML='<i class="ti ti-check"></i> Sent';
+    status.textContent=`Sent ${new Date().toLocaleTimeString()}`;
+    setTimeout(()=>{btn.innerHTML='<i class="ti ti-send"></i> Send email';btn.disabled=false;status.textContent='';},4000);
+  } else {btn.innerHTML='<i class="ti ti-send"></i> Send email';btn.disabled=false;}
+}
+
+function copyEmailBody(i){navigator.clipboard?.writeText(document.getElementById('ebody-'+i).innerText);toast('Copied to clipboard ✓');}
+
+async function renderDetailFiles(){
+  const l=currentLead;
+  const folderPath=`/Traverse CRM / ${l.client||l.company||'Client'} / ${l.project||'Project'} /`;
+  document.getElementById('dtab-files').innerHTML=`<div class="drive-folder-banner">
+    <i class="ti ti-folder" style="font-size:28px;color:var(--amber)"></i>
+    <div style="flex:1">
+      <div style="font-size:13px;font-weight:600;margin-bottom:2px">${l.doc_code||l.name}</div>
+      <div style="font-size:11px;font-family:monospace;color:var(--text-secondary)">${folderPath}</div>
+      <div style="font-size:11px;color:var(--text-tertiary);margin-top:3px">Quotes · Invoices · Purchase Orders · Freight Docs · Receipts</div>
+    </div>
+    ${l.drive_folder_id?`<span style="font-size:12px;color:var(--green)"><i class="ti ti-check"></i> Linked</span>`:''}
+  </div>
+  ${!l.drive_folder_id?`<div style="text-align:center;padding:20px"><button class="btn btn-green" onclick="createFolderFromDetail()"><i class="ti ti-brand-google-drive"></i> Create Drive folder now</button></div>`
+  :`<div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px">Open Google Drive to upload and manage files for this lead.</div>
+  <a href="https://drive.google.com" target="_blank" class="btn btn-green btn-sm"><i class="ti ti-brand-google-drive"></i> Open Google Drive</a>`}`;
+}
+
+async function createFolderFromDetail(){
+  if(!currentLead) return;
+  await createDriveFolderForLead(currentLead);
+  renderDetailInfo();
+  renderDetailFiles();
+}
+
+async function renderDetailActivity(){
+  document.getElementById('dtab-activity').innerHTML=`<div class="empty-state">Loading...</div>`;
+  try{
+    const res=await sb(`activity_log?lead_id=eq.${currentLead.id}&order=created_at.desc&select=*`);
+    const rows=await res.json();
+    const cfg={'Lead created':{cls:'',icon:'ti-plus'},'Email sent':{cls:'email-icon',icon:'ti-mail'},'Phase changed':{cls:'',icon:'ti-arrows-exchange'},'Drive folder created':{cls:'drive-icon',icon:'ti-brand-google-drive'},'File uploaded':{cls:'drive-icon',icon:'ti-upload'}};
+    document.getElementById('dtab-activity').innerHTML=rows.length===0
+      ?`<div class="empty-state">No activity yet</div>`
+      :rows.map(r=>{const c=cfg[r.action]||{cls:'',icon:'ti-point'};return `<div class="activity-item">
+        <div class="act-icon ${c.cls}"><i class="ti ${c.icon}"></i></div>
+        <div style="flex:1"><div style="font-size:13px">${r.action}${r.detail?' — '+r.detail:''}</div>
+        <div style="font-size:11px;color:var(--text-tertiary)">${(r.created_at||'').slice(0,16).replace('T',' ')} UTC</div></div>
+      </div>`;}).join('');
+  }catch(e){document.getElementById('dtab-activity').innerHTML=`<div class="empty-state" style="color:var(--danger)">Could not load activity</div>`;}
+}
+
+function switchDetailTab(tab,el){
+  document.querySelectorAll('.detail-tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.detail-section').forEach(s=>s.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('dtab-'+tab).classList.add('active');
+  if(tab==='activity') renderDetailActivity();
+  if(tab==='files') renderDetailFiles();
+}
+
+async function updatePhase(){
+  if(!currentLead) return;
+  const newPhase=parseInt(document.getElementById('detailPhaseSelect').value);
+  if(newPhase===currentLead.phase) return;
+  const old=currentLead.phase;
+  try{
+    await sb(`leads?id=eq.${currentLead.id}`,{method:'PATCH',body:JSON.stringify({phase:newPhase,updated_at:new Date().toISOString()})});
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Phase changed',detail:`Phase ${old+1} → Phase ${newPhase+1}`})});
+    currentLead.phase=newPhase;
+    const idx=leads.findIndex(l=>l.id===currentLead.id);
+    if(idx>-1) leads[idx].phase=newPhase;
+    renderBoard();toast('Phase updated ✓');
+  }catch(e){toast('Update failed','error');}
+}
+
+async function deleteLead(id){
+  if(!confirm('Delete this lead and all its activity? This cannot be undone.')) return;
+  try{
+    await sb(`leads?id=eq.${id}`,{method:'DELETE'});
+    closeModal('detailOverlay');
+    await loadLeads();
+    toast('Lead deleted');
+  }catch(e){toast('Delete failed','error');}
+}
+
+function renderReports(){
+  const total=leads.length;
+  const totalVal=leads.reduce((s,l)=>s+(parseFloat((l.value||'0').replace(/[^0-9.]/g,''))||0),0);
+  const approved=leads.filter(l=>l.phase>=2).length;
+  const freight=leads.filter(l=>l.phase===3).length;
+  const withDrive=leads.filter(l=>l.drive_folder_id).length;
+  const totalEmails=leads.reduce((s,l)=>s+(l.emails_sent||0),0);
+  document.getElementById('metricsGrid').innerHTML=`
+    <div class="metric"><div class="metric-label">Total leads</div><div class="metric-val">${total}</div><div class="metric-sub">In pipeline</div></div>
+    <div class="metric"><div class="metric-label">Pipeline value</div><div class="metric-val">$${(totalVal/1000).toFixed(1)}k</div><div class="metric-sub">Estimated</div></div>
+    <div class="metric"><div class="metric-label">Approvals</div><div class="metric-val">${approved}</div><div class="metric-sub">Phase 3+</div></div>
+    <div class="metric"><div class="metric-label">In freight</div><div class="metric-val">${freight}</div><div class="metric-sub">Phase 4</div></div>
+    <div class="metric"><div class="metric-label">Drive folders</div><div class="metric-val">${withDrive}</div><div class="metric-sub">of ${total} leads</div></div>
+    <div class="metric"><div class="metric-label">Emails sent</div><div class="metric-val">${totalEmails}</div><div class="metric-sub">Via CRM</div></div>`;
+  const pCounts=PHASES.map((_,i)=>leads.filter(l=>l.phase===i).length);
+  const maxP=Math.max(...pCounts,1);
+  document.getElementById('phaseChart').innerHTML=PHASES.map((p,i)=>`<div class="bar-wrap">
+    <div class="bar-val">${pCounts[i]}</div>
+    <div class="bar${pCounts[i]===Math.max(...pCounts)?' hi':''}" style="height:${Math.round((pCounts[i]/maxP)*90)}%"></div>
+    <div class="bar-label">Ph ${i+1}</div>
+  </div>`).join('');
+  const clients=[...new Set(leads.map(l=>l.client).filter(Boolean))];
+  const cVals=clients.map(c=>leads.filter(l=>l.client===c).reduce((s,l)=>s+(parseFloat((l.value||'0').replace(/[^0-9.]/g,''))||0),0));
+  const maxC=Math.max(...cVals,1);
+  document.getElementById('clientChart').innerHTML=clients.length===0?`<div class="empty-state" style="padding:10px">No data yet</div>`:clients.map((c,i)=>`<div class="bar-wrap">
+    <div class="bar-val">$${Math.round(cVals[i]/1000)}k</div>
+    <div class="bar" style="height:${Math.round((cVals[i]/maxC)*90)}%"></div>
+    <div class="bar-label" style="font-size:9px">${c.split(' ')[0]}</div>
+  </div>`).join('');
+  document.getElementById('pipelineTable').innerHTML=`
+    <tr><th style="width:24%">Lead</th><th style="width:22%">Company</th><th style="width:16%">Value</th><th style="width:14%">Phase</th><th style="width:12%">Drive</th><th style="width:12%">Emails</th></tr>
+    ${leads.map(l=>`<tr>
+      <td>${l.name||'—'}</td><td style="color:var(--text-secondary)">${l.company||'—'}</td>
+      <td style="color:var(--accent);font-weight:600">${l.value||'TBD'}</td>
+      <td><span class="status-dot ${DOTS[l.phase||0]}"></span>Ph ${(l.phase||0)+1}</td>
+      <td style="text-align:center">${l.drive_folder_id?'<span style="color:var(--green)">✓</span>':'—'}</td>
+      <td style="text-align:center">${l.emails_sent||0}</td>
+    </tr>`).join('')}`;
+}
+
+function switchView(view,el){
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById('view-'+view).classList.add('active');
+  el.classList.add('active');
+  if(view==='reports') renderReports();
+  if(view==='drive') renderDriveView();
+}
+
+function closeModal(id){document.getElementById(id).classList.remove('open');}
+
+setStatus('driveDot','driveLabel',true,'Drive ✓');
+setStatus('emailDot','emailLabel',true,'Email ✓');
+loadLeads();
+</script>
+</body>
+</html>

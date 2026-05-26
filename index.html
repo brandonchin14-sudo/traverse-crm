@@ -19,17 +19,30 @@
   --radius-md:8px;--radius-lg:12px;
 }
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg-tertiary);color:var(--text-primary);min-height:100vh}
-.crm{min-height:100vh}
 
-/* Topbar */
+/* ── LOGIN ── */
+#loginScreen{min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg-tertiary)}
+.login-card{background:var(--bg-primary);border:0.5px solid var(--border-tertiary);border-radius:var(--radius-lg);padding:40px;width:100%;max-width:380px}
+.login-logo{display:flex;align-items:center;gap:10px;margin-bottom:28px}
+.login-logo i{font-size:28px;color:var(--accent)}
+.login-logo-text{font-size:20px;font-weight:700}
+.login-logo-sub{font-size:12px;color:var(--text-secondary);margin-top:1px}
+.login-error{background:var(--danger-light);border:0.5px solid var(--danger);border-radius:var(--radius-md);padding:9px 12px;font-size:13px;color:var(--danger);margin-bottom:14px;display:none}
+.login-error.show{display:block}
+
+/* ── APP ── */
+#appScreen{display:none}
+.crm{min-height:100vh}
 .topbar{background:var(--bg-primary);border-bottom:0.5px solid var(--border-tertiary);padding:0 24px;display:flex;align-items:center;gap:0;height:56px;position:sticky;top:0;z-index:50}
 .topbar-brand{font-size:15px;font-weight:600;color:var(--text-primary);margin-right:28px;display:flex;align-items:center;gap:8px}
 .status-pill{font-size:11px;padding:3px 8px;border-radius:99px;border:0.5px solid var(--border-tertiary);display:flex;align-items:center;gap:4px;margin-right:5px;background:var(--bg-secondary)}
 .dot{width:6px;height:6px;border-radius:50%;background:#ccc;flex-shrink:0;transition:background .3s}
 .dot.live{background:#639922}.dot.warn{background:#EF9F27}
-.nav-tab{padding:0 14px;height:56px;display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;text-decoration:none}
+.nav-tab{padding:0 14px;height:56px;display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s}
 .nav-tab:hover{color:var(--text-primary)}
 .nav-tab.active{color:var(--text-primary);border-bottom-color:var(--text-primary)}
+.user-pill{display:flex;align-items:center;gap:8px;padding:4px 10px;border-radius:99px;border:0.5px solid var(--border-tertiary);font-size:12px;color:var(--text-secondary);background:var(--bg-secondary);cursor:pointer}
+.user-pill:hover{background:var(--bg-tertiary)}
 .main{padding:24px;max-width:1400px;margin:0 auto}
 .view{display:none}.view.active{display:block}
 
@@ -45,11 +58,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .btn-send:hover{background:#3C3489}
 .btn-danger{background:var(--danger-light);border-color:var(--danger);color:var(--danger)}
 .btn-sm{padding:5px 10px;font-size:12px}
+.btn-full{width:100%;justify-content:center;padding:10px}
 
 /* Form */
 .form-input{width:100%;font-size:13px;padding:8px 10px;border:0.5px solid var(--border-secondary);border-radius:var(--radius-md);background:var(--bg-primary);color:var(--text-primary);font-family:inherit;transition:border-color .15s}
 .form-input:focus{outline:none;border-color:var(--accent)}
-.form-label{font-size:12px;color:var(--text-secondary);margin-bottom:4px;display:block}
+.form-label{font-size:12px;color:var(--text-secondary);margin-bottom:4px;display:block;font-weight:500}
 .form-group{margin-bottom:13px}
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 
@@ -68,7 +82,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 @media(max-width:600px){.phases{grid-template-columns:1fr}}
 .phase-col{background:var(--bg-secondary);border-radius:var(--radius-lg);padding:12px;border:0.5px solid var(--border-tertiary)}
 .phase-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
-.phase-title{font-size:11px;font-weight:600;padding:4px 10px;border-radius:99px;letter-spacing:.01em}
+.phase-title{font-size:11px;font-weight:600;padding:4px 10px;border-radius:99px}
 .ph1{background:#E6F1FB;color:#0C447C}.ph2{background:#FAEEDA;color:#633806}
 .ph3{background:#EAF3DE;color:#27500A}.ph4{background:#E1F5EE;color:#085041}
 .card{background:var(--bg-primary);border-radius:var(--radius-md);border:0.5px solid var(--border-tertiary);padding:11px 12px;margin-bottom:8px;cursor:pointer;transition:border-color .15s,box-shadow .15s}
@@ -82,12 +96,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .indicator{font-size:10px;display:flex;align-items:center;gap:3px;color:var(--text-tertiary)}
 .indicator.on{color:var(--green)}
 .add-card-btn{width:100%;text-align:center;font-size:12px;color:var(--text-tertiary);padding:9px;border:0.5px dashed var(--border-tertiary);border-radius:var(--radius-md);cursor:pointer;background:none;font-family:inherit;transition:all .15s}
-.add-card-btn:hover{color:var(--text-secondary);background:var(--bg-primary);border-color:var(--border-secondary)}
+.add-card-btn:hover{color:var(--text-secondary);background:var(--bg-primary)}
 
-/* Modal / Overlay */
+/* Overlays */
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:200;display:none;align-items:flex-start;justify-content:center;padding:32px 16px;overflow-y:auto}
 .overlay.open{display:flex}
-.modal{background:var(--bg-primary);border-radius:var(--radius-lg);border:0.5px solid var(--border-tertiary);width:100%;max-width:580px;padding:22px;position:relative;margin:auto}
+.modal{background:var(--bg-primary);border-radius:var(--radius-lg);border:0.5px solid var(--border-tertiary);width:100%;max-width:580px;padding:22px;margin:auto}
 .modal-lg{max-width:680px}
 .modal-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px}
 .modal-title{font-size:16px;font-weight:600}
@@ -97,7 +111,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .section-divider{font-size:11px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.07em;padding:12px 0 6px;border-top:0.5px solid var(--border-tertiary);margin-top:8px}
 
 /* Detail tabs */
-.detail-tabs{display:flex;border-bottom:0.5px solid var(--border-tertiary);margin-bottom:16px;overflow-x:auto;gap:0}
+.detail-tabs{display:flex;border-bottom:0.5px solid var(--border-tertiary);margin-bottom:16px;overflow-x:auto}
 .detail-tab{padding:9px 16px;font-size:13px;color:var(--text-secondary);cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;display:flex;align-items:center;gap:5px;transition:all .15s}
 .detail-tab:hover{color:var(--text-primary)}
 .detail-tab.active{color:var(--text-primary);border-bottom-color:var(--text-primary)}
@@ -141,7 +155,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .report-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:20px}
 .metric{background:var(--bg-primary);border:0.5px solid var(--border-tertiary);border-radius:var(--radius-md);padding:14px}
 .metric-label{font-size:11px;color:var(--text-secondary);margin-bottom:4px;font-weight:500}
-.metric-val{font-size:24px;font-weight:700;color:var(--text-primary)}
+.metric-val{font-size:24px;font-weight:700}
 .metric-sub{font-size:11px;color:var(--text-tertiary);margin-top:3px}
 .chart-area{background:var(--bg-primary);border:0.5px solid var(--border-tertiary);border-radius:var(--radius-lg);padding:16px;margin-bottom:14px}
 .chart-title{font-size:13px;font-weight:600;margin-bottom:12px}
@@ -155,26 +169,57 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 @media(max-width:800px){.reports-row{grid-template-columns:1fr}}
 .pipeline-table{width:100%;font-size:12px;border-collapse:collapse;table-layout:fixed}
 .pipeline-table th{text-align:left;font-size:11px;color:var(--text-secondary);padding:6px 8px;border-bottom:0.5px solid var(--border-tertiary);font-weight:500}
-.pipeline-table td{padding:8px;border-bottom:0.5px solid var(--border-tertiary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-primary)}
+.pipeline-table td{padding:8px;border-bottom:0.5px solid var(--border-tertiary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .status-dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:4px}
 .dot-blue{background:#378ADD}.dot-amber{background:#EF9F27}.dot-green{background:#639922}.dot-teal{background:#1D9E75}
 .empty-state{text-align:center;padding:28px;font-size:13px;color:var(--text-tertiary)}
 </style>
 </head>
 <body>
+
+<!-- ══════════════ LOGIN SCREEN ══════════════ -->
+<div id="loginScreen">
+  <div class="login-card">
+    <div class="login-logo">
+      <i class="ti ti-briefcase"></i>
+      <div>
+        <div class="login-logo-text">Traverse CRM</div>
+        <div class="login-logo-sub">Sign in to continue</div>
+      </div>
+    </div>
+    <div class="login-error" id="loginError"></div>
+    <div class="form-group">
+      <label class="form-label">Email</label>
+      <input class="form-input" type="email" id="loginEmail" placeholder="you@traverse-exports.com.au" onkeydown="if(event.key==='Enter') doLogin()">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Password</label>
+      <input class="form-input" type="password" id="loginPassword" placeholder="••••••••" onkeydown="if(event.key==='Enter') doLogin()">
+    </div>
+    <button class="btn btn-primary btn-full" id="loginBtn" onclick="doLogin()">
+      <i class="ti ti-login"></i> Sign in
+    </button>
+    <div style="margin-top:16px;font-size:12px;color:var(--text-tertiary);text-align:center">
+      Access is by invitation only. Contact your administrator to request an account.
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ APP SCREEN ══════════════ -->
+<div id="appScreen">
 <div class="crm">
 <div class="topbar">
-  <div class="topbar-brand">
-    <i class="ti ti-briefcase" style="font-size:20px;color:var(--accent)"></i>
-    Traverse CRM
-  </div>
+  <div class="topbar-brand"><i class="ti ti-briefcase" style="font-size:20px;color:var(--accent)"></i> Traverse CRM</div>
   <div class="status-pill"><div class="dot" id="sbDot"></div><span id="sbLabel" style="color:var(--text-secondary)">DB</span></div>
   <div class="status-pill"><div class="dot" id="driveDot"></div><span id="driveLabel" style="color:var(--text-secondary)">Drive</span></div>
   <div class="status-pill"><div class="dot" id="emailDot"></div><span id="emailLabel" style="color:var(--text-secondary)">Email</span></div>
   <div class="nav-tab active" onclick="switchView('pipeline',this)"><i class="ti ti-layout-kanban"></i> Pipeline</div>
   <div class="nav-tab" onclick="switchView('drive',this)"><i class="ti ti-brand-google-drive"></i> Drive</div>
   <div class="nav-tab" onclick="switchView('reports',this)"><i class="ti ti-chart-bar"></i> Reports</div>
-  <div style="margin-left:auto"><button class="btn btn-primary" onclick="openNewLead()"><i class="ti ti-plus"></i> New lead</button></div>
+  <div style="margin-left:auto;display:flex;align-items:center;gap:10px">
+    <button class="btn btn-primary" onclick="openNewLead()"><i class="ti ti-plus"></i> New lead</button>
+    <div class="user-pill" onclick="doLogout()"><i class="ti ti-user"></i><span id="userEmail"></span><i class="ti ti-logout" style="font-size:13px"></i></div>
+  </div>
 </div>
 
 <!-- PIPELINE -->
@@ -186,7 +231,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <span style="font-size:12px;color:var(--text-secondary)" id="leadCount"></span>
   </div>
   <div class="phases" id="phasesBoard">
-    <div class="empty-state" style="grid-column:1/-1"><i class="ti ti-loader"></i> Loading from Supabase...</div>
+    <div class="empty-state" style="grid-column:1/-1"><i class="ti ti-loader"></i> Loading...</div>
   </div>
 </div>
 
@@ -233,10 +278,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <div class="overlay" id="detailOverlay">
   <div class="modal modal-lg">
     <div class="modal-header">
-      <div>
-        <div class="modal-title" id="detailName"></div>
-        <div class="modal-sub" id="detailSub"></div>
-      </div>
+      <div><div class="modal-title" id="detailName"></div><div class="modal-sub" id="detailSub"></div></div>
       <div style="display:flex;gap:8px;align-items:center">
         <select class="form-input" style="width:auto;font-size:12px" id="detailPhaseSelect" onchange="updatePhase()">
           <option value="0">Phase 1 — Quote Request</option>
@@ -259,14 +301,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="detail-section" id="dtab-activity"></div>
   </div>
 </div>
+</div>
+</div>
 
 <div class="toast" id="toast"></div>
-</div>
 
 <script>
 const SB_URL='https://dwmpunbcwrprhhzwduyx.supabase.co';
 const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR3bXB1bmJjd3JwcmhoendkdXl4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk3NTc5MDgsImV4cCI6MjA5NTMzMzkwOH0.3Y4eUIXDWoBX7K_HgBSswMLDo4me_eDxcAw4SQVZxZM';
-const SB_HDR={'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY};
 const EMAIL_FN=SB_URL+'/functions/v1/send-email';
 const PHASES=[
   {name:'Phase 1 — Quote Request',short:'Quote Request',cls:'ph1'},
@@ -275,9 +317,81 @@ const PHASES=[
   {name:'Phase 4 — Freighting',short:'Freighting',cls:'ph4'}
 ];
 const DOTS=['dot-blue','dot-amber','dot-green','dot-teal'];
-let leads=[],currentLead=null;
+let leads=[],currentLead=null,authToken=null,currentUser=null;
 
-function sb(path,opts={}){return fetch(SB_URL+'/rest/v1/'+path,{headers:SB_HDR,...opts});}
+/* ── AUTH ── */
+function sbHeaders(token){
+  return{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+(token||SB_KEY)};
+}
+
+async function doLogin(){
+  const email=document.getElementById('loginEmail').value.trim();
+  const password=document.getElementById('loginPassword').value;
+  const btn=document.getElementById('loginBtn');
+  const err=document.getElementById('loginError');
+  if(!email||!password){showLoginError('Please enter your email and password.');return;}
+  btn.innerHTML='<i class="ti ti-loader"></i> Signing in...';btn.disabled=true;
+  err.classList.remove('show');
+  try{
+    const res=await fetch(SB_URL+'/auth/v1/token?grant_type=password',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':SB_KEY},
+      body:JSON.stringify({email,password})
+    });
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error_description||data.msg||'Invalid email or password');
+    authToken=data.access_token;
+    currentUser=data.user;
+    localStorage.setItem('traverse_token',authToken);
+    localStorage.setItem('traverse_user',JSON.stringify(currentUser));
+    showApp();
+  }catch(e){
+    showLoginError(e.message);
+    btn.innerHTML='<i class="ti ti-login"></i> Sign in';btn.disabled=false;
+  }
+}
+
+function showLoginError(msg){
+  const err=document.getElementById('loginError');
+  err.textContent=msg;err.classList.add('show');
+}
+
+function showApp(){
+  document.getElementById('loginScreen').style.display='none';
+  document.getElementById('appScreen').style.display='block';
+  document.getElementById('userEmail').textContent=currentUser?.email||'';
+  setStatus('driveDot','driveLabel',true,'Drive ✓');
+  setStatus('emailDot','emailLabel',true,'Email ✓');
+  loadLeads();
+}
+
+function doLogout(){
+  if(!confirm('Sign out?')) return;
+  authToken=null;currentUser=null;
+  localStorage.removeItem('traverse_token');
+  localStorage.removeItem('traverse_user');
+  document.getElementById('appScreen').style.display='none';
+  document.getElementById('loginScreen').style.display='flex';
+  document.getElementById('loginEmail').value='';
+  document.getElementById('loginPassword').value='';
+  document.getElementById('loginBtn').innerHTML='<i class="ti ti-login"></i> Sign in';
+  document.getElementById('loginBtn').disabled=false;
+}
+
+function checkExistingSession(){
+  const token=localStorage.getItem('traverse_token');
+  const user=localStorage.getItem('traverse_user');
+  if(token&&user){
+    authToken=token;
+    try{currentUser=JSON.parse(user);}catch(_){currentUser={};}
+    showApp();
+  }
+}
+
+/* ── DB ── */
+function sb(path,opts={}){
+  return fetch(SB_URL+'/rest/v1/'+path,{headers:sbHeaders(authToken),...opts});
+}
 
 function toast(msg,type='success'){
   const t=document.getElementById('toast');
@@ -295,14 +409,14 @@ function setStatus(dotId,labelId,live,label){
 async function loadLeads(){
   try{
     const r=await sb('leads?select=*&order=created_at.desc');
+    if(r.status===401){doLogout();return;}
     if(!r.ok) throw new Error();
     leads=await r.json();
     setStatus('sbDot','sbLabel',true,'DB ✓');
-    populateClientFilter();
-    renderBoard();
+    populateClientFilter();renderBoard();
   }catch(e){
     setStatus('sbDot','sbLabel',false,'DB error');
-    toast('Cannot connect to Supabase','error');
+    toast('Cannot connect to database','error');
     leads=[];renderBoard();
   }
 }
@@ -348,7 +462,7 @@ async function sendEmailViaFunction(to,subject,body,templateName){
   if(!to){toast('No email address on this lead','error');return false;}
   toast('Sending email...','sending');
   try{
-    const res=await fetch(EMAIL_FN,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY},body:JSON.stringify({to,subject,body})});
+    const res=await fetch(EMAIL_FN,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify({to,subject,body})});
     const data=await res.json();
     if(!res.ok) throw new Error(data.error||'Send failed');
     await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Email sent',detail:`${templateName} → ${to}`})});
@@ -360,8 +474,7 @@ async function sendEmailViaFunction(to,subject,body,templateName){
     setStatus('emailDot','emailLabel',true,'Email ✓');
     document.getElementById('toast').classList.remove('show');
     toast(`Email sent to ${to} ✓`);
-    renderBoard();
-    await renderDetailActivity();
+    renderBoard();await renderDetailActivity();
     return true;
   }catch(e){
     setStatus('emailDot','emailLabel',false,'Email error');
@@ -399,7 +512,7 @@ function openNewLeadPhase(phase){
     <div style="font-size:12px;font-family:monospace;background:var(--bg-secondary);padding:9px 11px;border-radius:var(--radius-md);color:var(--text-secondary);margin-bottom:12px" id="docPreview">Fill in materials and company above</div>
     <div style="display:flex;gap:16px;margin-bottom:16px">
       <label style="font-size:13px;cursor:pointer;display:flex;align-items:center;gap:7px"><input type="checkbox" id="f-drive" checked> <i class="ti ti-brand-google-drive" style="color:var(--amber)"></i> Create Drive folder</label>
-      <label style="font-size:13px;cursor:pointer;display:flex;align-items:center;gap:7px"><input type="checkbox" id="f-email"> <i class="ti ti-send" style="color:var(--purple)"></i> Send acknowledgement email</label>
+      <label style="font-size:13px;cursor:pointer;display:flex;align-items:center;gap:7px"><input type="checkbox" id="f-email"> <i class="ti ti-send" style="color:var(--purple)"></i> Send acknowledgement</label>
     </div>
     <div style="display:flex;gap:8px;justify-content:flex-end">
       <button class="btn" onclick="closeModal('leadOverlay')">Cancel</button>
@@ -429,7 +542,7 @@ async function saveLead(){
   const sendEmail=document.getElementById('f-email')?.checked;
   const payload={name,company:comp,contact,mobile:document.getElementById('f-mobile').value,materials:mat,qty:document.getElementById('f-qty').value,value:document.getElementById('f-value').value||'TBD',project:document.getElementById('f-project').value,phase:parseInt(document.getElementById('f-phase').value),notes:document.getElementById('f-notes').value,client:comp,emails_sent:0,doc_code:`${ymd}-${mat.substring(0,14)}-${comp.substring(0,10)}`};
   try{
-    const res=await sb('leads',{method:'POST',body:JSON.stringify(payload),headers:{...SB_HDR,'Prefer':'return=representation'}});
+    const res=await sb('leads',{method:'POST',body:JSON.stringify(payload),headers:{...sbHeaders(authToken),'Prefer':'return=representation'}});
     if(!res.ok) throw new Error(await res.text());
     const [saved]=await res.json();
     await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:saved.id,action:'Lead created',detail:`${mat} for ${comp}`})});
@@ -553,7 +666,7 @@ function renderDetailEmails(){
     <div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:9px 13px;margin-bottom:14px;font-size:12px;display:flex;align-items:center;gap:8px;border:0.5px solid var(--border-tertiary)">
       <i class="ti ti-send" style="color:var(--purple)"></i>
       Sending from <strong>sales@traverse-exports.com.au</strong>
-      ${l.contact?` → to <strong>${l.contact}</strong>`:'<span style="color:var(--danger)"> — add email in Details first</span>'}
+      ${l.contact?` → to <strong>${l.contact}</strong>`:'<span style="color:var(--danger)"> — add client email in Details first</span>'}
     </div>
     ${templates.map((t,i)=>`<div class="email-template">
       <div class="email-phase">${t.phase}</div>
@@ -577,10 +690,10 @@ async function sendFromTemplate(i,subject,name){
     btn.innerHTML='<i class="ti ti-check"></i> Sent';
     status.textContent=`Sent ${new Date().toLocaleTimeString()}`;
     setTimeout(()=>{btn.innerHTML='<i class="ti ti-send"></i> Send email';btn.disabled=false;status.textContent='';},4000);
-  } else {btn.innerHTML='<i class="ti ti-send"></i> Send email';btn.disabled=false;}
+  }else{btn.innerHTML='<i class="ti ti-send"></i> Send email';btn.disabled=false;}
 }
 
-function copyEmailBody(i){navigator.clipboard?.writeText(document.getElementById('ebody-'+i).innerText);toast('Copied to clipboard ✓');}
+function copyEmailBody(i){navigator.clipboard?.writeText(document.getElementById('ebody-'+i).innerText);toast('Copied ✓');}
 
 async function renderDetailFiles(){
   const l=currentLead;
@@ -594,16 +707,16 @@ async function renderDetailFiles(){
     </div>
     ${l.drive_folder_id?`<span style="font-size:12px;color:var(--green)"><i class="ti ti-check"></i> Linked</span>`:''}
   </div>
-  ${!l.drive_folder_id?`<div style="text-align:center;padding:20px"><button class="btn btn-green" onclick="createFolderFromDetail()"><i class="ti ti-brand-google-drive"></i> Create Drive folder now</button></div>`
-  :`<div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px">Open Google Drive to upload and manage files for this lead.</div>
-  <a href="https://drive.google.com" target="_blank" class="btn btn-green btn-sm"><i class="ti ti-brand-google-drive"></i> Open Google Drive</a>`}`;
+  ${!l.drive_folder_id
+    ?`<div style="text-align:center;padding:20px"><button class="btn btn-green" onclick="createFolderFromDetail()"><i class="ti ti-brand-google-drive"></i> Create Drive folder now</button></div>`
+    :`<div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">Open Google Drive to upload and manage files for this lead.</div>
+    <a href="https://drive.google.com" target="_blank" class="btn btn-green btn-sm"><i class="ti ti-brand-google-drive"></i> Open Google Drive</a>`}`;
 }
 
 async function createFolderFromDetail(){
   if(!currentLead) return;
   await createDriveFolderForLead(currentLead);
-  renderDetailInfo();
-  renderDetailFiles();
+  renderDetailInfo();renderDetailFiles();
 }
 
 async function renderDetailActivity(){
@@ -647,7 +760,7 @@ async function updatePhase(){
 }
 
 async function deleteLead(id){
-  if(!confirm('Delete this lead and all its activity? This cannot be undone.')) return;
+  if(!confirm('Delete this lead? This cannot be undone.')) return;
   try{
     await sb(`leads?id=eq.${id}`,{method:'DELETE'});
     closeModal('detailOverlay');
@@ -707,9 +820,7 @@ function switchView(view,el){
 
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 
-setStatus('driveDot','driveLabel',true,'Drive ✓');
-setStatus('emailDot','emailLabel',true,'Email ✓');
-loadLeads();
+checkExistingSession();
 </script>
 </body>
 </html>

@@ -666,29 +666,14 @@ async function processFile(file){
     const base64=await fileToBase64(file);
     const isPdf=file.type==='application/pdf';
     const mediaType=file.type;
-    const prompt=`You are scanning a supplier quote or invoice document. Extract ALL line items and return ONLY a valid JSON object with this exact structure, no other text:
-{
-  "client_name": "company name from the bill-to or address section if visible, otherwise empty string",
-  "client_address": "full address if visible, otherwise empty string",
-  "line_items": [
-    {
-      "item_name": "item or product name",
-      "description": "full description of the item",
-      "quantity": 1,
-      "gst_applicable": true
-    }
-  ]
-}
-Important: DO NOT include pricing/rates - leave those for the user to fill in. Extract quantity accurately. Set gst_applicable to true by default. Return only the JSON, no markdown, no explanation.`;
-    const msgContent=isPdf
-      ?[{type:'document',source:{type:'base64',media_type:mediaType,data:base64}},{type:'text',text:prompt}]
-      :[{type:'image',source:{type:'base64',media_type:mediaType,data:base64}},{type:'text',text:prompt}];
-    const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:2000,messages:[{role:'user',content:msgContent}]})});
-    const data=await resp.json();
-    const text=data.content?.find(b=>b.type==='text')?.text||'';
-    const clean=text.replace(/```json|```/g,'').trim();
-    const parsed=JSON.parse(clean);
-    await createDraftQuote(parsed,file.name);
+    const resp=await fetch(SB_URL+'/functions/v1/scan-document',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},
+      body:JSON.stringify({base64,mediaType,isPdf})
+    });
+    const result=await resp.json();
+    if(!resp.ok||!result.success) throw new Error(result.error||'Scan failed');
+    await createDraftQuote(result.data,file.name);
   }catch(e){
     toast('Scan failed: '+e.message,'error');
     document.getElementById('dropZone').style.display='block';

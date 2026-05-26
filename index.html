@@ -1290,11 +1290,6 @@ function renderReports(){
       <div style="font-size:12px;font-weight:600;color:${t.color}">${t.label}</div>
     </div>`).join('')}
   </div>`;
-  /* type split chart above replaces client chart */
-  if(false){ 
-    const cnt=leads.filter(l=>l.client===c).length;
-    return `<div class="bar-wrap"><div class="bar-val">${cnt}</div><div class="bar" style="height:${Math.round((cnt/leads.length)*90)}%"></div><div class="bar-label" style="font-size:9px">${c.split(' ')[0]}</div></div>`;
-  }).join('');
   document.getElementById('pipelineTable').innerHTML=`
     <tr><th style="width:20%">Lead</th><th style="width:18%">Company</th><th style="width:12%">Type</th><th style="width:12%">Phase</th><th style="width:14%">Quote</th><th style="width:12%">Drive</th><th style="width:12%">Emails</th></tr>
     ${leads.map(l=>`<tr>

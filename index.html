@@ -1053,28 +1053,38 @@ async function generateQBInvoice(){
 function renderDetailEmails(){
   const l=currentLead;
   const fn=(l.name||'').split(' ')[0];
+  const to=l.contact||'';
+  const fromInfo=to
+    ?' &rarr; to <strong>'+to+'</strong>'
+    :'<span style="color:var(--danger)"> &mdash; add client email in Details first</span>';
   const templates=[
-    {phase:'Phase 1',name:'Quote acknowledgement',subj:`${l.name||''} Quote Enquiry`,body:`Hi ${fn},\n\nThank you for submitting a quote request with us!\n\nWe are currently checking with our suppliers and will keep you updated as soon as we receive a response.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au`},
-    {phase:'Phase 2',name:'Supplier enquiry',subj:`Quote Request for ${l.company||''}`,body:`Hi [Supplier],\n\nI hope this email finds you well.\n\nWe've received a request from our client and would like to enquire about availability and pricing.\n\nCould you please provide a quote with lead times?\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au`},
-    {phase:'Phase 3',name:'Client approval & PO',subj:`Purchase Order &#8212; ${l.company||''}`,body:`Hi [Supplier],\n\nOur client has approved the provided quote. Please find the attached purchase order.\n\nIf you could keep us updated on lead times that would be greatly appreciated.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au`},
-    {phase:'Phase 4',name:'Freight documentation',subj:`Freight Documentation &#8212; ${l.company||''} cargo`,body:`Hi [Freight partner],\n\nPlease see attached documentation for the cargo we will be dropping off. We will provide a hard copy once dropped off.\n\nCheers,\nTraverse Exports\nsales@traverse-exports.com.au`},
+    {phase:'Phase 1',name:'Quote acknowledgement',
+     subj:l.name+' Quote Enquiry',
+     body:'Hi '+fn+',\n\nThank you for submitting a quote request with us!\n\nWe are currently checking with our suppliers and will keep you updated as soon as we receive a response.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au'},
+    {phase:'Phase 2',name:'Supplier enquiry',
+     subj:'Quote Request for '+(l.company||''),
+     body:'Hi [Supplier],\n\nI hope this email finds you well.\n\nWe have received a request from our client and would like to enquire about availability and pricing.\n\nCould you please provide a quote with lead times?\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au'},
+    {phase:'Phase 3',name:'Client approval & PO',
+     subj:'Purchase Order - '+(l.company||''),
+     body:'Hi [Supplier],\n\nOur client has approved the provided quote. Please find the attached purchase order.\n\nIf you could keep us updated on lead times that would be greatly appreciated.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au'},
+    {phase:'Phase 4',name:'Freight documentation',
+     subj:'Freight Documentation - '+(l.company||'')+' cargo',
+     body:'Hi [Freight partner],\n\nPlease see attached documentation for the cargo we will be dropping off. We will provide a hard copy once dropped off.\n\nCheers,\nTraverse Exports\nsales@traverse-exports.com.au'},
   ];
-  document.getElementById('dtab-emails').innerHTML=`
-    <div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:9px 13px;margin-bottom:14px;font-size:12px;display:flex;align-items:center;gap:8px;border:0.5px solid var(--border-t)">
-      <i class="ti ti-send" style="color:var(--purple)"></i>
-      From <strong>sales@traverse-exports.com.au</strong>
-      ${l.contact?` &#8594; to <strong>${l.contact}</strong>`:'<span style="color:var(--danger)"> &#8212; add client email in Details first</span>'}
-    </div>
-    ${templates.map((t,i)=>`<div class="email-template">
-      <div class="email-phase">${t.phase}</div>
-      <div class="email-subject-line">${t.subj}</div>
-      <div class="email-body" id="ebody-${i}" contenteditable="true">${t.body}</div>
-      <div class="email-actions">
-        <button class="btn btn-sm" onclick="copyEmailBody(${i})"><i class="ti ti-copy"></i> Copy</button>
-        <button class="btn btn-send btn-sm" id="sendBtn-${i}" onclick="sendFromTemplate(${i},'${t.subj.replace(/'/g,"\\'")}','${t.name}')"><i class="ti ti-send"></i> Send</button>
-        <span class="send-status" id="sendStatus-${i}"></span>
-      </div>
-    </div>`).join('')}`;
+  var header='<div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:9px 13px;margin-bottom:14px;font-size:12px;display:flex;align-items:center;gap:8px;border:0.5px solid var(--border-t)">'
+    +'<i class="ti ti-send" style="color:var(--purple)"></i> From <strong>sales@traverse-exports.com.au</strong>'+fromInfo+'</div>';
+  var rows=templates.map(function(t,i){
+    return '<div class="email-template">'
+      +'<div class="email-phase">'+t.phase+'</div>'
+      +'<div class="email-subject-line">'+t.subj+'</div>'
+      +'<div class="email-body" id="ebody-'+i+'" contenteditable="true">'+t.body+'</div>'
+      +'<div class="email-actions">'
+      +'<button class="btn btn-sm" onclick="copyEmailBody('+i+')"><i class="ti ti-copy"></i> Copy</button>'
+      +'<button class="btn btn-send btn-sm" id="sendBtn-'+i+'" onclick="sendFromTemplate('+i+',this.dataset.subj,this.dataset.name)" data-subj="'+t.subj.replace(/"/g,'&quot;')+'" data-name="'+t.name+'"><i class="ti ti-send"></i> Send</button>'
+      +'<span class="send-status" id="sendStatus-'+i+'"></span>'
+      +'</div></div>';
+  }).join('');
+  document.getElementById('dtab-emails').innerHTML=header+rows;
 }
 
 async function sendEmailViaFunction(to,subject,body,templateName,leadId){
@@ -1107,14 +1117,21 @@ async function sendEmailViaFunction(to,subject,body,templateName,leadId){
   }
 }
 
-async function sendFromTemplate(i,subject,name){
-  const body=document.getElementById('ebody-'+i).innerText;
-  const btn=document.getElementById('sendBtn-'+i);
-  const status=document.getElementById('sendStatus-'+i);
+async function sendFromTemplate(i,subjectArg,nameArg){
+  var btn=document.getElementById('sendBtn-'+i);
+  var subject=subjectArg||btn.dataset.subj||'';
+  var name=nameArg||btn.dataset.name||'';
+  var body=document.getElementById('ebody-'+i).innerText;
+  var status=document.getElementById('sendStatus-'+i);
   btn.disabled=true;btn.innerHTML='<i class="ti ti-loader"></i> Sending...';
-  const ok=await sendEmailViaFunction(currentLead?.contact,subject,body,name);
-  if(ok){btn.innerHTML='<i class="ti ti-check"></i> Sent';status.textContent=`Sent ${new Date().toLocaleTimeString()}`;setTimeout(()=>{btn.innerHTML='<i class="ti ti-send"></i> Send';btn.disabled=false;status.textContent='';},4000);}
-  else{btn.innerHTML='<i class="ti ti-send"></i> Send';btn.disabled=false;}
+  var ok=await sendEmailViaFunction(currentLead?currentLead.contact:null,subject,body,name);
+  if(ok){
+    btn.innerHTML='<i class="ti ti-check"></i> Sent';
+    status.textContent='Sent '+new Date().toLocaleTimeString();
+    setTimeout(function(){btn.innerHTML='<i class="ti ti-send"></i> Send';btn.disabled=false;status.textContent='';},4000);
+  } else {
+    btn.innerHTML='<i class="ti ti-send"></i> Send';btn.disabled=false;
+  }
 }
 function copyEmailBody(i){navigator.clipboard?.writeText(document.getElementById('ebody-'+i).innerText);toast('Copied &#10003;');}
 

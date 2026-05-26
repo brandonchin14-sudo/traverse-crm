@@ -4,7 +4,25 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Traverse CRM</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
+<link rel="stylesheet" href="https://unpkg.com/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css" onerror="this.onerror=null;this.href='https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/tabler-icons.min.css'">
+<script>
+// Ensure icons load &#8212; fallback to text if CDN fails
+window.addEventListener('load', function() {
+  var test = document.createElement('i');
+  test.className = 'ti ti-check';
+  test.style.visibility = 'hidden';
+  document.body.appendChild(test);
+  var style = window.getComputedStyle(test, ':before');
+  if (!style.content || style.content === 'none' || style.content === '') {
+    // Icons failed to load &#8212; add backup CDN
+    var link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = 'https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css';
+    document.head.appendChild(link);
+  }
+  document.body.removeChild(test);
+});
+</script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -1299,9 +1317,15 @@ function switchView(view,el){
 }
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 
-setStatus('driveDot','driveLabel',true,'Drive &#10003;');
-setStatus('emailDot','emailLabel',true,'Email &#10003;');
-checkSession();
+try {
+  setStatus('driveDot','driveLabel',true,'Drive &#10003;');
+  setStatus('emailDot','emailLabel',true,'Email &#10003;');
+  checkSession();
+} catch(e) {
+  console.error('CRM init error:', e);
+  document.getElementById('loginBtn').disabled = false;
+  document.getElementById('loginBtn').innerHTML = '<i class="ti ti-login"></i> Sign in';
+}
 </script>
 </body>
 </html>

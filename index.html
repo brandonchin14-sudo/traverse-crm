@@ -353,7 +353,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="modal-header">
       <div><div class="modal-title">Generated quote &#8212; editable</div><div class="modal-sub" id="previewQuoteNum"></div></div>
       <div style="display:flex;gap:8px;align-items:center">
-        <button class="btn btn-sm" onclick="renderPricingStep(document.getElementById('dtab-quote'));closeModal('previewOverlay')"><i class="ti ti-arrow-left"></i> Back to pricing</button>
+        <button class="btn btn-sm" onclick="closeModal('previewOverlay');setTimeout(function(){if(currentQuote)currentQuote.status='draft';var el=document.getElementById('dtab-quote');if(el){el.classList.add('active');renderPricingStep(el);}},100)"><i class="ti ti-arrow-left"></i> Back to pricing</button>
         <button class="btn btn-primary" id="previewSendBtn" onclick="sendQuoteToClient()"><i class="ti ti-send"></i> Save &amp; send to client</button>
         <button class="close-btn" onclick="closeModal('previewOverlay')"><i class="ti ti-x"></i></button>
       </div>
@@ -1219,10 +1219,10 @@ async function sendQuoteToClient(){
         throw new Error('PDF libraries not loaded. Check your internet connection.');
       }
       pdfB64 = await generateQuotePDF(currentQuote, currentLineItems);
-      if(pdfB64) toast('PDF generated &#10003; — sending...', 'info');
+      if(pdfB64) toast('PDF generated &#10003; &#8212; sending...', 'info');
     } catch(pdfErr) {
       console.error('PDF generation failed:', pdfErr);
-      toast('PDF could not be generated: ' + pdfErr.message + ' — sending email without attachment', 'error');
+      toast('PDF could not be generated: ' + pdfErr.message + ' &#8212; sending email without attachment', 'error');
       await new Promise(r => setTimeout(r, 2000));
     }
     btn.innerHTML='<i class="ti ti-loader"></i> Sending...';

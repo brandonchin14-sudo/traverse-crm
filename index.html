@@ -679,18 +679,28 @@ function renderDetailInfo(){
 /* &#9472;&#9472; QUOTE TAB &#9472;&#9472; */
 async function renderQuoteTab(){
   const el=document.getElementById('dtab-quote');
-  if(!el) return;
-  // Ensure QB customers loaded
-  if(!qbCustomers.length) await loadQBCustomers();
-  if(currentQuote && currentQuote.status!=='draft'){
-    renderQuoteReview(el);
-    return;
+  console.log('renderQuoteTab called, el:', el, 'currentQuote:', currentQuote, 'currentLineItems:', currentLineItems);
+  if(!el){ console.error('dtab-quote element not found'); return; }
+  el.innerHTML='<div style="padding:20px;font-size:13px;color:var(--text-secondary)"><i class="ti ti-loader"></i> Loading...</div>';
+  try {
+    if(!qbCustomers.length) await loadQBCustomers();
+    console.log('QB customers loaded:', qbCustomers.length);
+    if(currentQuote && currentQuote.status!=='draft'){
+      console.log('Showing quote review, status:', currentQuote.status);
+      renderQuoteReview(el);
+      return;
+    }
+    if(currentQuote && currentQuote.status==='draft' && currentLineItems.length>0){
+      console.log('Showing pricing step, items:', currentLineItems.length);
+      renderPricingStep(el);
+      return;
+    }
+    console.log('Showing document scan (no quote yet)');
+    renderDocumentScan(el);
+  } catch(e) {
+    console.error('renderQuoteTab error:', e);
+    el.innerHTML='<div style="padding:20px;font-size:13px;color:var(--danger)">Error loading quote tab: '+e.message+'</div>';
   }
-  if(currentQuote && currentQuote.status==='draft' && currentLineItems.length>0){
-    renderPricingStep(el);
-    return;
-  }
-  renderDocumentScan(el);
 }
 
 function renderDocumentScan(el){

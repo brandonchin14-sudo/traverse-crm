@@ -283,7 +283,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <!-- DRIVE -->
 <div id="view-drive" class="view main">
   <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px">
-    <div style="flex:1"><div style="font-size:16px;font-weight:600;margin-bottom:3px">Google Drive — Traverse CRM</div>
+    <div style="flex:1"><div style="font-size:16px;font-weight:600;margin-bottom:3px">Google Drive &#8212; Traverse CRM</div>
     <div style="font-size:13px;color:var(--text-secondary)">Auto-structured folders per lead</div></div>
     <button class="btn" onclick="renderDriveView()"><i class="ti ti-refresh"></i></button>
   </div>
@@ -324,7 +324,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <div><div class="modal-title" id="detailName"></div><div class="modal-sub" id="detailSub"></div></div>
       <div style="display:flex;gap:8px;align-items:center">
         <select class="form-input" style="width:auto;font-size:12px" id="detailPhaseSelect" onchange="updatePhase()">
-          <option value="0">Phase 1 — Quote Request</option>
+          <option value="0">Phase 1 &#8212; Quote Request</option>
           <option value="1">Phase 2 — Enquire Suppliers</option>
           <option value="2">Phase 3 — Client Approval</option>
           <option value="3">Phase 4 — Freighting</option>
@@ -1045,9 +1045,15 @@ async function sendQuoteToClient(){
     btn.innerHTML='<i class="ti ti-loader"></i> Generating PDF...';
     var pdfB64 = null;
     try {
+      if(typeof window.jspdf === 'undefined' || typeof window.html2canvas === 'undefined') {
+        throw new Error('PDF libraries not loaded. Check your internet connection.');
+      }
       pdfB64 = await generateQuotePDF(currentQuote, currentLineItems);
+      if(pdfB64) toast('PDF generated &#10003; — sending...', 'info');
     } catch(pdfErr) {
-      console.warn('PDF generation failed, sending without attachment:', pdfErr);
+      console.error('PDF generation failed:', pdfErr);
+      toast('PDF could not be generated: ' + pdfErr.message + ' — sending email without attachment', 'error');
+      await new Promise(r => setTimeout(r, 2000));
     }
     btn.innerHTML='<i class="ti ti-loader"></i> Sending...';
     const res=await fetch(EMAIL_FN,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify({to:currentLead.contact,subject,body,pdfBase64:pdfB64,quoteNumber:currentQuote.quote_number})});

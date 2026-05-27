@@ -961,7 +961,7 @@ async function sendQuoteToClient(){
   const fn=(currentLead.name||'').split(' ')[0];
   const body=`Hi ${fn},\n\nPlease find your quote ${currentQuote.quote_number} below.\n\nTotal: A$${(currentQuote.total||0).toFixed(2)}\nExpiry: ${currentQuote.expiry_date?new Date(currentQuote.expiry_date).toLocaleDateString('en-AU'):'&#8212;'}\n\nPlease review and let us know if you\'d like to proceed, or if you have any changes.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au`;
   try{
-    const res=await fetch(EMAIL_FN,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify({to:currentLead.contact,subject,body})});
+    const res=await fetch(EMAIL_FN,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify({to:currentLead.contact,subject,body,quote:currentQuote,lineItems:currentLineItems})});
     const data=await res.json();
     if(!res.ok) throw new Error(data.error||'Send failed');
     await sb(`leads?id=eq.${currentLead.id}`,{method:'PATCH',body:JSON.stringify({quote_status:'sent',emails_sent:(currentLead.emails_sent||0)+1,updated_at:new Date().toISOString()})});

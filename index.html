@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Traverse CRM</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css" onerror="this.onerror=null;this.href='https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/tabler-icons.min.css'">
 <script>
 // Ensure icons load &#8212; fallback to text if CDN fails
@@ -255,6 +254,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <div class="status-pill"><div class="dot" id="sbDot"></div><span id="sbLabel" style="color:var(--text-secondary)">DB</span></div>
   <div class="status-pill"><div class="dot" id="driveDot"></div><span id="driveLabel" style="color:var(--text-secondary)">Drive</span></div>
   <div class="status-pill"><div class="dot" id="emailDot"></div><span id="emailLabel" style="color:var(--text-secondary)">Email</span></div>
+  <div class="status-pill" id="qbPill" style="cursor:pointer" onclick="connectQB()" title="QuickBooks"><div class="dot" id="qbDot"></div><span id="qbLabel" style="color:var(--text-secondary)">QB</span></div>
   <div class="nav-tab active" onclick="switchView('pipeline',this)"><i class="ti ti-layout-kanban"></i> Pipeline</div>
   <div class="nav-tab" onclick="switchView('drive',this)"><i class="ti ti-brand-google-drive"></i> Drive</div>
   <div class="nav-tab" onclick="switchView('reports',this)"><i class="ti ti-chart-bar"></i> Reports</div>
@@ -325,9 +325,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <div style="display:flex;gap:8px;align-items:center">
         <select class="form-input" style="width:auto;font-size:12px" id="detailPhaseSelect" onchange="updatePhase()">
           <option value="0">Phase 1 &#8212; Quote Request</option>
-          <option value="1">Phase 2 — Enquire Suppliers</option>
-          <option value="2">Phase 3 — Client Approval</option>
-          <option value="3">Phase 4 — Freighting</option>
+          <option value="1">Phase 2 &#8212; Enquire Suppliers</option>
+          <option value="2">Phase 3 &#8212; Client Approval</option>
+          <option value="3">Phase 4 &#8212; Freighting</option>
         </select>
         <button class="close-btn" onclick="closeModal('detailOverlay')"><i class="ti ti-x"></i></button>
       </div>
@@ -351,7 +351,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <div class="overlay" id="previewOverlay">
   <div class="modal modal-xl">
     <div class="modal-header">
-      <div><div class="modal-title">Generated quote — editable</div><div class="modal-sub" id="previewQuoteNum"></div></div>
+      <div><div class="modal-title">Generated quote &#8212; editable</div><div class="modal-sub" id="previewQuoteNum"></div></div>
       <div style="display:flex;gap:8px;align-items:center">
         <button class="btn btn-sm" onclick="renderPricingStep(document.getElementById('dtab-quote'));closeModal('previewOverlay')"><i class="ti ti-arrow-left"></i> Back to pricing</button>
         <button class="btn btn-primary" id="previewSendBtn" onclick="sendQuoteToClient()"><i class="ti ti-send"></i> Save &amp; send to client</button>
@@ -406,9 +406,64 @@ function showApp(){
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('appScreen').style.display='block';
   document.getElementById('userEmail').textContent=currentUser?.email||'';
-  setStatus('driveDot','driveLabel',true,'Drive &#10003;');
+  var QB_API_URL='https://dwmpunbcwrprhhzwduyx.supabase.co/functions/v1/quickbooks-api';
+var qbCustomers=[];
+function connectQB(){window.open('https://dwmpunbcwrprhhzwduyx.supabase.co/functions/v1/quickbooks-auth?action=connect','_blank','width=600,height=700');}
+async function callQB(action,extra){
+  var res=await fetch(QB_API_URL,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify(Object.assign({action:action},extra||{}))});
+  return res.json();
+}
+async function checkQBConnection(){
+  try{
+    var data=await callQB('check_connection');
+    if(data.success){setStatus('qbDot','qbLabel',true,'QB &#10003;');document.getElementById('qbPill').title='QuickBooks: '+(data.company||'Connected');}
+    else setStatus('qbDot','qbLabel',false,'QB - click to connect');
+  }catch(e){setStatus('qbDot','qbLabel',false,'QB');}
+}
+async function loadQBCustomers(){
+  try{var data=await callQB('get_customers');if(data.success){qbCustomers=data.customers||[];}return qbCustomers;}
+  catch(e){return [];}
+}
+function buildCustomerPicker(selectedId){
+  if(!qbCustomers.length) return '<div style="font-size:12px;color:var(--text-secondary);padding:8px;background:var(--bg-secondary);border-radius:6px">Loading QB customers...</div>';
+  var opts=qbCustomers.map(function(c){
+    return '<option value="'+c.id+'" data-company="'+(c.company||c.name)+'" data-address="'+(c.address||'')+'"'+(selectedId===c.id?' selected':'')+'>'+c.name+'</option>';
+  }).join('');
+  return '<select class="form-input" id="qb-customer-picker" onchange="fillClientFromQB(this)" style="margin-bottom:8px"><option value="">-- Select QB customer --</option>'+opts+'</select>';
+}
+function fillClientFromQB(sel){
+  var opt=sel.options[sel.selectedIndex];
+  if(!opt.value) return;
+  var company=opt.dataset.company||'';
+  var address=opt.dataset.address||'';
+  if(currentQuote){currentQuote.client_name=company;currentQuote.client_address=address;currentQuote.qb_customer_id=opt.value;}
+  var cn=document.getElementById('q-client');if(cn)cn.value=company;
+  var ca=document.getElementById('q-address');if(ca)ca.value=address;
+  toast('Client filled from QuickBooks &#10003;');
+}
+async function generateQBInvoice(){
+  if(!currentLead||!currentQuote) return;
+  if(!currentQuote.qb_customer_id){toast('Select a QuickBooks customer in the Quote tab first','error');return;}
+  toast('Creating QB invoice...','info');
+  try{
+    var data=await callQB('create_invoice',{quote:currentQuote,lineItems:currentLineItems,clientId:currentQuote.qb_customer_id});
+    if(!data.success) throw new Error(data.error||'Failed');
+    await sb('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({status:'invoiced',qb_invoice_id:data.invoice_id,updated_at:new Date().toISOString()})});
+    await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({quote_status:'invoiced',updated_at:new Date().toISOString()})});
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'QB Invoice created',detail:'Invoice '+data.invoice_number+' created (A$'+data.total+')'})});
+    currentQuote.status='invoiced';currentQuote.qb_invoice_id=data.invoice_id;
+    currentLead.quote_status='invoiced';
+    leads.forEach(function(l,i){if(l.id===currentLead.id)leads[i].quote_status='invoiced';});
+    renderBoard();renderQuoteReview(document.getElementById('dtab-quote'));
+    toast('Invoice '+data.invoice_number+' created in QuickBooks &#10003;');
+  }catch(e){toast('QB Invoice failed: '+e.message,'error');}
+}
+
+setStatus('driveDot','driveLabel',true,'Drive &#10003;');
   setStatus('emailDot','emailLabel',true,'Email &#10003;');
   loadLeads();
+  checkQBConnection();
+  loadQBCustomers();
 }
 function doLogout(){
   if(!confirm('Sign out?'))return;
@@ -741,6 +796,11 @@ function renderPricingStep(el){
       </div>
     </div>
     <div style="margin-bottom:12px">
+      <div class="form-group" style="margin-bottom:8px">
+        <label class="form-label">QuickBooks customer</label>
+        <div>${buildCustomerPicker(q.qb_customer_id||'')}</div>
+        <div style="font-size:11px;color:var(--text-secondary);margin-top:4px">Or enter manually below</div>
+      </div>
       <div class="form-row">
         <div class="form-group"><label class="form-label">Client name</label><input class="form-input" id="q-client" value="${q.client_name||currentLead.company||''}" placeholder="Client company name"></div>
         <div class="form-group"><label class="form-label">Expiry date</label><input class="form-input" type="date" id="q-expiry" value="${q.expiry_date||''}"></div>
@@ -942,84 +1002,194 @@ function removeEQItem(i){
   renderEditableQuoteModal();
 }
 
-async function generateQuotePDF(quote, lineItems) {
-  return new Promise(function(resolve, reject) {
-    try {
-      var today = new Date().toLocaleDateString('en-AU');
-      var expiry = quote.expiry_date ? new Date(quote.expiry_date).toLocaleDateString('en-AU') : '-';
-      var container = document.createElement('div');
-      container.style.cssText = 'position:fixed;left:-9999px;top:0;width:794px;background:white;padding:40px;font-family:Times New Roman,serif;color:#1a1a1a;box-sizing:border-box';
-      var rows = lineItems.map(function(item) {
-        return '<tr style="background:white">' +
-          '<td style="padding:7px 8px;border-bottom:1px solid #eee;font-size:12px">' + (item.item_name||'') + '</td>' +
-          '<td style="padding:7px 8px;border-bottom:1px solid #eee;font-size:12px">' + (item.description||'') + '</td>' +
-          '<td style="padding:7px 8px;border-bottom:1px solid #eee;font-size:12px;text-align:right">' + Number(item.quantity||1).toFixed(0) + '</td>' +
-          '<td style="padding:7px 8px;border-bottom:1px solid #eee;font-size:12px;text-align:right">A$' + Number(item.rate||0).toFixed(2) + '</td>' +
-          '<td style="padding:7px 8px;border-bottom:1px solid #eee;font-size:12px;text-align:right">A$' + Number(item.amount||0).toFixed(2) + '</td>' +
-          '</tr>';
-      }).join('');
-      container.innerHTML =
-        '<div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1a1a1a;padding-bottom:14px;margin-bottom:20px">' +
-          '<div><div style="font-size:15px;font-weight:bold">Traverse Imports &amp; Exports P/L</div>' +
-          '<div style="font-size:10px;color:#444;margin-top:4px;line-height:1.6">15 Riviera Road, Miami QLD 4220<br>+61 402 393 464 | accounts@traverse-exports.com.au<br>ABN 27 058 599 795</div></div>' +
-          '<div style="text-align:right"><div style="font-size:30px;font-weight:bold">QUOTE</div>' +
-          '<div style="font-size:12px;margin-top:4px"><strong>' + quote.quote_number + '</strong></div></div>' +
-        '</div>' +
-        '<div style="display:flex;justify-content:space-between;margin-bottom:20px">' +
-          '<div><div style="font-size:9px;font-weight:bold;text-transform:uppercase;color:#666;letter-spacing:0.05em;margin-bottom:4px">Address</div>' +
-          '<div style="font-size:12px">' + (quote.client_name||'') + (quote.client_address?'<br>'+(quote.client_address||''):'') + '</div></div>' +
-          '<div style="text-align:right">' +
-          '<div style="margin-bottom:8px"><div style="font-size:9px;font-weight:bold;text-transform:uppercase;color:#666">Date</div><div style="font-size:12px">' + today + '</div></div>' +
-          '<div><div style="font-size:9px;font-weight:bold;text-transform:uppercase;color:#666">Expiration Date</div><div style="font-size:12px">' + expiry + '</div></div>' +
-          '</div>' +
-        '</div>' +
-        '<table style="width:100%;border-collapse:collapse;margin-bottom:14px">' +
-          '<thead><tr style="background:#1a1a1a;color:white">' +
-          '<th style="padding:7px 8px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:0.04em">Activity</th>' +
-          '<th style="padding:7px 8px;text-align:left;font-size:10px;text-transform:uppercase">Description</th>' +
-          '<th style="padding:7px 8px;text-align:right;font-size:10px;text-transform:uppercase">QTY</th>' +
-          '<th style="padding:7px 8px;text-align:right;font-size:10px;text-transform:uppercase">Rate</th>' +
-          '<th style="padding:7px 8px;text-align:right;font-size:10px;text-transform:uppercase">Amount</th>' +
-          '</tr></thead>' +
-          '<tbody>' + rows + '</tbody>' +
-        '</table>' +
-        '<div style="display:flex;justify-content:flex-end;margin-bottom:16px">' +
-          '<div style="width:240px;font-size:12px">' +
-          '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #eee"><span>Subtotal</span><span>A$' + Number(quote.subtotal||0).toFixed(2) + '</span></div>' +
-          '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #eee"><span>Total GST (10%)</span><span>A$' + Number(quote.gst_total||0).toFixed(2) + '</span></div>' +
-          '<div style="display:flex;justify-content:space-between;font-weight:bold;font-size:14px;border-top:2px solid #1a1a1a;padding-top:8px;margin-top:4px"><span>TOTAL</span><span>A$' + Number(quote.total||0).toFixed(2) + '</span></div>' +
-          '</div>' +
-        '</div>' +
-        '<div style="background:#f5f5f5;padding:10px 12px;font-size:10px;line-height:1.7;border-radius:4px">' +
-          '<strong>Bank Details - Westpac Bank</strong><br>' +
-          'Branch: Pacific Fair Shopping Centre, Broadbeach QLD 4218<br>' +
-          'Swift Code: WPACAU2SXXX | BSB: 034-637 | Account: 21-1660' +
-        '</div>' +
-        '<div style="text-align:center;font-size:12px;font-weight:bold;margin-top:14px;letter-spacing:0.05em">THANK YOU FOR YOUR BUSINESS!</div>';
-      document.body.appendChild(container);
-      html2canvas(container, {scale:2, useCORS:true, backgroundColor:'#ffffff', width:794}).then(function(canvas) {
-        document.body.removeChild(container);
-        var imgData = canvas.toDataURL('image/jpeg', 0.95);
-        var pdf = new window.jspdf.jsPDF({orientation:'portrait', unit:'mm', format:'a4'});
-        var pdfWidth = pdf.internal.pageSize.getWidth();
-        var pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-        var pageHeight = pdf.internal.pageSize.getHeight();
-        var position = 0;
-        if (pdfHeight <= pageHeight) {
-          pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
-        } else {
-          while (position < pdfHeight) {
-            pdf.addImage(imgData, 'JPEG', 0, -position, pdfWidth, pdfHeight);
-            position += pageHeight;
-            if (position < pdfHeight) pdf.addPage();
-          }
-        }
-        var pdfBase64 = pdf.output('datauristring').split(',')[1];
-        resolve(pdfBase64);
-      }).catch(function(err) { document.body.removeChild(container); reject(err); });
-    } catch(e) { reject(e); }
+function generateQuotePDF(quote, lineItems) {
+  if(typeof window.jspdf === 'undefined') throw new Error('jsPDF not loaded');
+  var jsPDF = window.jspdf.jsPDF;
+  var doc = new jsPDF({ orientation:'portrait', unit:'mm', format:'a4' });
+  var pw = doc.internal.pageSize.getWidth();
+  var ph = doc.internal.pageSize.getHeight();
+  var ml = 15, mr = 15, mt = 15;
+  var cw = pw - ml - mr;
+  var y = mt;
+
+  function checkPage(needed) {
+    if (y + needed > ph - 15) { doc.addPage(); y = mt; }
+  }
+
+  // Header background
+  doc.setFillColor(26,26,26);
+  doc.rect(0, 0, pw, 28, 'F');
+
+  // Company name
+  doc.setTextColor(255,255,255);
+  doc.setFontSize(13);
+  doc.setFont('helvetica','bold');
+  doc.text('Traverse Imports & Exports P/L', ml, 10);
+  doc.setFontSize(8);
+  doc.setFont('helvetica','normal');
+  doc.text('15 Riviera Road, Miami QLD 4220', ml, 15);
+  doc.text('+61 402 393 464  |  accounts@traverse-exports.com.au  |  ABN 27 058 599 795', ml, 19);
+
+  // QUOTE title
+  doc.setFontSize(22);
+  doc.setFont('helvetica','bold');
+  doc.text('QUOTE', pw - mr, 12, { align:'right' });
+  doc.setFontSize(10);
+  doc.setFont('helvetica','normal');
+  doc.text(quote.quote_number || '', pw - mr, 20, { align:'right' });
+
+  y = 36;
+
+  // Address section
+  doc.setTextColor(26,26,26);
+  doc.setFontSize(7);
+  doc.setFont('helvetica','bold');
+  doc.setTextColor(100,100,100);
+  doc.text('ADDRESS', ml, y);
+  y += 4;
+  doc.setFont('helvetica','normal');
+  doc.setTextColor(26,26,26);
+  doc.setFontSize(9);
+  if(quote.client_name) { doc.text(quote.client_name, ml, y); y += 4; }
+  if(quote.client_address) {
+    var addrLines = doc.splitTextToSize(quote.client_address, cw * 0.55);
+    addrLines.forEach(function(line) { doc.text(line, ml, y); y += 4; });
+  }
+
+  // Date / Expiry (right side)
+  var today = new Date().toLocaleDateString('en-AU');
+  var expiry = quote.expiry_date ? new Date(quote.expiry_date).toLocaleDateString('en-AU') : '-';
+  var dateY = 36;
+  doc.setFontSize(7);
+  doc.setFont('helvetica','bold');
+  doc.setTextColor(100,100,100);
+  doc.text('DATE', pw - mr, dateY, { align:'right' });
+  doc.setFont('helvetica','normal');
+  doc.setFontSize(9);
+  doc.setTextColor(26,26,26);
+  doc.text(today, pw - mr, dateY + 4, { align:'right' });
+  doc.setFontSize(7);
+  doc.setFont('helvetica','bold');
+  doc.setTextColor(100,100,100);
+  doc.text('EXPIRATION DATE', pw - mr, dateY + 10, { align:'right' });
+  doc.setFont('helvetica','normal');
+  doc.setFontSize(9);
+  doc.setTextColor(26,26,26);
+  doc.text(expiry, pw - mr, dateY + 14, { align:'right' });
+
+  y = Math.max(y, dateY + 20) + 4;
+
+  // Divider
+  doc.setDrawColor(200,200,200);
+  doc.line(ml, y, pw - mr, y);
+  y += 6;
+
+  // Table header
+  var cols = [
+    { label:'ACTIVITY', x:ml, w:cw*0.2, align:'left' },
+    { label:'DESCRIPTION', x:ml+cw*0.2, w:cw*0.35, align:'left' },
+    { label:'QTY', x:ml+cw*0.55, w:cw*0.1, align:'right' },
+    { label:'RATE', x:ml+cw*0.65, w:cw*0.15, align:'right' },
+    { label:'AMOUNT', x:ml+cw*0.80, w:cw*0.2, align:'right' },
+  ];
+
+  doc.setFillColor(26,26,26);
+  doc.rect(ml, y, cw, 7, 'F');
+  doc.setTextColor(255,255,255);
+  doc.setFontSize(7.5);
+  doc.setFont('helvetica','bold');
+  cols.forEach(function(col) {
+    var tx = col.align === 'right' ? col.x + col.w : col.x + 1;
+    doc.text(col.label, tx, y + 4.8, { align: col.align });
   });
+  y += 9;
+
+  // Table rows
+  doc.setFont('helvetica','normal');
+  doc.setFontSize(8.5);
+  var rowEven = false;
+  lineItems.forEach(function(item) {
+    var nameLines = doc.splitTextToSize(item.item_name || '', cols[0].w - 2);
+    var descLines = doc.splitTextToSize(item.description || '', cols[1].w - 2);
+    var rowH = Math.max(nameLines.length, descLines.length) * 4.5 + 3;
+    checkPage(rowH + 2);
+
+    if(rowEven) {
+      doc.setFillColor(248,248,247);
+      doc.rect(ml, y, cw, rowH, 'F');
+    }
+    rowEven = !rowEven;
+
+    doc.setTextColor(26,26,26);
+    nameLines.forEach(function(line, li) { doc.text(line, cols[0].x + 1, y + 4 + li*4.5); });
+    descLines.forEach(function(line, li) { doc.text(line, cols[1].x + 1, y + 4 + li*4.5); });
+    doc.text(Number(item.quantity||1).toFixed(0), cols[2].x + cols[2].w, y + 4, { align:'right' });
+    doc.text('A$' + Number(item.rate||0).toFixed(2), cols[3].x + cols[3].w, y + 4, { align:'right' });
+    doc.text('A$' + Number(item.amount||0).toFixed(2), cols[4].x + cols[4].w, y + 4, { align:'right' });
+
+    doc.setDrawColor(220,220,220);
+    doc.line(ml, y + rowH, pw - mr, y + rowH);
+    y += rowH;
+  });
+
+  y += 6;
+
+  // Totals
+  checkPage(30);
+  var totX = pw - mr - 65;
+  var totW = 65;
+
+  function totRow(label, val, bold) {
+    if(bold) {
+      doc.setFont('helvetica','bold');
+      doc.setFontSize(10);
+      doc.setFillColor(26,26,26);
+      doc.rect(totX - 2, y - 3, totW + 4, 8, 'F');
+      doc.setTextColor(255,255,255);
+    } else {
+      doc.setFont('helvetica','normal');
+      doc.setFontSize(9);
+      doc.setTextColor(26,26,26);
+    }
+    doc.text(label, totX, y + 2);
+    doc.text(val, pw - mr, y + 2, { align:'right' });
+    if(!bold) {
+      doc.setDrawColor(220,220,220);
+      doc.line(totX, y + 4, pw - mr, y + 4);
+    }
+    y += bold ? 7 : 6;
+    doc.setTextColor(26,26,26);
+  }
+
+  totRow('Subtotal', 'A$' + Number(quote.subtotal||0).toFixed(2), false);
+  totRow('Total GST (10%)', 'A$' + Number(quote.gst_total||0).toFixed(2), false);
+  totRow('TOTAL', 'A$' + Number(quote.total||0).toFixed(2), true);
+
+  y += 8;
+  checkPage(20);
+
+  // Bank details
+  doc.setFillColor(245,245,245);
+  doc.rect(ml, y, cw, 18, 'F');
+  doc.setFont('helvetica','bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(26,26,26);
+  doc.text('Bank Details - Westpac Bank', ml + 3, y + 5);
+  doc.setFont('helvetica','normal');
+  doc.setFontSize(8);
+  doc.text('Branch: Pacific Fair Shopping Centre, Broadbeach QLD 4218', ml + 3, y + 10);
+  doc.text('Swift Code: WPACAU2SXXX  |  BSB: 034-637  |  Account: 21-1660', ml + 3, y + 14.5);
+  y += 22;
+
+  // Thank you
+  doc.setFont('helvetica','bold');
+  doc.setFontSize(10);
+  doc.setTextColor(26,26,26);
+  doc.text('THANK YOU FOR YOUR BUSINESS!', pw/2, y, { align:'center' });
+
+  return doc.output('datauristring').split(',')[1];
 }
+
 
 async function sendQuoteToClient(){
   if(!currentLead?.contact){toast('No client email on this lead &#8212; add one in Details first','error');return;}

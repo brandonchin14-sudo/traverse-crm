@@ -679,6 +679,9 @@ function renderDetailInfo(){
 /* &#9472;&#9472; QUOTE TAB &#9472;&#9472; */
 async function renderQuoteTab(){
   const el=document.getElementById('dtab-quote');
+  if(!el) return;
+  // Ensure QB customers loaded
+  if(!qbCustomers.length) await loadQBCustomers();
   if(currentQuote && currentQuote.status!=='draft'){
     renderQuoteReview(el);
     return;
@@ -1313,13 +1316,13 @@ function renderDetailEmails(){
      body:'Hi '+fn+',\n\nThank you for submitting a quote request with us!\n\nWe are currently checking with our suppliers and will keep you updated as soon as we receive a response.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au'},
     {phase:'Phase 2',name:'Supplier enquiry',
      subj:'Quote Request for '+(l.company||''),
-     body:'Hi [Supplier],\n\nI hope this email finds you well.\n\nWe have received a request from our client and would like to enquire about availability and pricing.\n\nCould you please provide a quote with lead times?\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au'},
+     body:'Hi '+fn+',\n\nI hope this email finds you well.\n\nWe have received a request from our client and would like to enquire about availability and pricing for '+(l.company||'your company')+'.\n\nCould you please provide a quote with lead times?\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au'},
     {phase:'Phase 3',name:'Client approval & PO',
      subj:'Purchase Order - '+(l.company||''),
-     body:'Hi [Supplier],\n\nOur client has approved the provided quote. Please find the attached purchase order.\n\nIf you could keep us updated on lead times that would be greatly appreciated.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au'},
+     body:'Hi '+fn+',\n\nThank you for your patience.\n\nThe quote has been approved and we would like to proceed with the attached purchase order.\n\nIf you could keep us updated on lead times and delivery that would be greatly appreciated.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au'},
     {phase:'Phase 4',name:'Freight documentation',
      subj:'Freight Documentation - '+(l.company||'')+' cargo',
-     body:'Hi [Freight partner],\n\nPlease see attached documentation for the cargo we will be dropping off. We will provide a hard copy once dropped off.\n\nCheers,\nTraverse Exports\nsales@traverse-exports.com.au'},
+     body:'Hi '+fn+',\n\nPlease see attached documentation for the cargo we will be dropping off. We will provide a hard copy once dropped off.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au'},
   ];
   var header='<div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:9px 13px;margin-bottom:14px;font-size:12px;display:flex;align-items:center;gap:8px;border:0.5px solid var(--border-t)">'
     +'<i class="ti ti-send" style="color:var(--purple)"></i> From <strong>sales@traverse-exports.com.au</strong>'+fromInfo+'</div>';
@@ -1513,7 +1516,7 @@ function switchDetailTab(tab,el){
   document.getElementById('dtab-'+tab).classList.add('active');
   if(tab==='activity') renderDetailActivity();
   if(tab==='files') renderDetailFiles();
-  if(tab==='quote') renderQuoteTab();
+  if(tab==='quote') renderQuoteTab().catch(function(e){console.error('Quote tab error:',e);});
 }
 
 /* &#9472;&#9472; REPORTS &#9472;&#9472; */

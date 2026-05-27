@@ -367,6 +367,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 
 <script>
 const SB_URL='https://dwmpunbcwrprhhzwduyx.supabase.co';
+var DRIVE_API_URL='https://dwmpunbcwrprhhzwduyx.supabase.co/functions/v1/drive-api';
 var QB_API_URL='https://dwmpunbcwrprhhzwduyx.supabase.co/functions/v1/quickbooks-api';
 var qbCustomers=[];
 function connectQB(){window.open('https://dwmpunbcwrprhhzwduyx.supabase.co/functions/v1/quickbooks-auth?action=connect','_blank','width=600,height=700');}
@@ -374,6 +375,43 @@ async function callQB(action,extra){
   var res=await fetch(QB_API_URL,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify(Object.assign({action:action},extra||{}))});
   return res.json();
 }
+async function callDriveAPI(action, params) {
+  var payload = Object.assign({action:action}, params||{});
+  var res = await fetch(DRIVE_API_URL, {
+    method:'POST',
+    headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},
+    body:JSON.stringify(payload)
+  });
+  return res.json();
+}
+
+async function saveToDrive(leadId, folderId, fileName, base64Data, mimeType) {
+  if(!folderId || folderId==='created') return null;
+  try {
+    var data = await callDriveAPI('save_to_subfolder', {
+      folderId: folderId,
+      fileName: fileName,
+      fileBase64: base64Data,
+      mimeType: mimeType,
+      leadId: leadId
+    });
+    if(data.success) {
+      await sb('activity_log', {method:'POST', body:JSON.stringify({
+        lead_id: leadId,
+        action: 'File saved to Drive',
+        detail: fileName + ' saved to ' + (data.subfolder||'Drive')
+      })});
+      toast(fileName+' saved to Drive &#10003;');
+      return data.fileId;
+    }
+    return null;
+  } catch(e) {
+    console.warn('Drive save failed:', e);
+    return null;
+  }
+}
+
+
 async function checkQBConnection(){
   try{
     var data=await callQB('check_connection');
@@ -417,6 +455,15 @@ async function generateQBInvoice(){
     leads.forEach(function(l,i){if(l.id===currentLead.id)leads[i].quote_status='invoiced';});
     renderBoard();renderQuoteReview(document.getElementById('dtab-quote'));
     toast('Invoice '+data.invoice_number+' created in QuickBooks &#10003;');
+    // Auto-save invoice PDF to Drive
+    var invFolderId=currentLead.drive_folder_id;
+    if(!invFolderId||invFolderId==='created') invFolderId=await createDriveFolderForLead(currentLead);
+    if(invFolderId){
+      try{
+        var invPdf=generateQuotePDF(currentQuote,currentLineItems);
+        await saveToDrive(currentLead.id,invFolderId,'Invoice-'+data.invoice_number+'.pdf',invPdf,'application/pdf');
+      }catch(invErr){console.warn('Invoice Drive save failed:',invErr);}
+    }
   }catch(e){toast('QB Invoice failed: '+e.message,'error');}
 }
 
@@ -744,6 +791,10 @@ async function processFile(file){
     const result=await resp.json();
     if(!resp.ok||!result.success) throw new Error(result.error||'Scan failed');
     await createDraftQuote(result.data,file.name);
+    // Save scanned file to Drive if folder exists
+    if(currentLead&&currentLead.drive_folder_id&&currentLead.drive_folder_id!=='created'){
+      await saveToDrive(currentLead.id,currentLead.drive_folder_id,'Scan-'+file.name,base64,file.type);
+    }
   }catch(e){
     toast('Scan failed: '+e.message,'error');
     document.getElementById('dropZone').style.display='block';
@@ -1250,7 +1301,16 @@ async function sendQuoteToClient(){
     closeModal('previewOverlay');
     renderBoard();
     renderQuoteReview(document.getElementById('dtab-quote'));
-    toast(`Quote sent to ${currentLead.contact} &#10003;`);
+    toast('Quote sent to '+currentLead.contact+' &#10003;');
+    // Auto-create Drive folder if not exists, then save PDF
+    var driveId = currentLead.drive_folder_id;
+    if(!driveId || driveId==='created') {
+      toast('Creating Drive folder...','info');
+      driveId = await createDriveFolderForLead(currentLead);
+    }
+    if(driveId && pdfB64) {
+      await saveToDrive(currentLead.id, driveId, 'Quote-'+currentQuote.quote_number+'.pdf', pdfB64, 'application/pdf');
+    }
   }catch(e){toast('Send failed: '+e.message,'error');btn.innerHTML='<i class="ti ti-send"></i> Send to client';btn.disabled=false;}
 }
 
@@ -1400,22 +1460,26 @@ function copyEmailBody(i){navigator.clipboard?.writeText(document.getElementById
 
 /* &#9472;&#9472; DRIVE &#9472;&#9472; */
 async function createDriveFolderForLead(lead){
-  toast('Creating Drive folder&#8230;','info');
+  toast('Creating Drive folder...','info');
   try{
-    const folderName=`${lead.doc_code||lead.name} &#8212; ${lead.company||''}`.trim();
-    const prompt=`Using Google Drive, create a folder called exactly "${folderName}" in My Drive. Then inside that folder create 5 subfolders called: "Quotes", "Invoices", "Purchase Orders", "Freight Docs", "Receipts". Return ONLY a JSON object with key parentFolderId. No other text.`;
-    const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:500,mcp_servers:[{type:'url',url:'https://drivemcp.googleapis.com/mcp/v1',name:'gdrive'}],messages:[{role:'user',content:prompt}]})});
-    const data=await res.json();
-    const textBlock=data.content?.find(b=>b.type==='text');
-    let folderId=null;
-    if(textBlock){try{const p=JSON.parse(textBlock.text.replace(/```json|```/g,'').trim());folderId=p.parentFolderId||p.folderId;}catch(_){}}
-    await sb(`leads?id=eq.${lead.id}`,{method:'PATCH',body:JSON.stringify({drive_folder_id:folderId||'created',updated_at:new Date().toISOString()})});
+    var folderName=(lead.doc_code||lead.name)+' - '+(lead.company||'');
+    folderName=folderName.trim();
+    var data=await callDriveAPI('create_folder',{folderName:folderName,leadId:lead.id});
+    if(!data.success) throw new Error(data.error||'Folder creation failed');
+    var folderId=data.folderId||'created';
+    var idx=leads.findIndex(function(l){return l.id===lead.id;});
+    if(idx>-1) leads[idx].drive_folder_id=folderId;
+    if(currentLead&&currentLead.id===lead.id) currentLead.drive_folder_id=folderId;
     await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:lead.id,action:'Drive folder created',detail:folderName})});
-    const idx=leads.findIndex(l=>l.id===lead.id);
-    if(idx>-1) leads[idx].drive_folder_id=folderId||'created';
     setStatus('driveDot','driveLabel',true,'Drive &#10003;');
-    toast('Drive folder + subfolders created &#10003;');renderBoard();
-  }catch(e){setStatus('driveDot','driveLabel',false,'Drive error');toast('Drive error: '+e.message,'error');}
+    toast('Drive folder + subfolders created &#10003;');
+    renderBoard();
+    return folderId;
+  }catch(e){
+    setStatus('driveDot','driveLabel',false,'Drive error');
+    toast('Drive error: '+e.message,'error');
+    return null;
+  }
 }
 
 async function createFolderFromDetail(){

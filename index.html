@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Traverse CRM</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css" onerror="this.onerror=null;this.href='https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/tabler-icons.min.css'">
 <script>
 // Ensure icons load &#8212; fallback to text if CDN fails
@@ -940,6 +942,85 @@ function removeEQItem(i){
   renderEditableQuoteModal();
 }
 
+async function generateQuotePDF(quote, lineItems) {
+  return new Promise(function(resolve, reject) {
+    try {
+      var today = new Date().toLocaleDateString('en-AU');
+      var expiry = quote.expiry_date ? new Date(quote.expiry_date).toLocaleDateString('en-AU') : '-';
+      var container = document.createElement('div');
+      container.style.cssText = 'position:fixed;left:-9999px;top:0;width:794px;background:white;padding:40px;font-family:Times New Roman,serif;color:#1a1a1a;box-sizing:border-box';
+      var rows = lineItems.map(function(item) {
+        return '<tr style="background:white">' +
+          '<td style="padding:7px 8px;border-bottom:1px solid #eee;font-size:12px">' + (item.item_name||'') + '</td>' +
+          '<td style="padding:7px 8px;border-bottom:1px solid #eee;font-size:12px">' + (item.description||'') + '</td>' +
+          '<td style="padding:7px 8px;border-bottom:1px solid #eee;font-size:12px;text-align:right">' + Number(item.quantity||1).toFixed(0) + '</td>' +
+          '<td style="padding:7px 8px;border-bottom:1px solid #eee;font-size:12px;text-align:right">A$' + Number(item.rate||0).toFixed(2) + '</td>' +
+          '<td style="padding:7px 8px;border-bottom:1px solid #eee;font-size:12px;text-align:right">A$' + Number(item.amount||0).toFixed(2) + '</td>' +
+          '</tr>';
+      }).join('');
+      container.innerHTML =
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1a1a1a;padding-bottom:14px;margin-bottom:20px">' +
+          '<div><div style="font-size:15px;font-weight:bold">Traverse Imports &amp; Exports P/L</div>' +
+          '<div style="font-size:10px;color:#444;margin-top:4px;line-height:1.6">15 Riviera Road, Miami QLD 4220<br>+61 402 393 464 | accounts@traverse-exports.com.au<br>ABN 27 058 599 795</div></div>' +
+          '<div style="text-align:right"><div style="font-size:30px;font-weight:bold">QUOTE</div>' +
+          '<div style="font-size:12px;margin-top:4px"><strong>' + quote.quote_number + '</strong></div></div>' +
+        '</div>' +
+        '<div style="display:flex;justify-content:space-between;margin-bottom:20px">' +
+          '<div><div style="font-size:9px;font-weight:bold;text-transform:uppercase;color:#666;letter-spacing:0.05em;margin-bottom:4px">Address</div>' +
+          '<div style="font-size:12px">' + (quote.client_name||'') + (quote.client_address?'<br>'+(quote.client_address||''):'') + '</div></div>' +
+          '<div style="text-align:right">' +
+          '<div style="margin-bottom:8px"><div style="font-size:9px;font-weight:bold;text-transform:uppercase;color:#666">Date</div><div style="font-size:12px">' + today + '</div></div>' +
+          '<div><div style="font-size:9px;font-weight:bold;text-transform:uppercase;color:#666">Expiration Date</div><div style="font-size:12px">' + expiry + '</div></div>' +
+          '</div>' +
+        '</div>' +
+        '<table style="width:100%;border-collapse:collapse;margin-bottom:14px">' +
+          '<thead><tr style="background:#1a1a1a;color:white">' +
+          '<th style="padding:7px 8px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:0.04em">Activity</th>' +
+          '<th style="padding:7px 8px;text-align:left;font-size:10px;text-transform:uppercase">Description</th>' +
+          '<th style="padding:7px 8px;text-align:right;font-size:10px;text-transform:uppercase">QTY</th>' +
+          '<th style="padding:7px 8px;text-align:right;font-size:10px;text-transform:uppercase">Rate</th>' +
+          '<th style="padding:7px 8px;text-align:right;font-size:10px;text-transform:uppercase">Amount</th>' +
+          '</tr></thead>' +
+          '<tbody>' + rows + '</tbody>' +
+        '</table>' +
+        '<div style="display:flex;justify-content:flex-end;margin-bottom:16px">' +
+          '<div style="width:240px;font-size:12px">' +
+          '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #eee"><span>Subtotal</span><span>A$' + Number(quote.subtotal||0).toFixed(2) + '</span></div>' +
+          '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #eee"><span>Total GST (10%)</span><span>A$' + Number(quote.gst_total||0).toFixed(2) + '</span></div>' +
+          '<div style="display:flex;justify-content:space-between;font-weight:bold;font-size:14px;border-top:2px solid #1a1a1a;padding-top:8px;margin-top:4px"><span>TOTAL</span><span>A$' + Number(quote.total||0).toFixed(2) + '</span></div>' +
+          '</div>' +
+        '</div>' +
+        '<div style="background:#f5f5f5;padding:10px 12px;font-size:10px;line-height:1.7;border-radius:4px">' +
+          '<strong>Bank Details - Westpac Bank</strong><br>' +
+          'Branch: Pacific Fair Shopping Centre, Broadbeach QLD 4218<br>' +
+          'Swift Code: WPACAU2SXXX | BSB: 034-637 | Account: 21-1660' +
+        '</div>' +
+        '<div style="text-align:center;font-size:12px;font-weight:bold;margin-top:14px;letter-spacing:0.05em">THANK YOU FOR YOUR BUSINESS!</div>';
+      document.body.appendChild(container);
+      html2canvas(container, {scale:2, useCORS:true, backgroundColor:'#ffffff', width:794}).then(function(canvas) {
+        document.body.removeChild(container);
+        var imgData = canvas.toDataURL('image/jpeg', 0.95);
+        var pdf = new window.jspdf.jsPDF({orientation:'portrait', unit:'mm', format:'a4'});
+        var pdfWidth = pdf.internal.pageSize.getWidth();
+        var pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+        var pageHeight = pdf.internal.pageSize.getHeight();
+        var position = 0;
+        if (pdfHeight <= pageHeight) {
+          pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+        } else {
+          while (position < pdfHeight) {
+            pdf.addImage(imgData, 'JPEG', 0, -position, pdfWidth, pdfHeight);
+            position += pageHeight;
+            if (position < pdfHeight) pdf.addPage();
+          }
+        }
+        var pdfBase64 = pdf.output('datauristring').split(',')[1];
+        resolve(pdfBase64);
+      }).catch(function(err) { document.body.removeChild(container); reject(err); });
+    } catch(e) { reject(e); }
+  });
+}
+
 async function sendQuoteToClient(){
   if(!currentLead?.contact){toast('No client email on this lead &#8212; add one in Details first','error');return;}
   const btn=document.getElementById('previewSendBtn');
@@ -961,7 +1042,15 @@ async function sendQuoteToClient(){
   const fn=(currentLead.name||'').split(' ')[0];
   const body=`Hi ${fn},\n\nPlease find your quote ${currentQuote.quote_number} below.\n\nTotal: A$${(currentQuote.total||0).toFixed(2)}\nExpiry: ${currentQuote.expiry_date?new Date(currentQuote.expiry_date).toLocaleDateString('en-AU'):'&#8212;'}\n\nPlease review and let us know if you\'d like to proceed, or if you have any changes.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au`;
   try{
-    const res=await fetch(EMAIL_FN,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify({to:currentLead.contact,subject,body,quote:currentQuote,lineItems:currentLineItems})});
+    btn.innerHTML='<i class="ti ti-loader"></i> Generating PDF...';
+    var pdfB64 = null;
+    try {
+      pdfB64 = await generateQuotePDF(currentQuote, currentLineItems);
+    } catch(pdfErr) {
+      console.warn('PDF generation failed, sending without attachment:', pdfErr);
+    }
+    btn.innerHTML='<i class="ti ti-loader"></i> Sending...';
+    const res=await fetch(EMAIL_FN,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify({to:currentLead.contact,subject,body,pdfBase64:pdfB64,quoteNumber:currentQuote.quote_number})});
     const data=await res.json();
     if(!res.ok) throw new Error(data.error||'Send failed');
     await sb(`leads?id=eq.${currentLead.id}`,{method:'PATCH',body:JSON.stringify({quote_status:'sent',emails_sent:(currentLead.emails_sent||0)+1,updated_at:new Date().toISOString()})});

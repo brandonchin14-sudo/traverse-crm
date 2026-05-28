@@ -1843,7 +1843,7 @@ async function confirmImport(){
   }
   btn.disabled=false;
   btn.innerHTML='<i class="ti ti-check"></i> Import all as Completed leads';
-  toast('Imported '+ok+' leads'+(fail?' ('+fail+' failed)')+'','success');
+  toast('Imported '+ok+' leads'+(fail?' ('+fail+' failed)':''),'success');
   if(ok>0){clearImport();await loadLeads();}
 }
 

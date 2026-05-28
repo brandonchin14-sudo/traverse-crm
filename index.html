@@ -252,7 +252,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <div class="topbar">
   <div class="topbar-brand"><i class="ti ti-briefcase" style="font-size:20px;color:var(--accent)"></i> Traverse CRM</div>
   <div class="status-pill"><div class="dot" id="sbDot"></div><span id="sbLabel" style="color:var(--text-secondary)">DB</span></div>
-  <div class="status-pill"><div class="dot" id="driveDot"></div><span id="driveLabel" style="color:var(--text-secondary)">Drive</span></div>
+  <div class="status-pill" style="cursor:pointer" onclick="connectDrive()" title="Click to connect Google Drive"><div class="dot" id="driveDot"></div><span id="driveLabel" style="color:var(--text-secondary)">Drive</span></div>
   <div class="status-pill"><div class="dot" id="emailDot"></div><span id="emailLabel" style="color:var(--text-secondary)">Email</span></div>
   <div class="status-pill" id="qbPill" style="cursor:pointer" onclick="connectQB()" title="QuickBooks"><div class="dot" id="qbDot"></div><span id="qbLabel" style="color:var(--text-secondary)">QB</span></div>
   <div class="nav-tab active" onclick="switchView('pipeline',this)"><i class="ti ti-layout-kanban"></i> Pipeline</div>
@@ -371,6 +371,8 @@ var DRIVE_API_URL='https://dwmpunbcwrprhhzwduyx.supabase.co/functions/v1/drive-a
 var QB_API_URL='https://dwmpunbcwrprhhzwduyx.supabase.co/functions/v1/quickbooks-api';
 var qbCustomers=[];
 function connectQB(){window.open('https://dwmpunbcwrprhhzwduyx.supabase.co/functions/v1/quickbooks-auth?action=connect','_blank','width=600,height=700');}
+function connectDrive(){window.open(GOOGLE_AUTH_URL+'?action=connect','_blank','width=600,height=700');}
+
 async function callQB(action,extra){
   var res=await fetch(QB_API_URL,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify(Object.assign({action:action},extra||{}))});
   return res.json();
@@ -411,6 +413,20 @@ async function saveToDrive(leadId, folderId, fileName, base64Data, mimeType) {
   }
 }
 
+
+async function checkDriveConnection(){
+  try{
+    var data=await callDriveAPI('check_connection',{});
+    if(data.success){
+      setStatus('driveDot','driveLabel',true,'Drive &#10003;');
+      document.getElementById('driveDot').closest('.status-pill').title='Google Drive: '+( data.email||'Connected');
+    } else {
+      setStatus('driveDot','driveLabel',false,'Drive - click to connect');
+    }
+  }catch(e){
+    setStatus('driveDot','driveLabel',false,'Drive - click to connect');
+  }
+}
 
 async function checkQBConnection(){
   try{
@@ -511,6 +527,7 @@ setStatus('driveDot','driveLabel',true,'Drive &#10003;');
   loadLeads();
   checkQBConnection();
   loadQBCustomers();
+  checkDriveConnection();
 }
 function doLogout(){
   if(!confirm('Sign out?'))return;

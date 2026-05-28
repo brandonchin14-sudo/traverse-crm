@@ -1308,7 +1308,10 @@ async function sendQuoteToClient(){
       console.error('PDF generation failed:', pdfErr);
     }
     btn.innerHTML='<i class="ti ti-loader"></i> Sending...';
-    const res=await fetch(EMAIL_FN,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify({to:currentLead.contact,subject,body,pdfBase64:pdfB64,quoteNumber:currentQuote.quote_number})});
+    const emailController = new AbortController();
+    const emailTimeout = setTimeout(function(){ emailController.abort(); }, 30000);
+    const res=await fetch(EMAIL_FN,{method:'POST',signal:emailController.signal,headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify({to:currentLead.contact,subject,body,pdfBase64:pdfB64,quoteNumber:currentQuote.quote_number})});
+    clearTimeout(emailTimeout);
     const data=await res.json();
     if(!res.ok) throw new Error(data.error||'Send failed');
     await sb(`leads?id=eq.${currentLead.id}`,{method:'PATCH',body:JSON.stringify({quote_status:'sent',emails_sent:(currentLead.emails_sent||0)+1,updated_at:new Date().toISOString()})});
@@ -1329,7 +1332,15 @@ async function sendQuoteToClient(){
     if(driveId && pdfB64) {
       await saveToDrive(currentLead.id, driveId, 'Quote-'+currentQuote.quote_number+'.pdf', pdfB64, 'application/pdf');
     }
-  }catch(e){toast('Send failed: '+e.message,'error');btn.innerHTML='<i class="ti ti-send"></i> Send to client';btn.disabled=false;}
+  }catch(e){
+    console.error('sendQuoteToClient error:', e);
+    toast('Send failed: '+e.message,'error');
+    btn.innerHTML='<i class="ti ti-send"></i> Save &amp; send to client';
+    btn.disabled=false;
+  } finally {
+    // Always re-enable button
+    if(btn.disabled) { btn.innerHTML='<i class="ti ti-send"></i> Save &amp; send to client'; btn.disabled=false; }
+  }
 }
 
 function renderQuoteReview(el){

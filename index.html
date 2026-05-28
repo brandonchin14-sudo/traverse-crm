@@ -634,7 +634,9 @@ function fillNewLeadFromQB(sel){
   sel.dataset.selectedId=opt.value;
   toast('Client details filled from QuickBooks &#10003;');
 }
-function openNewLeadPhase(phase){
+async function openNewLeadPhase(phase){
+  // Load QB customers if not already loaded
+  if(!qbCustomers.length) await loadQBCustomers();
   document.getElementById('leadOverlay').classList.add('open');
   document.getElementById('modalBody').innerHTML=`
     <div class="form-group" style="margin-bottom:10px">

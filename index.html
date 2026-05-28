@@ -391,11 +391,12 @@ async function callDriveAPI(action, params) {
 async function saveToDrive(leadId, folderId, fileName, base64Data, mimeType) {
   if(!folderId || folderId==='created') return null;
   try {
-    var data = await callDriveAPI('save_to_subfolder', {
+    var data = await callDriveAPI('save_file', {
       folderId: folderId,
       fileName: fileName,
       fileBase64: base64Data,
       mimeType: mimeType,
+      subfolder: fileName.startsWith('Invoice') ? 'Invoices' : fileName.startsWith('Scan') ? 'Receipts' : 'Quotes',
       leadId: leadId
     });
     if(data.success) {
@@ -1479,8 +1480,12 @@ function copyEmailBody(i){navigator.clipboard?.writeText(document.getElementById
 async function createDriveFolderForLead(lead){
   toast('Creating Drive folder...','info');
   try{
-    var folderName=(lead.doc_code||lead.name)+' - '+(lead.company||'');
-    folderName=folderName.trim();
+    var parts=[];
+    if(lead.doc_code) parts.push(lead.doc_code);
+    else if(lead.name) parts.push(lead.name);
+    if(lead.company) parts.push(lead.company);
+    if(!parts.length) parts.push('Lead-'+new Date().toISOString().slice(0,10));
+    var folderName=parts.join(' - ');
     var data=await callDriveAPI('create_folder',{folderName:folderName,leadId:lead.id});
     if(!data.success) throw new Error(data.error||'Folder creation failed');
     var folderId=data.folderId||'created';

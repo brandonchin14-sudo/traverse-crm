@@ -643,7 +643,6 @@ async function openNewLeadPhase(phase){
       <label class="form-label" style="display:flex;align-items:center;gap:6px"><i class="ti ti-building-store" style="color:#2CA01C"></i> Select from QuickBooks</label>
       <select class="form-input" id="f-qb-customer" onchange="fillNewLeadFromQB(this)">
         <option value="">-- Select QB customer (optional) --</option>
-        ${qbCustomers.map(function(c){return '<option value="'+c.id+'" data-name="'+c.name+'" data-company="'+(c.company||c.name)+'" data-email="'+(c.email||'')+'" data-address="'+(c.address||'')+'">'+c.name+(c.company&&c.company!==c.name?' ('+c.company+')':'')+'</option>';}).join('')}
       </select>
       <div style="font-size:11px;color:var(--text-secondary);margin-top:3px">Or fill in manually below</div>
     </div>
@@ -681,6 +680,20 @@ async function openNewLeadPhase(phase){
       <button class="btn" onclick="closeModal('leadOverlay')">Cancel</button>
       <button class="btn btn-primary" id="saveBtn" onclick="saveLead()"><i class="ti ti-device-floppy"></i> Save lead</button>
     </div>`;
+  // Populate QB customer dropdown now that DOM is ready
+  var sel=document.getElementById('f-qb-customer');
+  if(sel && qbCustomers.length){
+    qbCustomers.forEach(function(c){
+      var opt=document.createElement('option');
+      opt.value=c.id;
+      opt.dataset.name=c.name;
+      opt.dataset.company=c.company||c.name;
+      opt.dataset.email=c.email||'';
+      opt.dataset.address=c.address||'';
+      opt.textContent=c.name+(c.company&&c.company!==c.name?' ('+c.company+')':'');
+      sel.appendChild(opt);
+    });
+  }
 }
 
 async function saveLead(){

@@ -621,9 +621,30 @@ function renderBoard(){
 
 /* &#9472;&#9472; NEW LEAD &#9472;&#9472; */
 function openNewLead(){openNewLeadPhase(0);}
+function fillNewLeadFromQB(sel){
+  var opt=sel.options[sel.selectedIndex];
+  if(!opt.value) return;
+  var nm=document.getElementById('f-name');
+  var co=document.getElementById('f-company');
+  var em=document.getElementById('f-contact');
+  if(nm&&!nm.value) nm.value=opt.dataset.name||'';
+  if(co) co.value=opt.dataset.company||opt.dataset.name||'';
+  if(em&&!em.value) em.value=opt.dataset.email||'';
+  // Store QB customer ID on the form for later use
+  sel.dataset.selectedId=opt.value;
+  toast('Client details filled from QuickBooks &#10003;');
+}
 function openNewLeadPhase(phase){
   document.getElementById('leadOverlay').classList.add('open');
   document.getElementById('modalBody').innerHTML=`
+    <div class="form-group" style="margin-bottom:10px">
+      <label class="form-label" style="display:flex;align-items:center;gap:6px"><i class="ti ti-building-store" style="color:#2CA01C"></i> Select from QuickBooks</label>
+      <select class="form-input" id="f-qb-customer" onchange="fillNewLeadFromQB(this)">
+        <option value="">-- Select QB customer (optional) --</option>
+        ${qbCustomers.map(function(c){return '<option value="'+c.id+'" data-name="'+c.name+'" data-company="'+(c.company||c.name)+'" data-email="'+(c.email||'')+'" data-address="'+(c.address||'')+'">'+c.name+(c.company&&c.company!==c.name?' ('+c.company+')':'')+'</option>';}).join('')}
+      </select>
+      <div style="font-size:11px;color:var(--text-secondary);margin-top:3px">Or fill in manually below</div>
+    </div>
     <div class="form-row">
       <div class="form-group"><label class="form-label">Client name *</label><input class="form-input" id="f-name" placeholder="First Last"></div>
       <div class="form-group"><label class="form-label">Company</label><input class="form-input" id="f-company" placeholder="GEL Point Cruz"></div>
@@ -673,6 +694,7 @@ async function saveLead(){
   const createDrive=document.getElementById('f-drive')?.checked;
   const sendEmail=document.getElementById('f-email')?.checked;
   const leadType=document.querySelector('input[name="f-type"]:checked')?.value||'wholesale';
+  var qbCustId=document.getElementById('f-qb-customer')?.dataset?.selectedId||null;
   const payload={name,company:comp,contact,mobile:document.getElementById('f-mobile').value,project:proj,phase:parseInt(document.getElementById('f-phase').value),notes:document.getElementById('f-notes').value,client:comp,emails_sent:0,quote_status:'none',lead_type:leadType,doc_code:`${ymd}-${comp.substring(0,12)}-${proj.substring(0,8)}`};
   try{
     const res=await sb('leads',{method:'POST',body:JSON.stringify(payload),headers:{...sbH(authToken),'Prefer':'return=representation'}});

@@ -1297,8 +1297,8 @@ async function sendQuoteToClient(){
     btn.innerHTML='<i class="ti ti-loader"></i> Generating PDF...';
     var pdfB64 = null;
     try {
-      if(typeof window.jspdf === 'undefined' || typeof window.html2canvas === 'undefined') {
-        throw new Error('PDF libraries not loaded. Check your internet connection.');
+      if(typeof window.jspdf === 'undefined') {
+        throw new Error('PDF library not loaded. Check your internet connection.');
       }
       pdfB64 = await generateQuotePDF(currentQuote, currentLineItems);
       if(pdfB64) toast('PDF generated &#10003; &#8212; sending...', 'info');

@@ -1297,15 +1297,14 @@ async function sendQuoteToClient(){
     btn.innerHTML='<i class="ti ti-loader"></i> Generating PDF...';
     var pdfB64 = null;
     try {
-      if(typeof window.jspdf === 'undefined') {
-        throw new Error('PDF library not loaded. Check your internet connection.');
+      if(typeof window.jspdf !== 'undefined') {
+        pdfB64 = generateQuotePDF(currentQuote, currentLineItems);
+        if(pdfB64) console.log('PDF generated, size:', pdfB64.length);
+      } else {
+        console.warn('jsPDF not loaded, sending without PDF');
       }
-      pdfB64 = await generateQuotePDF(currentQuote, currentLineItems);
-      if(pdfB64) toast('PDF generated &#10003; &#8212; sending...', 'info');
     } catch(pdfErr) {
       console.error('PDF generation failed:', pdfErr);
-      toast('PDF could not be generated: ' + pdfErr.message + ' &#8212; sending email without attachment', 'error');
-      await new Promise(r => setTimeout(r, 2000));
     }
     btn.innerHTML='<i class="ti ti-loader"></i> Sending...';
     const res=await fetch(EMAIL_FN,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify({to:currentLead.contact,subject,body,pdfBase64:pdfB64,quoteNumber:currentQuote.quote_number})});

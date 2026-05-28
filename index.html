@@ -438,8 +438,16 @@ async function checkQBConnection(){
   }catch(e){setStatus('qbDot','qbLabel',false,'QB');}
 }
 async function loadQBCustomers(){
-  try{var data=await callQB('get_customers');if(data.success){qbCustomers=data.customers||[];}return qbCustomers;}
-  catch(e){return [];}
+  try{
+    var data=await callQB('get_customers');
+    console.log('QB get_customers response:', JSON.stringify(data).substring(0,200));
+    if(data.success){qbCustomers=data.customers||[];}
+    else{console.error('QB customers error:', data.error);}
+    return qbCustomers;
+  }catch(e){
+    console.error('loadQBCustomers exception:', e.message);
+    return [];
+  }
 }
 function buildCustomerPicker(selectedId){
   if(!qbCustomers.length) return '<div style="font-size:12px;color:var(--text-secondary);padding:8px;background:var(--bg-secondary);border-radius:6px">Loading QB customers...</div>';
@@ -635,8 +643,12 @@ function fillNewLeadFromQB(sel){
   toast('Client details filled from QuickBooks &#10003;');
 }
 async function openNewLeadPhase(phase){
-  // Load QB customers if not already loaded
-  if(!qbCustomers.length) await loadQBCustomers();
+  // Load QB customers
+  if(!qbCustomers.length) {
+    var result = await loadQBCustomers();
+    console.log('QB customers loaded:', qbCustomers.length, 'result:', result);
+  }
+  console.log('Opening new lead form, qbCustomers:', qbCustomers.length);
   document.getElementById('leadOverlay').classList.add('open');
   document.getElementById('modalBody').innerHTML=`
     <div class="form-group" style="margin-bottom:10px">
@@ -681,6 +693,7 @@ async function openNewLeadPhase(phase){
       <button class="btn btn-primary" id="saveBtn" onclick="saveLead()"><i class="ti ti-device-floppy"></i> Save lead</button>
     </div>`;
   // Populate QB customer dropdown now that DOM is ready
+  console.log('Populating dropdown, qbCustomers.length:', qbCustomers.length);
   var sel=document.getElementById('f-qb-customer');
   if(sel && qbCustomers.length){
     qbCustomers.forEach(function(c){

@@ -1729,6 +1729,7 @@ async function handleImportFiles(files){
   importedLeads=[];
   var pdfs=Array.from(files).filter(function(f){return f.type==='application/pdf';});
   if(!pdfs.length){toast('Please select PDF files only','error');return;}
+  if(pdfs.length>15){toast('Maximum 15 PDFs at a time. Please split into batches.','error');return;}
   document.getElementById('import-progress').style.display='block';
   document.getElementById('import-preview').style.display='none';
   var bar=document.getElementById('import-progress-bar');
@@ -1809,6 +1810,7 @@ function clearImport(){
 }
 
 async function confirmImport(){
+  if(!authToken){toast('Session expired &#8212; please refresh and log in again','error');return;}
   var btn=document.getElementById('confirmImportBtn');
   btn.disabled=true;
   btn.innerHTML='<i class="ti ti-loader"></i> Importing...';

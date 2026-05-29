@@ -1688,57 +1688,253 @@ function switchDetailTab(tab,el){
 }
 
 /* &#9472;&#9472; REPORTS &#9472;&#9472; */
-function renderReports(){
-  const total=leads.length;
-  const totalVal=leads.reduce((s,l)=>s+0,0);
-  const approved=leads.filter(l=>l.phase>=2).length;
-  const freight=leads.filter(l=>l.phase===3).length;
-  const withDrive=leads.filter(l=>l.drive_folder_id).length;
-  const totalEmails=leads.reduce((s,l)=>s+(l.emails_sent||0),0);
-  const quoteSent=leads.filter(l=>l.quote_status==='sent'||l.quote_status==='approved'||l.quote_status==='invoiced').length;
-  const wholesale=leads.filter(l=>l.lead_type==='wholesale'||!l.lead_type).length;
-  const project=leads.filter(l=>l.lead_type==='project').length;
-  document.getElementById('metricsGrid').innerHTML=`
-    <div class="metric"><div class="metric-label">Total leads</div><div class="metric-val">${total}</div><div class="metric-sub">In pipeline</div></div>
-    <div class="metric" style="border-color:#633806"><div class="metric-label" style="color:#633806">Wholesale</div><div class="metric-val" style="color:#633806">${wholesale}</div><div class="metric-sub">Own shops</div></div>
-    <div class="metric" style="border-color:var(--purple)"><div class="metric-label" style="color:var(--purple)">Projects</div><div class="metric-val" style="color:var(--purple)">${project}</div><div class="metric-sub">Client projects</div></div>
-    <div class="metric"><div class="metric-label">Quotes sent</div><div class="metric-val">${quoteSent}</div><div class="metric-sub">To clients</div></div>
-    <div class="metric"><div class="metric-label">Approvals</div><div class="metric-val">${approved}</div><div class="metric-sub">Phase 3+</div></div>
-    <div class="metric"><div class="metric-label">In freight</div><div class="metric-val">${freight}</div><div class="metric-sub">Phase 4</div></div>
-    <div class="metric"><div class="metric-label">Drive folders</div><div class="metric-val">${withDrive}</div><div class="metric-sub">of ${total} leads</div></div>
-    <div class="metric"><div class="metric-label">Emails sent</div><div class="metric-val">${totalEmails}</div><div class="metric-sub">Via CRM</div></div>`;
-  const pCounts=PHASES.map((_,i)=>leads.filter(l=>l.phase===i).length);
-  const maxP=Math.max(...pCounts,1);
-  document.getElementById('phaseChart').innerHTML=PHASES.map((p,i)=>`<div class="bar-wrap">
-    <div class="bar-val">${pCounts[i]}</div>
-    <div class="bar${pCounts[i]===Math.max(...pCounts)?' hi':''}" style="height:${Math.round((pCounts[i]/maxP)*90)}%"></div>
-    <div class="bar-label">Ph ${i+1}</div>
-  </div>`).join('');
-  const clients=[...new Set(leads.map(l=>l.client).filter(Boolean))];
-  // Type split chart replacing client chart
-  const typeData=[
-    {label:'Wholesale',count:wholesale,color:'#633806',bg:'var(--amber-light)'},
-    {label:'Project',count:project,color:'var(--purple)',bg:'var(--purple-light)'}
-  ];
-  const maxT=Math.max(...typeData.map(t=>t.count),1);
-  document.getElementById('clientChart').innerHTML=`<div style="display:flex;gap:16px;height:110px;align-items:flex-end;padding:0 20px">
-    ${typeData.map(t=>`<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;justify-content:flex-end">
-      <div style="font-size:13px;font-weight:700;color:${t.color}">${t.count}</div>
-      <div style="width:100%;background:${t.bg};border-radius:6px 6px 0 0;height:${Math.max(Math.round((t.count/maxT)*80),4)}px;border:1px solid ${t.color}20"></div>
-      <div style="font-size:12px;font-weight:600;color:${t.color}">${t.label}</div>
-    </div>`).join('')}
-  </div>`;
-  document.getElementById('pipelineTable').innerHTML=`
-    <tr><th style="width:20%">Lead</th><th style="width:18%">Company</th><th style="width:12%">Type</th><th style="width:12%">Phase</th><th style="width:14%">Quote</th><th style="width:12%">Drive</th><th style="width:12%">Emails</th></tr>
-    ${leads.map(l=>`<tr>
-      <td>${l.name||'&#8212;'}</td><td style="color:var(--text-secondary)">${l.company||'&#8212;'}</td>
-      <td><span style="font-size:11px;padding:2px 7px;border-radius:99px;font-weight:600;background:${l.lead_type==='project'?'var(--purple-light)':'var(--amber-light)'};color:${l.lead_type==='project'?'var(--purple)':'#633806'}">${l.lead_type==='project'?'Project':'Wholesale'}</span></td>
-      <td><span class="status-dot ${DOTS[l.phase||0]}"></span>Ph ${(l.phase||0)+1}</td>
-      <td>${quoteStatusBadge(l.quote_status)||'&#8212;'}</td>
-      <td style="text-align:center">${l.drive_folder_id?'<span style="color:var(--green)">&#10003;</span>':'&#8212;'}</td>
-      <td style="text-align:center">${l.emails_sent||0}</td>
-    </tr>`).join('')}`;
+function escHtml(s){
+  return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+
+function renderReports(){
+  const now = new Date();
+  const thisMonth = now.getMonth();
+  const thisYear = now.getFullYear();
+
+  // Helper: parse invoice_date
+  function invDate(l){ return l.invoice_date ? new Date(l.invoice_date) : new Date(l.created_at); }
+  function fmtMoney(n){ return 'A$'+Number(n||0).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  function sameMonth(d,m,y){ return d.getFullYear()===y && d.getMonth()===m; }
+
+  const invoiced = leads.filter(l=>l.invoice_total>0||l.phase===5);
+  const thisMonthLeads = invoiced.filter(l=>sameMonth(invDate(l),thisMonth,thisYear));
+  const paidThisMonth = thisMonthLeads.filter(l=>l.invoice_paid!==false).reduce((s,l)=>s+(l.invoice_total||0),0);
+  const pendingThisMonth = thisMonthLeads.filter(l=>l.invoice_paid===false).reduce((s,l)=>s+(l.invoice_total||0),0);
+  const wholesaleMonth = thisMonthLeads.filter(l=>l.lead_type!=='project').reduce((s,l)=>s+(l.invoice_total||0),0);
+  const projectMonth = thisMonthLeads.filter(l=>l.lead_type==='project').reduce((s,l)=>s+(l.invoice_total||0),0);
+
+  // Monthly target from localStorage or default
+  var monthlyTarget = parseFloat(localStorage.getItem('monthly_target')||'100000');
+  var totalMonth = paidThisMonth + pendingThisMonth;
+  var targetPct = Math.min(Math.round((paidThisMonth/monthlyTarget)*100),100);
+
+  // Previous 3 years same month
+  var prevYears = [thisYear-1, thisYear-2, thisYear-3].map(function(yr){
+    var total = invoiced.filter(l=>sameMonth(invDate(l),thisMonth,yr)).reduce(function(s,l){return s+(l.invoice_total||0);},0);
+    return {year:yr, total:total};
+  });
+
+  // Build HTML
+  var monthName = now.toLocaleString('default',{month:'long'});
+
+  document.getElementById('view-reports').innerHTML = `
+  <div style="max-width:1100px;margin:0 auto;padding:24px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:12px">
+      <h2 style="font-size:18px;font-weight:700;margin:0">Financial Reports</h2>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn" onclick="exportReportCSV()" style="font-size:12px"><i class="ti ti-download"></i> Export CSV</button>
+      </div>
+    </div>
+
+    <!-- Dashboard Row -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:20px">
+      <div class="metric" style="border-color:var(--green)">
+        <div class="metric-label" style="color:var(--green)">Paid This Month</div>
+        <div class="metric-val" style="color:var(--green);font-size:20px">${fmtMoney(paidThisMonth)}</div>
+        <div class="metric-sub">${monthName} ${thisYear}</div>
+      </div>
+      <div class="metric" style="border-color:var(--amber)">
+        <div class="metric-label" style="color:#b45309">Pending This Month</div>
+        <div class="metric-val" style="color:#b45309;font-size:20px">${fmtMoney(pendingThisMonth)}</div>
+        <div class="metric-sub">${thisMonthLeads.filter(l=>l.invoice_paid===false).length} invoice(s)</div>
+      </div>
+      <div class="metric" style="border-color:var(--purple)">
+        <div class="metric-label" style="color:var(--purple)">Monthly Target</div>
+        <div style="display:flex;align-items:center;gap:8px;margin:6px 0">
+          <input type="number" value="${monthlyTarget}" onchange="localStorage.setItem('monthly_target',this.value);renderReports()" style="width:110px;font-size:13px;font-weight:700;border:1px solid var(--border-t);border-radius:6px;padding:4px 8px;color:var(--purple)">
+        </div>
+        <div style="background:var(--border-t);border-radius:99px;height:8px;margin-top:4px">
+          <div style="background:${targetPct>=100?'var(--green)':'var(--purple)'};height:8px;border-radius:99px;width:${targetPct}%;transition:width 0.5s"></div>
+        </div>
+        <div class="metric-sub" style="margin-top:4px">${targetPct}% of target hit (paid)</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Wholesale vs Project</div>
+        <div style="display:flex;gap:8px;margin:8px 0;align-items:flex-end;height:50px">
+          ${(function(){
+            var max = Math.max(wholesaleMonth,projectMonth,1);
+            return [
+              {l:'Wholesale',v:wholesaleMonth,c:'#b45309'},
+              {l:'Project',v:projectMonth,c:'var(--purple)'}
+            ].map(function(t){
+              return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;height:100%;justify-content:flex-end">'
+                +'<div style="font-size:10px;font-weight:700;color:'+t.c+'">'+fmtMoney(t.v)+'</div>'
+                +'<div style="width:100%;background:'+t.c+'20;border-radius:4px 4px 0 0;height:'+Math.max(Math.round((t.v/max)*36),2)+'px;border-top:2px solid '+t.c+'"></div>'
+                +'<div style="font-size:10px;color:'+t.c+'">'+t.l+'</div></div>';
+            }).join('');
+          })()}
+        </div>
+      </div>
+    </div>
+
+    <!-- Same Month Previous 3 Years -->
+    <div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:16px;margin-bottom:20px;border:1px solid var(--border-t)">
+      <div style="font-size:13px;font-weight:700;margin-bottom:12px">${monthName} &#8212; Previous 3 Years Comparison</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+        ${prevYears.map(function(py){
+          return '<div style="text-align:center;padding:12px;background:var(--bg-primary);border-radius:var(--radius-sm);border:1px solid var(--border-t)">'
+            +'<div style="font-size:11px;color:var(--text-secondary);margin-bottom:4px">'+monthName+' '+py.year+'</div>'
+            +'<div style="font-size:16px;font-weight:700;color:var(--text-primary)">'+fmtMoney(py.total)+'</div>'
+            +(py.total===0?'<div style="font-size:10px;color:var(--text-secondary);margin-top:2px">No data</div>':'')
+            +'</div>';
+        }).join('')}
+      </div>
+    </div>
+
+    <!-- Filters -->
+    <div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:16px;margin-bottom:16px;border:1px solid var(--border-t)">
+      <div style="font-size:13px;font-weight:700;margin-bottom:12px"><i class="ti ti-filter"></i> Filter Invoices</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+        <div>
+          <div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px">Client / Company</div>
+          <input class="form-input" id="rpt-client" placeholder="Search client..." style="width:180px;font-size:12px" oninput="renderReportTable()">
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px">Project Name</div>
+          <input class="form-input" id="rpt-project" placeholder="Search project..." style="width:180px;font-size:12px" oninput="renderReportTable()">
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px">Type</div>
+          <select class="form-input" id="rpt-type" style="width:120px;font-size:12px" onchange="renderReportTable()">
+            <option value="">All types</option>
+            <option value="project">Project</option>
+            <option value="wholesale">Wholesale</option>
+          </select>
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px">From Date</div>
+          <input class="form-input" id="rpt-from" type="date" style="width:140px;font-size:12px" onchange="renderReportTable()">
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px">To Date</div>
+          <input class="form-input" id="rpt-to" type="date" style="width:140px;font-size:12px" onchange="renderReportTable()">
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px">Status</div>
+          <select class="form-input" id="rpt-paid" style="width:120px;font-size:12px" onchange="renderReportTable()">
+            <option value="">All</option>
+            <option value="paid">Paid</option>
+            <option value="pending">Pending</option>
+          </select>
+        </div>
+        <button class="btn" onclick="document.getElementById('rpt-client').value='';document.getElementById('rpt-project').value='';document.getElementById('rpt-type').value='';document.getElementById('rpt-from').value='';document.getElementById('rpt-to').value='';document.getElementById('rpt-paid').value='';renderReportTable()" style="font-size:12px">Clear</button>
+      </div>
+    </div>
+
+    <!-- Totals Summary -->
+    <div id="rpt-summary" style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap"></div>
+
+    <!-- Table -->
+    <div style="overflow-x:auto;border-radius:var(--radius-md);border:1px solid var(--border-t)">
+      <table style="width:100%;border-collapse:collapse;font-size:12px" id="rpt-table">
+        <thead>
+          <tr style="background:var(--bg-secondary)">
+            <th style="padding:10px 12px;text-align:left;font-weight:700;white-space:nowrap">Date</th>
+            <th style="padding:10px 12px;text-align:left;font-weight:700">Client / Name</th>
+            <th style="padding:10px 12px;text-align:left;font-weight:700">Project</th>
+            <th style="padding:10px 12px;text-align:left;font-weight:700">Type</th>
+            <th style="padding:10px 12px;text-align:right;font-weight:700">Amount</th>
+            <th style="padding:10px 12px;text-align:center;font-weight:700">Status</th>
+          </tr>
+        </thead>
+        <tbody id="rpt-tbody"></tbody>
+      </table>
+    </div>
+  </div>`;
+
+  renderReportTable();
+}
+
+function renderReportTable(){
+  function invDate(l){ return l.invoice_date ? new Date(l.invoice_date) : new Date(l.created_at); }
+  function fmtMoney(n){ return 'A$'+Number(n||0).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+
+  var clientF = (document.getElementById('rpt-client')||{}).value||'';
+  var projectF = (document.getElementById('rpt-project')||{}).value||'';
+  var typeF = (document.getElementById('rpt-type')||{}).value||'';
+  var fromF = (document.getElementById('rpt-from')||{}).value||'';
+  var toF = (document.getElementById('rpt-to')||{}).value||'';
+  var paidF = (document.getElementById('rpt-paid')||{}).value||'';
+
+  var filtered = leads.filter(function(l){
+    if(l.invoice_total<=0 && l.phase!==5) return false;
+    if(clientF && !(l.name||'').toLowerCase().includes(clientF.toLowerCase()) && !(l.company||'').toLowerCase().includes(clientF.toLowerCase())) return false;
+    if(projectF && !(l.project||'').toLowerCase().includes(projectF.toLowerCase())) return false;
+    if(typeF && (l.lead_type||'wholesale')!==typeF) return false;
+    var d = invDate(l);
+    if(fromF && d < new Date(fromF)) return false;
+    if(toF && d > new Date(toF+'T23:59:59')) return false;
+    if(paidF==='paid' && l.invoice_paid===false) return false;
+    if(paidF==='pending' && l.invoice_paid!==false) return false;
+    return true;
+  });
+
+  // Sort by date desc
+  filtered.sort(function(a,b){ return invDate(b)-invDate(a); });
+
+  var totalAmt = filtered.reduce(function(s,l){return s+(l.invoice_total||0);},0);
+  var paidAmt = filtered.filter(function(l){return l.invoice_paid!==false;}).reduce(function(s,l){return s+(l.invoice_total||0);},0);
+  var pendAmt = filtered.filter(function(l){return l.invoice_paid===false;}).reduce(function(s,l){return s+(l.invoice_total||0);},0);
+
+  var sumEl = document.getElementById('rpt-summary');
+  if(sumEl) sumEl.innerHTML = [
+    {l:'Results',v:filtered.length+' invoices',c:'var(--text-primary)'},
+    {l:'Total',v:fmtMoney(totalAmt),c:'var(--text-primary)'},
+    {l:'Paid',v:fmtMoney(paidAmt),c:'var(--green)'},
+    {l:'Pending',v:fmtMoney(pendAmt),c:'#b45309'}
+  ].map(function(s){
+    return '<div style="padding:8px 14px;background:var(--bg-secondary);border-radius:var(--radius-sm);border:1px solid var(--border-t)">'
+      +'<div style="font-size:10px;color:var(--text-secondary);font-weight:600">'+s.l+'</div>'
+      +'<div style="font-size:14px;font-weight:700;color:'+s.c+'">'+s.v+'</div></div>';
+  }).join('');
+
+  var tbody = document.getElementById('rpt-tbody');
+  if(!tbody) return;
+  if(!filtered.length){
+    tbody.innerHTML='<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--text-secondary)">No invoices match the filters</td></tr>';
+    return;
+  }
+  tbody.innerHTML = filtered.map(function(l){
+    var d = invDate(l);
+    var dateStr = d.toLocaleDateString('en-AU',{day:'2-digit',month:'short',year:'numeric'});
+    var paid = l.invoice_paid!==false;
+    var type = l.lead_type==='project'?'project':'wholesale';
+    return '<tr style="border-top:1px solid var(--border-t)">'
+      +'<td style="padding:10px 12px;white-space:nowrap;color:var(--text-secondary)">'+dateStr+'</td>'
+      +'<td style="padding:10px 12px;font-weight:600">'+escHtml(l.name||l.company||'Unknown')+'</td>'
+      +'<td style="padding:10px 12px;color:var(--text-secondary);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(l.project||'&#8212;')+'</td>'
+      +'<td style="padding:10px 12px"><span style="font-size:11px;padding:2px 7px;border-radius:99px;font-weight:600;background:'+(type==='project'?'var(--purple-light)':'var(--amber-light)')+';color:'+(type==='project'?'var(--purple)':'#b45309')+'">'+type+'</span></td>'
+      +'<td style="padding:10px 12px;text-align:right;font-weight:700">'+fmtMoney(l.invoice_total||0)+'</td>'
+      +'<td style="padding:10px 12px;text-align:center"><span style="font-size:11px;padding:2px 8px;border-radius:99px;font-weight:600;background:'+(paid?'rgba(34,197,94,0.12)':'rgba(245,158,11,0.12)')+';color:'+(paid?'var(--green)':'#b45309')+'">'+( paid?'Paid':'Pending')+'</span></td>'
+      +'</tr>';
+  }).join('');
+}
+
+function exportReportCSV(){
+  function invDate(l){ return l.invoice_date ? new Date(l.invoice_date) : new Date(l.created_at); }
+  var rows = [['Date','Client','Company','Project','Type','Amount','Status']];
+  leads.filter(function(l){return l.invoice_total>0||l.phase===5;}).sort(function(a,b){return invDate(b)-invDate(a);}).forEach(function(l){
+    rows.push([
+      invDate(l).toLocaleDateString('en-AU'),
+      l.name||'',l.company||'',l.project||'',
+      l.lead_type||'wholesale',
+      (l.invoice_total||0).toFixed(2),
+      l.invoice_paid!==false?'Paid':'Pending'
+    ]);
+  });
+  var csv = rows.map(function(r){return r.map(function(c){return '"'+String(c).replace(/"/g,'""')+'"';}).join(',');}).join('\n');
+  var a = document.createElement('a');
+  a.href = 'data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
+  a.download = 'traverse-invoices-'+new Date().toISOString().slice(0,10)+'.csv';
+  a.click();
+}
+
 
 function switchView(view,el){
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));

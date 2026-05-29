@@ -258,7 +258,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <div class="nav-tab active" onclick="switchView('pipeline',this)"><i class="ti ti-layout-kanban"></i> Pipeline</div>
   <div class="nav-tab" onclick="switchView('drive',this)"><i class="ti ti-brand-google-drive"></i> Drive</div>
   <div class="nav-tab" onclick="switchView('reports',this)"><i class="ti ti-chart-bar"></i> Reports</div>
-  <div class="nav-tab" onclick="switchView('import',this)"><i class="ti ti-file-import"></i> Import</div>
   <div style="margin-left:auto;display:flex;align-items:center;gap:10px">
     <button class="btn btn-primary" onclick="openNewLead()"><i class="ti ti-plus"></i> New lead</button>
     <div class="user-pill" onclick="doLogout()"><i class="ti ti-user"></i><span id="userEmail"></span><i class="ti ti-logout" style="font-size:13px"></i></div>
@@ -292,33 +291,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 </div>
 
 <!-- REPORTS -->
-<div id="view-import" class="view main">
-  <div style="max-width:800px;margin:0 auto;padding:24px">
-    <h2 style="font-size:18px;font-weight:700;margin-bottom:6px">Import Historical Invoices</h2>
-    <p style="font-size:13px;color:var(--text-secondary);margin-bottom:20px">Upload QuickBooks PDF invoices to create completed leads. The AI will extract client name, company, amount and date automatically.</p>
-    <div id="import-dropzone" style="border:2px dashed var(--border-t);border-radius:var(--radius-md);padding:32px;text-align:center;background:var(--bg-secondary);cursor:pointer;margin-bottom:16px" onclick="document.getElementById('import-file-input').click()" ondragover="event.preventDefault();this.style.borderColor='var(--purple)'" ondragleave="this.style.borderColor='var(--border-t)'" ondrop="handleImportDrop(event)">
-      <i class="ti ti-file-invoice" style="font-size:32px;color:var(--purple);margin-bottom:8px;display:block"></i>
-      <div style="font-size:14px;font-weight:600;margin-bottom:4px">Drop QuickBooks PDF invoices here</div>
-      <div style="font-size:12px;color:var(--text-secondary)">or click to select files &mdash; multiple files supported</div>
-      <input type="file" id="import-file-input" accept=".pdf" multiple style="display:none" onchange="handleImportFiles(this.files)">
-    </div>
-    <div id="import-preview" style="display:none">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-        <div style="font-size:14px;font-weight:600">Extracted Data &#8212; Review before importing</div>
-        <div style="display:flex;gap:8px">
-          <button class="btn" onclick="clearImport()"><i class="ti ti-x"></i> Clear</button>
-          <button class="btn btn-primary" id="confirmImportBtn" onclick="confirmImport()"><i class="ti ti-check"></i> Import all as Completed leads</button>
-        </div>
-      </div>
-      <div id="import-table-wrap"></div>
-    </div>
-    <div id="import-progress" style="display:none;padding:16px;background:var(--bg-secondary);border-radius:var(--radius-md)">
-      <div style="font-size:13px;font-weight:600;margin-bottom:8px" id="import-progress-label">Scanning invoices...</div>
-      <div style="background:var(--border-t);border-radius:99px;height:6px"><div id="import-progress-bar" style="background:var(--purple);height:6px;border-radius:99px;width:0%;transition:width 0.3s"></div></div>
-    </div>
-  </div>
-</div>
-
 <div id="view-reports" class="view main">
   <div class="report-grid" id="metricsGrid"></div>
   <div class="reports-row">
@@ -1716,140 +1688,6 @@ function switchDetailTab(tab,el){
 }
 
 /* &#9472;&#9472; REPORTS &#9472;&#9472; */
-var importedLeads=[];
-
-function handleImportDrop(e){
-  e.preventDefault();
-  document.getElementById('import-dropzone').style.borderColor='var(--border-t)';
-  handleImportFiles(e.dataTransfer.files);
-}
-
-async function handleImportFiles(files){
-  if(!files||!files.length) return;
-  importedLeads=[];
-  var pdfs=Array.from(files).filter(function(f){return f.type==='application/pdf';});
-  if(!pdfs.length){toast('Please select PDF files only','error');return;}
-  if(pdfs.length>15){toast('Maximum 15 PDFs at a time. Please split into batches.','error');return;}
-  document.getElementById('import-progress').style.display='block';
-  document.getElementById('import-preview').style.display='none';
-  var bar=document.getElementById('import-progress-bar');
-  var label=document.getElementById('import-progress-label');
-  for(var i=0;i<pdfs.length;i++){
-    var f=pdfs[i];
-    label.textContent='Scanning '+f.name+' ('+(i+1)+' of '+pdfs.length+')';
-    bar.style.width=Math.round(((i)/pdfs.length)*100)+'%';
-    try{
-      var b64=await fileToBase64(f);
-      var res=await fetch(SB_URL+'/functions/v1/scan-document',{
-        method:'POST',
-        headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},
-        body:JSON.stringify({base64:b64,mediaType:'application/pdf',isPdf:true,action:'scan_invoice'})
-      });
-      var data=await res.json();
-      if(data.success&&data.data){
-        var d=data.data;
-        importedLeads.push({
-          file:f.name,
-          name:d.client_name||'',
-          company:d.company_name||d.client_name||'',
-          total:d.total||d.invoice_total||0,
-          date:d.invoice_date||d.date||new Date().toISOString().slice(0,10),
-          invoice_number:d.invoice_number||'',
-          lead_type:d.lead_type||'wholesale',
-          notes:'Imported from QB invoice '+f.name
-        });
-      } else {
-        importedLeads.push({file:f.name,name:'',company:'',total:0,date:'',invoice_number:'',lead_type:'wholesale',notes:'Scan failed: '+(data.error||'unknown error'),_error:true});
-      }
-    }catch(e){
-      importedLeads.push({file:f.name,name:'',company:'',total:0,date:'',invoice_number:'',lead_type:'wholesale',notes:'Error: '+e.message,_error:true});
-    }
-  }
-  bar.style.width='100%';
-  label.textContent='Scan complete &#8212; '+importedLeads.length+' invoices processed';
-  setTimeout(function(){
-    document.getElementById('import-progress').style.display='none';
-    renderImportPreview();
-  },800);
-}
-
-function renderImportPreview(){
-  var wrap=document.getElementById('import-table-wrap');
-  var rows=importedLeads.map(function(l,i){
-    var bg=l._error?'background:rgba(220,50,50,0.05)':'';
-    return '<tr style="'+bg+'">'  
-      +'<td style="padding:8px;font-size:12px;color:var(--text-secondary)">'+l.file+'</td>'
-      +'<td style="padding:8px"><input class="form-input" style="font-size:12px;padding:4px 8px" value="'+escHtml(l.name)+'" onchange="importedLeads['+i+'].name=this.value"></td>'
-      +'<td style="padding:8px"><input class="form-input" style="font-size:12px;padding:4px 8px" value="'+escHtml(l.company)+'" onchange="importedLeads['+i+'].company=this.value"></td>'
-      +'<td style="padding:8px"><input class="form-input" style="font-size:12px;padding:4px 8px;width:100px" value="'+l.total+'" onchange="importedLeads['+i+'].total=parseFloat(this.value)||0"></td>'
-      +'<td style="padding:8px"><input class="form-input" style="font-size:12px;padding:4px 8px;width:120px" type="date" value="'+l.date+'" onchange="importedLeads['+i+'].date=this.value"></td>'
-      +'<td style="padding:8px"><select class="form-input" style="font-size:12px;padding:4px 8px" onchange="importedLeads['+i+'].lead_type=this.value"><option value="wholesale"'+(l.lead_type==='wholesale'?' selected':'')+'>Wholesale</option><option value="project"'+(l.lead_type==='project'?' selected':'')+'>Project</option></select></td>'
-      +'</tr>';
-  }).join('');
-  wrap.innerHTML='<table style="width:100%;border-collapse:collapse">'
-    +'<thead><tr style="background:var(--bg-secondary)">'
-    +'<th style="padding:8px;text-align:left;font-size:11px;font-weight:700">File</th>'
-    +'<th style="padding:8px;text-align:left;font-size:11px;font-weight:700">Client Name</th>'
-    +'<th style="padding:8px;text-align:left;font-size:11px;font-weight:700">Company</th>'
-    +'<th style="padding:8px;text-align:left;font-size:11px;font-weight:700">Total (A$)</th>'
-    +'<th style="padding:8px;text-align:left;font-size:11px;font-weight:700">Date</th>'
-    +'<th style="padding:8px;text-align:left;font-size:11px;font-weight:700">Type</th>'
-    +'</tr></thead>'
-    +'<tbody>'+rows+'</tbody></table>';
-  document.getElementById('import-preview').style.display='block';
-}
-
-function escHtml(s){
-  return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-function clearImport(){
-  importedLeads=[];
-  document.getElementById('import-preview').style.display='none';
-  document.getElementById('import-file-input').value='';
-}
-
-async function confirmImport(){
-  if(!authToken){toast('Session expired &#8212; please refresh and log in again','error');return;}
-  var btn=document.getElementById('confirmImportBtn');
-  btn.disabled=true;
-  btn.innerHTML='<i class="ti ti-loader"></i> Importing...';
-  var ok=0,fail=0;
-  for(var i=0;i<importedLeads.length;i++){
-    var l=importedLeads[i];
-    if(!l.name&&!l.company){fail++;continue;}
-    try{
-      var ymd=new Date().toISOString().slice(2,10).replace(/-/g,'');
-      var payload={
-        name:l.name||(l.company||'Unknown'),
-        company:l.company||'',
-        contact:'',
-        mobile:'',
-        project:l.invoice_number||'Imported',
-        phase:4,
-        notes:l.notes||'',
-        client:l.company||l.name||'',
-        emails_sent:0,
-        quote_status:'invoiced',
-        lead_type:l.lead_type||'wholesale',
-        doc_code:ymd+'-'+((l.company||l.name||'').substring(0,10))+'-imported',
-        invoice_total:l.total||0
-      };
-      var r=await sb('leads',{method:'POST',headers:{'Prefer':'return=representation'},body:JSON.stringify(payload)});
-      var rows=await r.json();
-      if(rows&&rows[0]&&rows[0].id){
-        // Log activity
-        await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:rows[0].id,action:'Imported from QB invoice',detail:l.file+' &#8212; A$'+l.total})});
-        ok++;
-      } else {fail++;}
-    }catch(e){fail++;console.error('Import error:',e);}
-  }
-  btn.disabled=false;
-  btn.innerHTML='<i class="ti ti-check"></i> Import all as Completed leads';
-  toast('Imported '+ok+' leads'+(fail?' ('+fail+' failed)':''),'success');
-  if(ok>0){clearImport();await loadLeads();}
-}
-
 function renderReports(){
   const total=leads.length;
   const totalVal=leads.reduce((s,l)=>s+0,0);

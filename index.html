@@ -1755,84 +1755,110 @@ function renderReports(){
         <div class="metric-sub" style="margin-top:4px">${targetPct}% of target hit (paid)</div>
       </div>
       <div class="metric">
-        <div class="metric-label" style="margin-bottom:8px">Wholesale vs Project</div>
-        <div style="font-size:10px;color:var(--text-secondary);font-weight:600;margin-bottom:4px">THIS MONTH</div>
+        <div class="metric-label">W vs P &mdash; This Month</div>
         ${(function(){
           var max=Math.max(wholesaleMonth,projectMonth,1);
-          return '<div style="display:flex;gap:6px;align-items:flex-end;height:44px">'
-            +[{l:'Whsl',v:wholesaleMonth,c:'#b45309'},{l:'Proj',v:projectMonth,c:'var(--purple)'}].map(function(t){
-              return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:1px;height:100%;justify-content:flex-end">'
-                +'<div style="font-size:9px;font-weight:700;color:'+t.c+'">'+fmtMoney(t.v)+'</div>'
-                +'<div style="width:100%;background:'+t.c+'20;border-radius:3px 3px 0 0;height:'+Math.max(Math.round((t.v/max)*30),2)+'px;border-top:2px solid '+t.c+'"></div>'
-                +'<div style="font-size:9px;color:'+t.c+'">'+t.l+'</div></div>';
-            }).join('')
-            +'</div>';
+          return '<div style="display:flex;gap:8px;align-items:flex-end;height:60px;margin-top:8px">'
+            +[{l:'Wholesale',v:wholesaleMonth,c:'#b45309'},{l:'Project',v:projectMonth,c:'var(--purple)'}].map(function(t){
+              return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;height:100%;justify-content:flex-end">'
+                +'<div style="font-size:10px;font-weight:700;color:'+t.c+'">'+fmtMoney(t.v)+'</div>'
+                +'<div style="width:100%;background:'+t.c+'20;border-radius:4px 4px 0 0;height:'+Math.max(Math.round((t.v/max)*40),2)+'px;border-top:2px solid '+t.c+'"></div>'
+                +'<div style="font-size:10px;color:'+t.c+'">'+t.l+'</div></div>';
+            }).join('')+'</div>';
         })()}
-        <div style="font-size:10px;color:var(--text-secondary);font-weight:600;margin:8px 0 4px">THIS QUARTER</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">W vs P &mdash; This Quarter</div>
         ${(function(){
           var qStart=new Date(now.getFullYear(),Math.floor(now.getMonth()/3)*3,1);
           var wQ=invoiced.filter(function(l){return invDate(l)>=qStart&&l.lead_type!=='project';}).reduce(function(s,l){return s+(l.invoice_total||0);},0);
           var pQ=invoiced.filter(function(l){return invDate(l)>=qStart&&l.lead_type==='project';}).reduce(function(s,l){return s+(l.invoice_total||0);},0);
           var max=Math.max(wQ,pQ,1);
-          return '<div style="display:flex;gap:6px;align-items:flex-end;height:44px">'
-            +[{l:'Whsl',v:wQ,c:'#b45309'},{l:'Proj',v:pQ,c:'var(--purple)'}].map(function(t){
-              return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:1px;height:100%;justify-content:flex-end">'
-                +'<div style="font-size:9px;font-weight:700;color:'+t.c+'">'+fmtMoney(t.v)+'</div>'
-                +'<div style="width:100%;background:'+t.c+'20;border-radius:3px 3px 0 0;height:'+Math.max(Math.round((t.v/max)*30),2)+'px;border-top:2px solid '+t.c+'"></div>'
-                +'<div style="font-size:9px;color:'+t.c+'">'+t.l+'</div></div>';
-            }).join('')
-            +'</div>';
+          return '<div style="display:flex;gap:8px;align-items:flex-end;height:60px;margin-top:8px">'
+            +[{l:'Wholesale',v:wQ,c:'#b45309'},{l:'Project',v:pQ,c:'var(--purple)'}].map(function(t){
+              return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;height:100%;justify-content:flex-end">'
+                +'<div style="font-size:10px;font-weight:700;color:'+t.c+'">'+fmtMoney(t.v)+'</div>'
+                +'<div style="width:100%;background:'+t.c+'20;border-radius:4px 4px 0 0;height:'+Math.max(Math.round((t.v/max)*40),2)+'px;border-top:2px solid '+t.c+'"></div>'
+                +'<div style="font-size:10px;color:'+t.c+'">'+t.l+'</div></div>';
+            }).join('')+'</div>';
         })()}
-        <div style="font-size:10px;color:var(--text-secondary);font-weight:600;margin:8px 0 4px">FINANCIAL YTD (Jul-Jun)</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">W vs P &mdash; FY YTD (Jul-Jun)</div>
         ${(function(){
           var fyStart=new Date(now.getMonth()>=6?now.getFullYear():now.getFullYear()-1,6,1);
           var wY=invoiced.filter(function(l){return invDate(l)>=fyStart&&l.lead_type!=='project';}).reduce(function(s,l){return s+(l.invoice_total||0);},0);
           var pY=invoiced.filter(function(l){return invDate(l)>=fyStart&&l.lead_type==='project';}).reduce(function(s,l){return s+(l.invoice_total||0);},0);
           var max=Math.max(wY,pY,1);
-          return '<div style="display:flex;gap:6px;align-items:flex-end;height:44px">'
-            +[{l:'Whsl',v:wY,c:'#b45309'},{l:'Proj',v:pY,c:'var(--purple)'}].map(function(t){
-              return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:1px;height:100%;justify-content:flex-end">'
-                +'<div style="font-size:9px;font-weight:700;color:'+t.c+'">'+fmtMoney(t.v)+'</div>'
-                +'<div style="width:100%;background:'+t.c+'20;border-radius:3px 3px 0 0;height:'+Math.max(Math.round((t.v/max)*30),2)+'px;border-top:2px solid '+t.c+'"></div>'
-                +'<div style="font-size:9px;color:'+t.c+'">'+t.l+'</div></div>';
-            }).join('')
-            +'</div>';
+          return '<div style="display:flex;gap:8px;align-items:flex-end;height:60px;margin-top:8px">'
+            +[{l:'Wholesale',v:wY,c:'#b45309'},{l:'Project',v:pY,c:'var(--purple)'}].map(function(t){
+              return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;height:100%;justify-content:flex-end">'
+                +'<div style="font-size:10px;font-weight:700;color:'+t.c+'">'+fmtMoney(t.v)+'</div>'
+                +'<div style="width:100%;background:'+t.c+'20;border-radius:4px 4px 0 0;height:'+Math.max(Math.round((t.v/max)*40),2)+'px;border-top:2px solid '+t.c+'"></div>'
+                +'<div style="font-size:10px;color:'+t.c+'">'+t.l+'</div></div>';
+            }).join('')+'</div>';
         })()}
       </div>
       <div class="metric">
-        <div class="metric-label" style="margin-bottom:8px">Wholesale Breakdown</div>
+        <div class="metric-label">Wholesale &mdash; This Month</div>
+        ${(function(){
+          function wsFilter(l){ return l.lead_type!=='project'&&l.invoice_total>0; }
+          var shops=[
+            {l:'Pt Cruz',fn:function(l){return wsFilter(l)&&(l.name||'').toLowerCase().includes('point cruz');},c:'#0369a1'},
+            {l:'Henderson',fn:function(l){return wsFilter(l)&&(l.name||'').toLowerCase().includes('henderson');},c:'#0f766e'},
+            {l:'Ranadi',fn:function(l){return wsFilter(l)&&(l.name||'').toLowerCase().includes('ranadi');},c:'#7c3aed'}
+          ];
+          var totals=shops.map(function(s){return {l:s.l,c:s.c,v:invoiced.filter(function(l){return s.fn(l)&&sameMonth(invDate(l),thisMonth,thisYear);}).reduce(function(sum,l){return sum+(l.invoice_total||0);},0)};});
+          var max=Math.max.apply(null,totals.map(function(t){return t.v;}).concat([1]));
+          return '<div style="display:flex;gap:6px;align-items:flex-end;height:60px;margin-top:8px">'
+            +totals.map(function(t){
+              return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;height:100%;justify-content:flex-end">'
+                +'<div style="font-size:9px;font-weight:700;color:'+t.c+'">'+fmtMoney(t.v)+'</div>'
+                +'<div style="width:100%;background:'+t.c+'20;border-radius:4px 4px 0 0;height:'+Math.max(Math.round((t.v/max)*40),2)+'px;border-top:2px solid '+t.c+'"></div>'
+                +'<div style="font-size:9px;color:'+t.c+'">'+t.l+'</div></div>';
+            }).join('')+'</div>';
+        })()}
+      </div>
+      <div class="metric">
+        <div class="metric-label">Wholesale &mdash; This Quarter</div>
+        ${(function(){
+          var qStart=new Date(now.getFullYear(),Math.floor(now.getMonth()/3)*3,1);
+          function wsFilter(l){ return l.lead_type!=='project'&&l.invoice_total>0; }
+          var shops=[
+            {l:'Pt Cruz',fn:function(l){return wsFilter(l)&&(l.name||'').toLowerCase().includes('point cruz');},c:'#0369a1'},
+            {l:'Henderson',fn:function(l){return wsFilter(l)&&(l.name||'').toLowerCase().includes('henderson');},c:'#0f766e'},
+            {l:'Ranadi',fn:function(l){return wsFilter(l)&&(l.name||'').toLowerCase().includes('ranadi');},c:'#7c3aed'}
+          ];
+          var totals=shops.map(function(s){return {l:s.l,c:s.c,v:invoiced.filter(function(l){return s.fn(l)&&invDate(l)>=qStart;}).reduce(function(sum,l){return sum+(l.invoice_total||0);},0)};});
+          var max=Math.max.apply(null,totals.map(function(t){return t.v;}).concat([1]));
+          return '<div style="display:flex;gap:6px;align-items:flex-end;height:60px;margin-top:8px">'
+            +totals.map(function(t){
+              return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;height:100%;justify-content:flex-end">'
+                +'<div style="font-size:9px;font-weight:700;color:'+t.c+'">'+fmtMoney(t.v)+'</div>'
+                +'<div style="width:100%;background:'+t.c+'20;border-radius:4px 4px 0 0;height:'+Math.max(Math.round((t.v/max)*40),2)+'px;border-top:2px solid '+t.c+'"></div>'
+                +'<div style="font-size:9px;color:'+t.c+'">'+t.l+'</div></div>';
+            }).join('')+'</div>';
+        })()}
+      </div>
+      <div class="metric">
+        <div class="metric-label">Wholesale &mdash; FY YTD (Jul-Jun)</div>
         ${(function(){
           var fyStart=new Date(now.getMonth()>=6?now.getFullYear():now.getFullYear()-1,6,1);
-          var qStart=new Date(now.getFullYear(),Math.floor(now.getMonth()/3)*3,1);
-          function wsFilter(l){ return l.lead_type!=='project' && l.invoice_total>0; }
-          function isPC(l){ return wsFilter(l) && (l.name||'').toLowerCase().includes('point cruz'); }
-          function isH(l){ return wsFilter(l) && (l.name||'').toLowerCase().includes('henderson'); }
-          function isR(l){ return wsFilter(l) && (l.name||'').toLowerCase().includes('ranadi'); }
-          var periods=[
-            {label:'Month',filter:function(l){return sameMonth(invDate(l),thisMonth,thisYear);}},
-            {label:'Quarter',filter:function(l){return invDate(l)>=qStart;}},
-            {label:'FY YTD',filter:function(l){return invDate(l)>=fyStart;}}
-          ];
+          function wsFilter(l){ return l.lead_type!=='project'&&l.invoice_total>0; }
           var shops=[
-            {l:'Pt Cruz',fn:isPC,c:'#0369a1'},
-            {l:'Henderson',fn:isH,c:'#0f766e'},
-            {l:'Ranadi',fn:isR,c:'#7c3aed'}
+            {l:'Pt Cruz',fn:function(l){return wsFilter(l)&&(l.name||'').toLowerCase().includes('point cruz');},c:'#0369a1'},
+            {l:'Henderson',fn:function(l){return wsFilter(l)&&(l.name||'').toLowerCase().includes('henderson');},c:'#0f766e'},
+            {l:'Ranadi',fn:function(l){return wsFilter(l)&&(l.name||'').toLowerCase().includes('ranadi');},c:'#7c3aed'}
           ];
-          var html='';
-          periods.forEach(function(p){
-            html+='<div style="font-size:10px;color:var(--text-secondary);font-weight:600;margin:'+(html?'8px':'0')+'0 4px">'+p.label.toUpperCase()+'</div>';
-            var totals=shops.map(function(s){return {l:s.l,c:s.c,v:invoiced.filter(function(l){return s.fn(l)&&p.filter(l);}).reduce(function(sum,l){return sum+(l.invoice_total||0);},0)};});
-            var max=Math.max.apply(null,totals.map(function(t){return t.v;}).concat([1]));
-            html+='<div style="display:flex;gap:4px;align-items:flex-end;height:44px">';
-            totals.forEach(function(t){
-              html+='<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:1px;height:100%;justify-content:flex-end">'
+          var totals=shops.map(function(s){return {l:s.l,c:s.c,v:invoiced.filter(function(l){return s.fn(l)&&invDate(l)>=fyStart;}).reduce(function(sum,l){return sum+(l.invoice_total||0);},0)};});
+          var max=Math.max.apply(null,totals.map(function(t){return t.v;}).concat([1]));
+          return '<div style="display:flex;gap:6px;align-items:flex-end;height:60px;margin-top:8px">'
+            +totals.map(function(t){
+              return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;height:100%;justify-content:flex-end">'
                 +'<div style="font-size:9px;font-weight:700;color:'+t.c+'">'+fmtMoney(t.v)+'</div>'
-                +'<div style="width:100%;background:'+t.c+'20;border-radius:3px 3px 0 0;height:'+Math.max(Math.round((t.v/max)*30),2)+'px;border-top:2px solid '+t.c+'"></div>'
+                +'<div style="width:100%;background:'+t.c+'20;border-radius:4px 4px 0 0;height:'+Math.max(Math.round((t.v/max)*40),2)+'px;border-top:2px solid '+t.c+'"></div>'
                 +'<div style="font-size:9px;color:'+t.c+'">'+t.l+'</div></div>';
-            });
-            html+='</div>';
-          });
-          return html;
+            }).join('')+'</div>';
         })()}
       </div>
     </div>

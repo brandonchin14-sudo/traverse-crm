@@ -672,11 +672,9 @@ async function moveToFreighting(){
 async function moveToClientApproved(){
   if(!currentLead) return;
   var sel=document.getElementById('freight-type-sel');
-  var ft = (sel&&sel.value) ? sel.value : (currentLead.freight_type||'');
+  var ft=(sel&&sel.value)?sel.value:(currentLead.freight_type||'');
   if(!ft){toast('Please select a freight type first','error');return;}
-  var patch={phase:2,freight_type:ft,updated_at:new Date().toISOString()};
-  var r=await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',headers:{'Prefer':'return=representation'},body:JSON.stringify(patch)});
-  console.log('moveToClientApproved patch status:',r.status);
+  await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({phase:2,freight_type:ft,updated_at:new Date().toISOString()})});
   await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Moved to Client Approved',detail:'Quote approved by client. Freight: '+(ft==='sea'?'Sea Freight':'Air Freight')})});
   toast('Moved to Client Approved &#10003;');
   currentLead.phase=2;

@@ -659,6 +659,16 @@ async function saveFreightType(val){
   toast('Freight type saved: '+(val==='sea'?'Sea Freight':'Air Freight'));
 }
 
+async function moveToFreighting(){
+  if(!currentLead) return;
+  await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({phase:3,updated_at:new Date().toISOString()})});
+  await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Moved to Freighting',detail:'Lead ready to freight - moved to Freighting pipeline'})});
+  toast('Moved to Freighting &#10003;');
+  currentLead.phase=3;
+  renderDetailInfo();
+  await loadLeads();
+}
+
 async function moveToClientApproved(){
   if(!currentLead) return;
   var ft = currentLead.freight_type || document.getElementById('freight-type-sel')?.value;
@@ -847,6 +857,13 @@ function renderDetailInfo(){
           +'</select>'
           +'<button class="btn btn-primary" onclick="moveToClientApproved()" style="width:100%;justify-content:center"><i class="ti ti-check"></i> Move to Client Approved</button>'
           +'<div style="font-size:11px;color:var(--text-secondary);text-align:center;margin-top:6px">Move once quote has been sent and approved by client</div>'
+          +'</div>';
+      }
+      if((l.phase||0)===2){
+        html+='<div style="margin-top:16px;padding:14px;background:var(--bg-secondary);border-radius:var(--radius-md);border:1px solid var(--border-t)">'
+          +'<button class="btn btn-primary" onclick="moveToFreighting()" style="width:100%;justify-content:center;background:var(--green);border-color:var(--green)">'
+          +'<i class="ti ti-ship"></i> Ready to Freight</button>'
+          +'<div style="font-size:11px;color:var(--text-secondary);text-align:center;margin-top:6px">Move this lead to Freighting to generate freight documents</div>'
           +'</div>';
       }
       return html;

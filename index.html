@@ -496,9 +496,9 @@ async function generateQBInvoice(){
 const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR3bXB1bmJjd3JwcmhoendkdXl4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk3NTc5MDgsImV4cCI6MjA5NTMzMzkwOH0.3Y4eUIXDWoBX7K_HgBSswMLDo4me_eDxcAw4SQVZxZM';
 const EMAIL_FN=SB_URL+'/functions/v1/send-email';
 const PHASES=[
-  {name:'Phase 1 &#8212; Quote Request',short:'Quote Request',cls:'ph1'},
-  {name:'Phase 2 &#8212; Enquire Suppliers',short:'Enquire Suppliers',cls:'ph2'},
-  {name:'Phase 3 &#8212; Client Approval',short:'Client Approval',cls:'ph3'},
+  {name:'Phase 1 &#8212; New Lead',short:'New Lead',cls:'ph1'},
+  {name:'Phase 2 &#8212; Quoted',short:'Quoted',cls:'ph2'},
+  {name:'Phase 3 &#8212; Client Approved',short:'Client Approved',cls:'ph3'},
   {name:'Phase 4 &#8212; Freighting',short:'Freighting',cls:'ph4'},
   {name:'Phase 5 &#8212; Completed',short:'Completed',cls:'ph5'}
 ];
@@ -641,6 +641,36 @@ function renderBoard(){
 
 /* &#9472;&#9472; NEW LEAD &#9472;&#9472; */
 function openNewLead(){openNewLeadPhase(0);}
+
+async function moveToQuoted(){
+  if(!currentLead) return;
+  await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({phase:1,updated_at:new Date().toISOString()})});
+  await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Moved to Quoted',detail:'Lead moved from New Lead to Quoted pipeline'})});
+  toast('Moved to Quoted &#10003;');
+  currentLead.phase=1;
+  renderDetailInfo();
+  await loadLeads();
+}
+
+async function saveFreightType(val){
+  if(!currentLead||!val) return;
+  await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({freight_type:val,updated_at:new Date().toISOString()})});
+  currentLead.freight_type=val;
+  toast('Freight type saved: '+(val==='sea'?'Sea Freight':'Air Freight'));
+}
+
+async function moveToClientApproved(){
+  if(!currentLead) return;
+  var ft = currentLead.freight_type || document.getElementById('freight-type-sel')?.value;
+  if(!ft){toast('Please select a freight type first','error');return;}
+  await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({phase:2,freight_type:ft,updated_at:new Date().toISOString()})});
+  await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Moved to Client Approved',detail:'Quote approved by client. Freight: '+(ft==='sea'?'Sea Freight':'Air Freight')})});
+  toast('Moved to Client Approved &#10003;');
+  currentLead.phase=2;
+  renderDetailInfo();
+  await loadLeads();
+}
+
 function fillNewLeadFromQB(sel){
   var opt=sel.options[sel.selectedIndex];
   if(!opt.value) return;
@@ -793,12 +823,33 @@ function renderDetailInfo(){
       <div class="info-item"><label>Quote status</label><p>${quoteStatusBadge(l.quote_status)||'&#8212;'}</p></div>
       <div class="info-item"><label>Lead type</label><p><span style="font-size:12px;padding:3px 9px;border-radius:99px;font-weight:600;background:${l.lead_type==='project'?'var(--purple-light)':'var(--amber-light)'};color:${l.lead_type==='project'?'var(--purple)':'#633806'}">${l.lead_type==='project'?'Project':'Wholesale'}</span></p></div>
       <div class="info-item"><label>Emails sent</label><p>${l.emails_sent||0}</p></div>
+      ${l.freight_type?`<div class="info-item"><label>Freight type</label><p><span style="font-size:12px;padding:3px 9px;border-radius:99px;font-weight:600;background:${l.freight_type==='sea'?'rgba(3,105,161,0.1)':'rgba(124,58,237,0.1)'};color:${l.freight_type==='sea'?'#0369a1':'#7c3aed'}"><i class="ti ti-${l.freight_type==='sea'?'ship':'plane'}"></i> ${l.freight_type==='sea'?'Sea Freight':'Air Freight'}</span></p></div>`:''}
       <div class="info-item"><label>Drive folder</label><p>${l.drive_folder_id?'<span style="color:var(--green)">&#10003; Linked</span>':'Not created'}</p></div>
     </div>
     ${l.doc_code?`<div style="margin-bottom:12px"><label class="form-label">Document code</label>
     <div style="font-size:12px;font-family:monospace;background:var(--bg-secondary);padding:8px 11px;border-radius:var(--radius-md)">${l.doc_code}</div></div>`:''}
     ${l.notes?`<div style="margin-bottom:12px"><label class="form-label">Notes</label><p style="font-size:13px;color:var(--text-secondary)">${l.notes}</p></div>`:''}
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+    ${(l.phase||0)===0?`
+    <div style="margin-top:16px;padding:14px;background:var(--bg-secondary);border-radius:var(--radius-md);border:1px solid var(--border-t)">
+      <button class="btn btn-primary" onclick="moveToQuoted()" style="width:100%;justify-content:center">
+        <i class="ti ti-arrow-right"></i> Move to Quoted
+      </button>
+      <div style="font-size:11px;color:var(--text-secondary);text-align:center;margin-top:6px">Move this lead to the Quoted pipeline once supplier data is ready</div>
+    </div>`:\'\' }
+    ${(l.phase||0)===1?`
+    <div style="margin-top:16px;padding:14px;background:var(--bg-secondary);border-radius:var(--radius-md);border:1px solid var(--border-t)">
+      <div style="font-size:12px;font-weight:700;margin-bottom:8px"><i class="ti ti-truck"></i> Freight Type</div>
+      <select class="form-input" id="freight-type-sel" style="margin-bottom:10px" onchange="saveFreightType(this.value)">
+        <option value="">-- Select freight type --</option>
+        <option value="sea" ${(l.freight_type||'')==='sea'?'selected':''}>Sea Freight</option>
+        <option value="air" ${(l.freight_type||'')==='air'?'selected':''}>Air Freight</option>
+      </select>
+      <button class="btn btn-primary" onclick="moveToClientApproved()" style="width:100%;justify-content:center">
+        <i class="ti ti-check"></i> Move to Client Approved
+      </button>
+      <div style="font-size:11px;color:var(--text-secondary);text-align:center;margin-top:6px">Move once quote has been sent and approved by client</div>
+    </div>`:\'\' }
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
       ${!l.drive_folder_id?`<button class="btn btn-green" onclick="createFolderFromDetail()"><i class="ti ti-brand-google-drive"></i> Create Drive folder</button>`:''}
       <button class="btn btn-danger" style="margin-left:auto" onclick="deleteLead('${l.id}')"><i class="ti ti-trash"></i> Delete lead</button>
     </div>`;

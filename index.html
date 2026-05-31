@@ -829,26 +829,28 @@ function renderDetailInfo(){
     ${l.doc_code?`<div style="margin-bottom:12px"><label class="form-label">Document code</label>
     <div style="font-size:12px;font-family:monospace;background:var(--bg-secondary);padding:8px 11px;border-radius:var(--radius-md)">${l.doc_code}</div></div>`:''}
     ${l.notes?`<div style="margin-bottom:12px"><label class="form-label">Notes</label><p style="font-size:13px;color:var(--text-secondary)">${l.notes}</p></div>`:''}
-    ${(l.phase||0)===0?`
-    <div style="margin-top:16px;padding:14px;background:var(--bg-secondary);border-radius:var(--radius-md);border:1px solid var(--border-t)">
-      <button class="btn btn-primary" onclick="moveToQuoted()" style="width:100%;justify-content:center">
-        <i class="ti ti-arrow-right"></i> Move to Quoted
-      </button>
-      <div style="font-size:11px;color:var(--text-secondary);text-align:center;margin-top:6px">Move this lead to the Quoted pipeline once supplier data is ready</div>
-    </div>`:\'\' }
-    ${(l.phase||0)===1?`
-    <div style="margin-top:16px;padding:14px;background:var(--bg-secondary);border-radius:var(--radius-md);border:1px solid var(--border-t)">
-      <div style="font-size:12px;font-weight:700;margin-bottom:8px"><i class="ti ti-truck"></i> Freight Type</div>
-      <select class="form-input" id="freight-type-sel" style="margin-bottom:10px" onchange="saveFreightType(this.value)">
-        <option value="">-- Select freight type --</option>
-        <option value="sea" ${(l.freight_type||'')==='sea'?'selected':''}>Sea Freight</option>
-        <option value="air" ${(l.freight_type||'')==='air'?'selected':''}>Air Freight</option>
-      </select>
-      <button class="btn btn-primary" onclick="moveToClientApproved()" style="width:100%;justify-content:center">
-        <i class="ti ti-check"></i> Move to Client Approved
-      </button>
-      <div style="font-size:11px;color:var(--text-secondary);text-align:center;margin-top:6px">Move once quote has been sent and approved by client</div>
-    </div>`:\'\' }
+    ${(function(){
+      var html='';
+      if((l.phase||0)===0){
+        html+='<div style="margin-top:16px;padding:14px;background:var(--bg-secondary);border-radius:var(--radius-md);border:1px solid var(--border-t)">'
+          +'<button class="btn btn-primary" onclick="moveToQuoted()" style="width:100%;justify-content:center"><i class="ti ti-arrow-right"></i> Move to Quoted</button>'
+          +'<div style="font-size:11px;color:var(--text-secondary);text-align:center;margin-top:6px">Move this lead to the Quoted pipeline once supplier data is ready</div>'
+          +'</div>';
+      }
+      if((l.phase||0)===1){
+        html+='<div style="margin-top:16px;padding:14px;background:var(--bg-secondary);border-radius:var(--radius-md);border:1px solid var(--border-t)">'
+          +'<div style="font-size:12px;font-weight:700;margin-bottom:8px"><i class="ti ti-truck"></i> Freight Type</div>'
+          +'<select class="form-input" id="freight-type-sel" style="margin-bottom:10px" onchange="saveFreightType(this.value)">'
+          +'<option value="">-- Select freight type --</option>'
+          +'<option value="sea"'+(l.freight_type==='sea'?' selected':'')+'>Sea Freight</option>'
+          +'<option value="air"'+(l.freight_type==='air'?' selected':'')+'>Air Freight</option>'
+          +'</select>'
+          +'<button class="btn btn-primary" onclick="moveToClientApproved()" style="width:100%;justify-content:center"><i class="ti ti-check"></i> Move to Client Approved</button>'
+          +'<div style="font-size:11px;color:var(--text-secondary);text-align:center;margin-top:6px">Move once quote has been sent and approved by client</div>'
+          +'</div>';
+      }
+      return html;
+    })()}
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
       ${!l.drive_folder_id?`<button class="btn btn-green" onclick="createFolderFromDetail()"><i class="ti ti-brand-google-drive"></i> Create Drive folder</button>`:''}
       <button class="btn btn-danger" style="margin-left:auto" onclick="deleteLead('${l.id}')"><i class="ti ti-trash"></i> Delete lead</button>

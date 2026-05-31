@@ -648,7 +648,7 @@ async function moveToQuoted(){
   await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Moved to Quoted',detail:'Lead moved from New Lead to Quoted pipeline'})});
   toast('Moved to Quoted &#10003;');
   currentLead.phase=1;
-  renderDetailInfo();
+  await renderDetailInfo();
   await loadLeads();
 }
 
@@ -665,7 +665,7 @@ async function moveToFreighting(){
   await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Moved to Freighting',detail:'Lead ready to freight - moved to Freighting pipeline'})});
   toast('Moved to Freighting &#10003;');
   currentLead.phase=3;
-  renderDetailInfo();
+  await renderDetailInfo();
   await loadLeads();
 }
 
@@ -679,7 +679,7 @@ async function moveToClientApproved(){
   toast('Moved to Client Approved &#10003;');
   currentLead.phase=2;
   currentLead.freight_type=ft;
-  renderDetailInfo();
+  await renderDetailInfo();
   await loadLeads();
 }
 
@@ -805,7 +805,7 @@ async function openDetail(id){
   document.querySelectorAll('.detail-tab').forEach((t,i)=>t.classList.toggle('active',i===0));
   document.querySelectorAll('.detail-section').forEach((s,i)=>s.classList.toggle('active',i===0));
   await loadCurrentQuote();
-  renderDetailInfo();renderDetailEmails();
+  await renderDetailInfo();renderDetailEmails();
   document.getElementById('dtab-files').innerHTML='';
   document.getElementById('dtab-quote').innerHTML='';
   await renderDetailActivity();
@@ -825,7 +825,7 @@ async function loadCurrentQuote(){
   }catch(e){currentQuote=null;currentLineItems=[];}
 }
 
-function renderDetailInfo(){
+async function renderDetailInfo(){
   const l=currentLead;
   document.getElementById('dtab-info').innerHTML=`
     <div class="info-grid">
@@ -870,10 +870,58 @@ function renderDetailInfo(){
       }
       return html;
     })()}
+    <div id="detail-quote-summary"></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
       ${!l.drive_folder_id?`<button class="btn btn-green" onclick="createFolderFromDetail()"><i class="ti ti-brand-google-drive"></i> Create Drive folder</button>`:''}
       <button class="btn btn-danger" style="margin-left:auto" onclick="deleteLead('${l.id}')"><i class="ti ti-trash"></i> Delete lead</button>
     </div>`;
+  // Fetch and render quote summary
+  try {
+    var qr = await sb('quotes?lead_id=eq.'+l.id+'&order=created_at.desc&limit=1');
+    var quotes = await qr.json();
+    var summaryEl = document.getElementById('detail-quote-summary');
+    if(summaryEl && quotes && quotes.length){
+      var q = quotes[0];
+      // Fetch line items
+      var liRes = await sb('quote_line_items?quote_id=eq.'+q.id+'&order=sort_order.asc');
+      var items = await liRes.json();
+      var itemsHtml = '';
+      if(items && items.length){
+        itemsHtml = '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:8px">'
+          +'<thead><tr style="background:var(--bg-primary)">'
+          +'<th style="padding:6px 8px;text-align:left;font-weight:700;border-bottom:1px solid var(--border-t)">Item</th>'
+          +'<th style="padding:6px 8px;text-align:center;font-weight:700;border-bottom:1px solid var(--border-t)">Qty</th>'
+          +'<th style="padding:6px 8px;text-align:right;font-weight:700;border-bottom:1px solid var(--border-t)">Rate</th>'
+          +'<th style="padding:6px 8px;text-align:right;font-weight:700;border-bottom:1px solid var(--border-t)">Amount</th>'
+          +'</tr></thead><tbody>';
+        items.forEach(function(item){
+          itemsHtml += '<tr style="border-bottom:1px solid var(--border-t)">'
+            +'<td style="padding:6px 8px">'
+            +(item.item_name?'<div style="font-weight:600">'+item.item_name+'</div>':'')
+            +(item.description?'<div style="color:var(--text-secondary);font-size:11px">'+item.description+'</div>':'')
+            +'</td>'
+            +'<td style="padding:6px 8px;text-align:center">'+Number(item.quantity||1)+'</td>'
+            +'<td style="padding:6px 8px;text-align:right">A$'+Number(item.rate||0).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})+'</td>'
+            +'<td style="padding:6px 8px;text-align:right;font-weight:600">A$'+Number(item.amount||0).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})+'</td>'
+            +'</tr>';
+        });
+        itemsHtml += '</tbody></table>';
+      }
+      summaryEl.innerHTML = '<div style="margin:16px 0;padding:14px;background:var(--bg-secondary);border-radius:var(--radius-md);border:1px solid var(--border-t)">'
+        +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'
+        +'<div style="font-size:13px;font-weight:700"><i class="ti ti-file-invoice"></i> Quote '+q.quote_number+'</div>'
+        +'<span style="font-size:11px;padding:2px 8px;border-radius:99px;font-weight:600;background:'+(q.status==='sent'?'rgba(34,197,94,0.12)':'rgba(245,158,11,0.12)')+';color:'+(q.status==='sent'?'var(--green)':'#b45309')+'">'+q.status+'</span>'
+        +'</div>'
+        + itemsHtml
+        +'<div style="display:flex;justify-content:flex-end;gap:16px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border-t)">'
+        +(q.gst_total>0?'<div style="font-size:12px;color:var(--text-secondary)">GST: A$'+Number(q.gst_total||0).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})+'</div>':'')
+        +'<div style="font-size:14px;font-weight:700">Total: A$'+Number(q.total||0).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})+'</div>'
+        +'</div>'
+        +'</div>';
+    } else if(summaryEl) {
+      summaryEl.innerHTML = '';
+    }
+  } catch(e) { console.warn('Quote summary error:', e); }
 }
 
 /* &#9472;&#9472; QUOTE TAB &#9472;&#9472; */
@@ -1650,7 +1698,7 @@ async function createDriveFolderForLead(lead){
 
 async function createFolderFromDetail(){
   if(!currentLead) return;
-  await createDriveFolderForLead(currentLead);renderDetailInfo();
+  await createDriveFolderForLead(currentLead);await renderDetailInfo();
 }
 
 async function renderDriveView(){

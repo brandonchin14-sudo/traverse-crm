@@ -640,6 +640,41 @@ function renderBoard(){
 }
 
 /* &#9472;&#9472; NEW LEAD &#9472;&#9472; */
+var FREIGHT_CARRIERS={
+  sea:[
+    {id:'kalgin',name:'Kalgin'},
+    {id:'pac',name:'PAC'},
+    {id:'vanguard',name:'Vanguard'}
+  ],
+  air:[
+    {id:'airways',name:'Airways'}
+  ]
+};
+
+function renderCarrierDropdownHTML(freightType,selectedCarrier){
+  var carriers=FREIGHT_CARRIERS[freightType]||[];
+  if(!carriers.length) return '';
+  var opts=carriers.map(function(c){
+    return '<option value="'+c.id+'"'+(selectedCarrier===c.id?' selected':'')+'>'+c.name+'</option>';
+  }).join('');
+  return '<select class="form-input" id="freight-carrier-sel" style="margin-bottom:10px" onchange="saveFreightCarrier(this.value)">'
+    +'<option value="">-- Select carrier --</option>'+opts+'</select>';
+}
+
+function renderCarrierDropdown(freightType){
+  var wrap=document.getElementById('carrier-dd-wrap');
+  if(wrap) wrap.innerHTML=renderCarrierDropdownHTML(freightType,'');
+}
+
+async function saveFreightCarrier(val){
+  if(!currentLead||!val) return;
+  await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({freight_carrier:val,updated_at:new Date().toISOString()})});
+  currentLead.freight_carrier=val;
+  var name='';
+  Object.values(FREIGHT_CARRIERS).forEach(function(arr){arr.forEach(function(c){if(c.id===val)name=c.name;});});
+  toast('Carrier saved: '+name);
+}
+
 function openNewLead(){openNewLeadPhase(0);}
 
 async function moveToQuoted(){
@@ -836,6 +871,7 @@ async function renderDetailInfo(){
       <div class="info-item"><label>Lead type</label><p><span style="font-size:12px;padding:3px 9px;border-radius:99px;font-weight:600;background:${l.lead_type==='project'?'var(--purple-light)':'var(--amber-light)'};color:${l.lead_type==='project'?'var(--purple)':'#633806'}">${l.lead_type==='project'?'Project':'Wholesale'}</span></p></div>
       <div class="info-item"><label>Emails sent</label><p>${l.emails_sent||0}</p></div>
       ${l.freight_type?`<div class="info-item"><label>Freight type</label><p><span style="font-size:12px;padding:3px 9px;border-radius:99px;font-weight:600;background:${l.freight_type==='sea'?'rgba(3,105,161,0.1)':'rgba(124,58,237,0.1)'};color:${l.freight_type==='sea'?'#0369a1':'#7c3aed'}"><i class="ti ti-${l.freight_type==='sea'?'ship':'plane'}"></i> ${l.freight_type==='sea'?'Sea Freight':'Air Freight'}</span></p></div>`:''}
+      ${l.freight_carrier?(function(){var name=l.freight_carrier;Object.values(FREIGHT_CARRIERS).forEach(function(arr){arr.forEach(function(c){if(c.id===l.freight_carrier)name=c.name;});});return `<div class="info-item"><label>Freight carrier</label><p><span style="font-size:12px;padding:3px 9px;border-radius:99px;font-weight:600;background:rgba(15,118,110,0.1);color:#0f766e">${name}</span></p></div>`;})():'':''}
       <div class="info-item"><label>Drive folder</label><p>${l.drive_folder_id?'<span style="color:var(--green)">&#10003; Linked</span>':'Not created'}</p></div>
     </div>
     ${l.doc_code?`<div style="margin-bottom:12px"><label class="form-label">Document code</label>
@@ -852,11 +888,12 @@ async function renderDetailInfo(){
       if((l.phase||0)===1){
         html+='<div style="margin-top:16px;padding:14px;background:var(--bg-secondary);border-radius:var(--radius-md);border:1px solid var(--border-t)">'
           +'<div style="font-size:12px;font-weight:700;margin-bottom:8px"><i class="ti ti-truck"></i> Freight Type</div>'
-          +'<select class="form-input" id="freight-type-sel" style="margin-bottom:10px" onchange="saveFreightType(this.value)">'
+          +'<select class="form-input" id="freight-type-sel" style="margin-bottom:8px" onchange="saveFreightType(this.value);renderCarrierDropdown(this.value)">'
           +'<option value="">-- Select freight type --</option>'
           +'<option value="sea"'+(l.freight_type==='sea'?' selected':'')+'>Sea Freight</option>'
           +'<option value="air"'+(l.freight_type==='air'?' selected':'')+'>Air Freight</option>'
           +'</select>'
+          +'<div id="carrier-dd-wrap">'+(l.freight_type?renderCarrierDropdownHTML(l.freight_type,l.freight_carrier||''):'')+'</div>'
           +'<button class="btn btn-primary" onclick="moveToClientApproved()" style="width:100%;justify-content:center"><i class="ti ti-check"></i> Move to Client Approved</button>'
           +'<div style="font-size:11px;color:var(--text-secondary);text-align:center;margin-top:6px">Move once quote has been sent and approved by client</div>'
           +'</div>';

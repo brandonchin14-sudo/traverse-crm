@@ -641,6 +641,108 @@ function renderBoard(){
   }).join('');
 }
 
+/* &#9472;&#9472; DETAIL &#9472;&#9472; */
+async function openDetail(id){
+  currentLead=leads.find(l=>l.id===id);
+  if(!currentLead) return;
+  document.getElementById('detailName').textContent=currentLead.name;
+  document.getElementById('detailSub').textContent=(currentLead.company||'')+(currentLead.project?' • '+currentLead.project:'');
+  document.getElementById('detailPhaseSelect').value=currentLead.phase;
+  document.querySelectorAll('.detail-tab').forEach((t,i)=>t.classList.toggle('active',i===0));
+  document.querySelectorAll('.detail-section').forEach((s,i)=>s.classList.toggle('active',i===0));
+  await loadCurrentQuote();
+  await renderDetailInfo();renderDetailEmails();
+  document.getElementById('dtab-files').innerHTML='';
+  document.getElementById('dtab-quote').innerHTML='';
+  await renderDetailActivity();
+  document.getElementById('detailOverlay').classList.add('open');
+}
+
+async function loadCurrentQuote(){
+  if(!currentLead) return;
+  try{
+    const r=await sb('quotes?lead_id=eq.'+currentLead.id+'&order=created_at.desc&limit=1&select=*');
+    const rows=await r.json();
+    if(rows.length>0){
+      currentQuote=rows[0];
+      const lr=await sb('quote_line_items?quote_id=eq.'+currentQuote.id+'&order=sort_order.asc&select=*');
+      currentLineItems=await lr.json();
+    } else {currentQuote=null;currentLineItems=[];}
+  }catch(e){currentQuote=null;currentLineItems=[];}
+}
+
+function openNewLeadPhase(phase){
+  document.getElementById('leadOverlay').classList.add('open');
+  document.getElementById('modalBody').innerHTML=`
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Client name *</label><input class="form-input" id="f-name" placeholder="First Last"></div>
+      <div class="form-group"><label class="form-label">Company</label><input class="form-input" id="f-company" placeholder="GEL Point Cruz"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="f-contact" type="email" placeholder="client@email.com"></div>
+      <div class="form-group"><label class="form-label">Mobile</label><input class="form-input" id="f-mobile" placeholder="+61 400 000 000"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Project ref</label><input class="form-input" id="f-project" placeholder="GPC-2024-01"></div>
+      <div class="form-group"><label class="form-label">Phase</label>
+        <select class="form-input" id="f-phase">${PHASES.map((p,i)=>`<option value="${i}" ${i===phase?'selected':''}>${p.name}</option>`).join('')}</select>
+      </div>
+    </div>
+    <div class="form-group"><label class="form-label">Notes</label><input class="form-input" id="f-notes" placeholder="Additional context..."></div>
+    <div class="section-divider">Lead type</div>
+    <div style="display:flex;gap:20px;margin-bottom:14px">
+      <label style="font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px">
+        <input type="radio" name="f-type" id="f-type-wholesale" value="wholesale" checked style="accent-color:var(--accent);width:15px;height:15px">
+        <span><strong>Wholesale</strong> &mdash; for our own shops</span>
+      </label>
+      <label style="font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px">
+        <input type="radio" name="f-type" id="f-type-project" value="project" style="accent-color:var(--accent);width:15px;height:15px">
+        <span><strong>Project</strong> &mdash; client project</span>
+      </label>
+    </div>
+    <div style="display:flex;gap:16px;margin-bottom:16px">
+      <label style="font-size:13px;cursor:pointer;display:flex;align-items:center;gap:7px"><input type="checkbox" id="f-drive" checked> <i class="ti ti-brand-google-drive" style="color:var(--amber)"></i> Create Drive folder</label>
+      <label style="font-size:13px;cursor:pointer;display:flex;align-items:center;gap:7px"><input type="checkbox" id="f-email"> <i class="ti ti-send" style="color:var(--purple)"></i> Send acknowledgement</label>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn" onclick="closeModal('leadOverlay')">Cancel</button>
+      <button class="btn btn-primary" id="saveBtn" onclick="saveLead()"><i class="ti ti-device-floppy"></i> Save lead</button>
+    </div>`;
+}
+
+async function saveLead(){
+  const name=document.getElementById('f-name').value.trim();
+  if(!name){toast('Please enter a client name','error');return;}
+  const btn=document.getElementById('saveBtn');
+  btn.innerHTML='<i class="ti ti-loader"></i> Saving...';btn.disabled=true;
+  const d=new Date();
+  const ymd=String(d.getFullYear()).slice(2)+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0');
+  const comp=document.getElementById('f-company').value;
+  const contact=document.getElementById('f-contact').value;
+  const proj=document.getElementById('f-project').value;
+  const createDrive=document.getElementById('f-drive')?.checked;
+  const sendEmail=document.getElementById('f-email')?.checked;
+  const leadType=document.querySelector('input[name="f-type"]:checked')?.value||'wholesale';
+  const payload={name,company:comp,contact,mobile:document.getElementById('f-mobile').value,project:proj,phase:parseInt(document.getElementById('f-phase').value),notes:document.getElementById('f-notes').value,client:comp,emails_sent:0,quote_status:'none',lead_type:leadType,doc_code:`${ymd}-${comp.substring(0,12)}-${proj.substring(0,8)}`};
+  try{
+    const res=await sb('leads',{method:'POST',body:JSON.stringify(payload),headers:{...sbH(authToken),'Prefer':'return=representation'}});
+    if(!res.ok) throw new Error(await res.text());
+    const [saved]=await res.json();
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:saved.id,action:'Lead created',detail:`New lead for ${comp}`})});
+    closeModal('leadOverlay');
+    await loadLeads();
+    toast('Lead saved &#10003;');
+    const lead=leads.find(l=>l.id===saved.id)||{...saved};
+    if(createDrive) await createDriveFolderForLead(lead);
+    if(sendEmail&&contact){
+      const fn=name.split(' ')[0];
+      await sendEmailViaFunction(contact,name+' Quote Enquiry','Hi '+fn+',\n\nThank you for submitting a quote request with us!\n\nWe are currently checking with our suppliers and will keep you updated as soon as we receive a response.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au','Phase 1 - Quote acknowledgement',saved.id);
+    }
+  }catch(e){toast('Save failed: '+e.message,'error');btn.innerHTML='<i class="ti ti-device-floppy"></i> Save lead';btn.disabled=false;}
+}
+
+function openNewLead(){openNewLeadPhase(0);}
+
 /* &#9472;&#9472; NEW LEAD &#9472;&#9472; */
 async function generateFreightDocs(){
   if(!currentLead){toast('No lead selected','error');return;}

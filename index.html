@@ -549,31 +549,20 @@ async function checkQBConnection(){
 async function loadQBCustomers(){
   try{
     var data=await callQB('get_customers');
-    console.log('QB get_customers response:', JSON.stringify(data).substring(0,200));
-    if(data.success){qbCustomers=data.customers||[];}
-    else{console.error('QB customers error:', data.error);}
-    return qbCustomers;
+    if(data.success){
+      qbCustomers=data.customers||[];
+      return qbCustomers;
+    } else {
+      // QB not connected or token expired - silently ignore
+      console.warn('QB not available:', data.error||'unknown');
+      qbCustomers=[];
+      return [];
+    }
   }catch(e){
-    console.error('loadQBCustomers exception:', e.message);
+    console.warn('QB customers skipped:', e.message);
+    qbCustomers=[];
     return [];
   }
-}
-function buildCustomerPicker(selectedId){
-  if(!qbCustomers.length) return '<div style="font-size:12px;color:var(--text-secondary);padding:8px;background:var(--bg-secondary);border-radius:6px">Loading QB customers...</div>';
-  var opts=qbCustomers.map(function(c){
-    return '<option value="'+c.id+'" data-company="'+(c.company||c.name)+'" data-address="'+(c.address||'')+'"'+(selectedId===c.id?' selected':'')+'>'+c.name+'</option>';
-  }).join('');
-  return '<select class="form-input" id="qb-customer-picker" onchange="fillClientFromQB(this)" style="margin-bottom:8px"><option value="">-- Select QB customer --</option>'+opts+'</select>';
-}
-function fillClientFromQB(sel){
-  var opt=sel.options[sel.selectedIndex];
-  if(!opt.value) return;
-  var company=opt.dataset.company||'';
-  var address=opt.dataset.address||'';
-  if(currentQuote){currentQuote.client_name=company;currentQuote.client_address=address;currentQuote.qb_customer_id=opt.value;}
-  var cn=document.getElementById('q-client');if(cn)cn.value=company;
-  var ca=document.getElementById('q-address');if(ca)ca.value=address;
-  toast('Client filled from QuickBooks &#10003;');
 }
 async function generateQBInvoice(){
   if(!currentLead||!currentQuote) return;
@@ -1613,6 +1602,13 @@ function generateAirwaysSLIPDF(d){
 }
 
 
+function clearReportFilters(){
+  ['rpt-client','rpt-project','rpt-type','rpt-from','rpt-to','rpt-paid'].forEach(function(id){
+    var el=document.getElementById(id);
+    if(el) el.value='';
+  });
+  renderReportTable();
+}
 function renderReportTable(){
   function invDate(l){ return l.invoice_date ? new Date(l.invoice_date) : new Date(l.created_at); }
   function fmtMoney(n){ return 'A$'+Number(n||0).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2}); }
@@ -2541,6 +2537,212 @@ async function downloadFreightDocs(){
   }finally{
     if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-download"></i> Download Both PDFs';}
   }
+}
+
+async function renderQuoteTab(){
+  var el=document.getElementById('dtab-quote');
+  if(!el) return;
+  el.innerHTML='<div class="empty-state"><i class="ti ti-loader"></i> Loading...</div>';
+  try{
+    await loadCurrentQuote();
+    if(!currentQuote){renderDocumentScan(el);return;}
+    if(currentQuote.status==='sent'||currentQuote.status==='approved'||currentQuote.status==='invoiced'){renderQuoteReview(el);return;}
+    if(currentQuote&&currentQuote.status==='draft'&&currentLineItems.length>0){renderPricingStep(el);return;}
+    renderDocumentScan(el);
+  }catch(e){el.innerHTML='<div style="padding:20px;font-size:13px;color:var(--danger)">Error loading quote: '+e.message+'</div>';}
+}
+
+function renderDocumentScan(el){
+  el.innerHTML='<div style="text-align:center;padding:24px 16px">'
+    +'<i class="ti ti-file-plus" style="font-size:40px;color:var(--purple);margin-bottom:12px;display:block"></i>'
+    +'<div style="font-size:14px;font-weight:600;margin-bottom:6px">Start a Quote</div>'
+    +'<div style="font-size:12px;color:var(--text-secondary);margin-bottom:16px">Create a new quote for this lead</div>'
+    +'<button class="btn btn-primary" onclick="createNewQuote()"><i class="ti ti-plus"></i> New Quote</button>'
+    +'</div>';
+}
+
+async function createNewQuote(){
+  if(!currentLead) return;
+  var d=new Date();
+  var qNum='TIE-'+String(d.getFullYear()).slice(2)+String(d.getMonth()+1).padStart(2,'0')+'-'+String(Math.floor(Math.random()*9000)+1000);
+  var res=await sb('quotes',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,quote_number:qNum,status:'draft',client_name:currentLead.company||currentLead.name,client_address:'',subtotal:0,gst_total:0,total:0}),headers:{...sbH(authToken),'Prefer':'return=representation'}});
+  var rows=await res.json();
+  currentQuote=rows[0];currentLineItems=[];
+  renderPricingStep(document.getElementById('dtab-quote'));
+}
+
+function renderPricingStep(el){
+  if(!currentQuote||!el) return;
+  var sub=currentLineItems.reduce(function(s,i){return s+(i.quantity||1)*(i.rate||0);},0);
+  var gst=currentLineItems.reduce(function(s,i){return s+(i.gst_applicable?(i.quantity||1)*(i.rate||0)*0.1:0);},0);
+  var total=sub+gst;
+  var itemRows=currentLineItems.map(function(item,i){
+    return '<tr>'
+      +'<td><input class="form-input" style="font-size:12px" value="'+escHtml(item.item_name||'')+'" oninput="currentLineItems['+i+'].item_name=this.value"></td>'
+      +'<td><input class="form-input" style="font-size:12px" value="'+escHtml(item.description||'')+'" oninput="currentLineItems['+i+'].description=this.value"></td>'
+      +'<td><input class="form-input" style="font-size:12px;width:60px;text-align:right" type="number" value="'+(item.quantity||1)+'" oninput="currentLineItems['+i+'].quantity=parseFloat(this.value)||1;recalcQuote()"></td>'
+      +'<td><input class="form-input" style="font-size:12px;width:80px;text-align:right" type="number" step="0.01" value="'+(item.rate||0)+'" oninput="currentLineItems['+i+'].rate=parseFloat(this.value)||0;recalcQuote()"></td>'
+      +'<td style="text-align:right;padding:6px 8px">A$'+(((item.quantity||1)*(item.rate||0))).toFixed(2)+'</td>'
+      +'<td><input type="checkbox" '+(item.gst_applicable?'checked':'')+' onchange="currentLineItems['+i+'].gst_applicable=this.checked;recalcQuote()"></td>'
+      +'<td><button class="btn btn-danger btn-sm" onclick="removeLineItem('+i+')"><i class="ti ti-trash"></i></button></td>'
+      +'</tr>';
+  }).join('');
+  el.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">'
+    +'<div style="font-size:14px;font-weight:600">'+escHtml(currentQuote.quote_number)+'</div>'
+    +'<button class="btn btn-primary btn-sm" onclick="sendQuoteToClient()"><i class="ti ti-send"></i> Preview &amp; Send</button>'
+    +'</div>'
+    +'<div style="margin-bottom:8px"><input class="form-input" id="eq-client-name" placeholder="Client name" value="'+escHtml(currentQuote.client_name||'')+'"></div>'
+    +'<div style="margin-bottom:12px"><input class="form-input" id="eq-client-addr" placeholder="Client address" value="'+escHtml(currentQuote.client_address||'')+'"></div>'
+    +'<div style="margin-bottom:12px"><label class="form-label">Expiry date</label><input class="form-input" id="eq-expiry" type="date" value="'+(currentQuote.expiry_date||'')+'"></div>'
+    +'<table class="line-items-table" style="margin-bottom:8px"><thead><tr>'
+    +'<th>Item</th><th>Description</th><th style="text-align:right">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th><th style="text-align:center">GST</th><th></th>'
+    +'</tr></thead><tbody id="liTbody">'+itemRows+'</tbody></table>'
+    +'<button class="btn btn-sm" style="margin-bottom:12px" onclick="addLineItem()"><i class="ti ti-plus"></i> Add item</button>'
+    +'<div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:10px 14px">'
+    +'<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>Subtotal</span><span>A$'+sub.toFixed(2)+'</span></div>'
+    +'<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>GST</span><span>A$'+gst.toFixed(2)+'</span></div>'
+    +'<div style="display:flex;justify-content:space-between;font-weight:700;font-size:15px;border-top:0.5px solid var(--border-t);padding-top:8px;margin-top:6px"><span>Total</span><span style="color:var(--accent)">A$'+total.toFixed(2)+'</span></div>'
+    +'</div>';
+}
+
+function recalcQuote(){renderPricingStep(document.getElementById('dtab-quote'));}
+function addLineItem(){currentLineItems.push({item_name:'',description:'',quantity:1,rate:0,gst_applicable:false,amount:0});renderPricingStep(document.getElementById('dtab-quote'));}
+function removeLineItem(i){currentLineItems.splice(i,1);renderPricingStep(document.getElementById('dtab-quote'));}
+
+function switchDetailTab(tab,el){
+  document.querySelectorAll('.detail-tab').forEach(function(t){t.classList.remove('active');});
+  document.querySelectorAll('.detail-section').forEach(function(s){s.classList.remove('active');});
+  el.classList.add('active');
+  document.getElementById('dtab-'+tab).classList.add('active');
+  if(tab==='activity') renderDetailActivity();
+  if(tab==='files') renderDetailFiles();
+  if(tab==='quote') renderQuoteTab().catch(function(e){console.error('Quote tab:',e);});
+  if(tab==='freight') renderDetailFreight();
+}
+
+function renderReports(){
+  var now=new Date();
+  var thisMonth=now.getMonth();
+  var thisYear=now.getFullYear();
+  function invDate(l){return l.invoice_date?new Date(l.invoice_date):new Date(l.created_at);}
+  function fmtMoney(n){return 'A$'+Number(n||0).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2});}
+  function sameMonth(d,m,y){return d.getFullYear()===y&&d.getMonth()===m;}
+  var invoiced=leads.filter(function(l){return l.invoice_total>0||l.phase===5;});
+  var thisMonthLeads=invoiced.filter(function(l){return sameMonth(invDate(l),thisMonth,thisYear);});
+  var paidThisMonth=thisMonthLeads.filter(function(l){return l.invoice_paid!==false;}).reduce(function(s,l){return s+(l.invoice_total||0);},0);
+  var pendingThisMonth=thisMonthLeads.filter(function(l){return l.invoice_paid===false;}).reduce(function(s,l){return s+(l.invoice_total||0);},0);
+  var wholesaleMonth=thisMonthLeads.filter(function(l){return l.lead_type!=='project';}).reduce(function(s,l){return s+(l.invoice_total||0);},0);
+  var projectMonth=thisMonthLeads.filter(function(l){return l.lead_type==='project';}).reduce(function(s,l){return s+(l.invoice_total||0);},0);
+  var monthlyTarget=parseFloat(localStorage.getItem('monthly_target')||'100000');
+  var targetPct=Math.min(Math.round((paidThisMonth/monthlyTarget)*100),100);
+  var monthName=now.toLocaleString('default',{month:'long'});
+  var prevYears=[thisYear-1,thisYear-2,thisYear-3].map(function(yr){
+    return {year:yr,total:invoiced.filter(function(l){return sameMonth(invDate(l),thisMonth,yr);}).reduce(function(s,l){return s+(l.invoice_total||0);},0)};
+  });
+  var el=document.getElementById('view-reports');
+  if(!el) return;
+  el.innerHTML='<div style="max-width:1100px;margin:0 auto;padding:24px">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">'
+    +'<h2 style="font-size:18px;font-weight:700;margin:0">Financial Reports</h2>'
+    +'<button class="btn" onclick="exportReportCSV()" style="font-size:12px"><i class="ti ti-download"></i> Export CSV</button>'
+    +'</div>'
+    // Row 1
+    +'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:16px">'
+    +'<div class="metric" style="border-color:var(--green)"><div class="metric-label" style="color:var(--green)">Paid This Month</div><div class="metric-val" style="color:var(--green)">'+fmtMoney(paidThisMonth)+'</div><div class="metric-sub">'+monthName+' '+thisYear+'</div></div>'
+    +'<div class="metric" style="border-color:var(--amber)"><div class="metric-label" style="color:#b45309">Pending This Month</div><div class="metric-val" style="color:#b45309">'+fmtMoney(pendingThisMonth)+'</div><div class="metric-sub">'+thisMonthLeads.filter(function(l){return l.invoice_paid===false;}).length+' invoice(s)</div></div>'
+    +'<div class="metric" style="border-color:var(--purple)"><div class="metric-label" style="color:var(--purple)">Monthly Target</div>'
+    +'<input type="number" value="'+monthlyTarget+'" onchange="localStorage.setItem(String.fromCharCode(109,111,110,116,104,108,121,95,116,97,114,103,101,116),this.value);renderReports()" style="width:130px;font-size:16px;font-weight:700;border:1px solid var(--border-t);border-radius:6px;padding:4px 8px;color:var(--purple);margin:6px 0">'
+    +'<div style="background:var(--border-t);border-radius:99px;height:8px;margin-top:4px"><div style="background:'+(targetPct>=100?'var(--green)':'var(--purple)')+';height:8px;border-radius:99px;width:'+targetPct+'%;transition:width 0.5s"></div></div>'
+    +'<div class="metric-sub" style="margin-top:4px">'+targetPct+'% of target hit</div></div>'
+    +'</div>'
+    // Row 2 - W vs P
+    +'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:16px">'
+    +renderWvsPCard('W vs P &mdash; This Month',wholesaleMonth,projectMonth)
+    +(function(){var qStart=new Date(now.getFullYear(),Math.floor(now.getMonth()/3)*3,1);var wQ=invoiced.filter(function(l){return invDate(l)>=qStart&&l.lead_type!=='project';}).reduce(function(s,l){return s+(l.invoice_total||0);},0);var pQ=invoiced.filter(function(l){return invDate(l)>=qStart&&l.lead_type==='project';}).reduce(function(s,l){return s+(l.invoice_total||0);},0);return renderWvsPCard('W vs P &mdash; This Quarter',wQ,pQ);})()
+    +(function(){var fyStart=new Date(now.getMonth()>=6?now.getFullYear():now.getFullYear()-1,6,1);var wY=invoiced.filter(function(l){return invDate(l)>=fyStart&&l.lead_type!=='project';}).reduce(function(s,l){return s+(l.invoice_total||0);},0);var pY=invoiced.filter(function(l){return invDate(l)>=fyStart&&l.lead_type==='project';}).reduce(function(s,l){return s+(l.invoice_total||0);},0);return renderWvsPCard('W vs P &mdash; FY YTD (Jul-Jun)',wY,pY);})()
+    +'</div>'
+    // Row 3 - Wholesale breakdown
+    +'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:20px">'
+    +renderWholesaleCard('Wholesale &mdash; This Month',function(l){return sameMonth(invDate(l),thisMonth,thisYear);},invoiced,fmtMoney)
+    +(function(){var qStart=new Date(now.getFullYear(),Math.floor(now.getMonth()/3)*3,1);return renderWholesaleCard('Wholesale &mdash; This Quarter',function(l){return invDate(l)>=qStart;},invoiced,fmtMoney);})()
+    +(function(){var fyStart=new Date(now.getMonth()>=6?now.getFullYear():now.getFullYear()-1,6,1);return renderWholesaleCard('Wholesale &mdash; FY YTD (Jul-Jun)',function(l){return invDate(l)>=fyStart;},invoiced,fmtMoney);})()
+    +'</div>'
+    // Previous 3 years
+    +'<div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:16px;margin-bottom:20px;border:1px solid var(--border-t)">'
+    +'<div style="font-size:13px;font-weight:700;margin-bottom:12px">'+monthName+' &mdash; Previous 3 Years Comparison</div>'
+    +'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">'
+    +prevYears.map(function(py){return '<div style="text-align:center;padding:12px;background:var(--bg-primary);border-radius:var(--radius-sm);border:1px solid var(--border-t)"><div style="font-size:11px;color:var(--text-secondary);margin-bottom:4px">'+monthName+' '+py.year+'</div><div style="font-size:16px;font-weight:700">'+fmtMoney(py.total)+'</div>'+(py.total===0?'<div style="font-size:10px;color:var(--text-secondary)">No data</div>':'')+'</div>';}).join('')
+    +'</div></div>'
+    // Filters
+    +'<div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:16px;margin-bottom:16px;border:1px solid var(--border-t)">'
+    +'<div style="font-size:13px;font-weight:700;margin-bottom:12px"><i class="ti ti-filter"></i> Filter Invoices</div>'
+    +'<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">'
+    +'<div><div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px">Client</div><input class="form-input" id="rpt-client" placeholder="Search client..." style="width:160px;font-size:12px" oninput="renderReportTable()"></div>'
+    +'<div><div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px">Project</div><input class="form-input" id="rpt-project" placeholder="Search project..." style="width:160px;font-size:12px" oninput="renderReportTable()"></div>'
+    +'<div><div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px">Type</div><select class="form-input" id="rpt-type" style="width:110px;font-size:12px" onchange="renderReportTable()"><option value="">All</option><option value="project">Project</option><option value="wholesale">Wholesale</option></select></div>'
+    +'<div><div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px">From</div><input class="form-input" id="rpt-from" type="date" style="width:130px;font-size:12px" onchange="renderReportTable()"></div>'
+    +'<div><div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px">To</div><input class="form-input" id="rpt-to" type="date" style="width:130px;font-size:12px" onchange="renderReportTable()"></div>'
+    +'<div><div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px">Status</div><select class="form-input" id="rpt-paid" style="width:110px;font-size:12px" onchange="renderReportTable()"><option value="">All</option><option value="paid">Paid</option><option value="pending">Pending</option></select></div>'
+    +'<button class="btn" onclick="clearReportFilters()" style="font-size:12px">Clear</button>'
+    +'</div></div>'
+    +'<div id="rpt-summary" style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap"></div>'
+    +'<div style="overflow-x:auto;border-radius:var(--radius-md);border:1px solid var(--border-t)">'
+    +'<table style="width:100%;border-collapse:collapse;font-size:12px" id="rpt-table">'
+    +'<thead><tr style="background:var(--bg-secondary)"><th style="padding:10px 12px;text-align:left;font-weight:700;white-space:nowrap">Date</th><th style="padding:10px 12px;text-align:left;font-weight:700">Client</th><th style="padding:10px 12px;text-align:left;font-weight:700">Project</th><th style="padding:10px 12px;text-align:left;font-weight:700">Type</th><th style="padding:10px 12px;text-align:right;font-weight:700">Amount</th><th style="padding:10px 12px;text-align:center;font-weight:700">Status</th></tr></thead>'
+    +'<tbody id="rpt-tbody"></tbody>'
+    +'</table></div></div>';
+  renderReportTable();
+}
+
+function renderWvsPCard(title,wVal,pVal){
+  var max=Math.max(wVal,pVal,1);
+  return '<div class="metric"><div class="metric-label" style="margin-bottom:10px">'+title+'</div>'
+    +'<div style="display:flex;gap:12px;align-items:flex-end;height:80px">'
+    +[{l:'Wholesale',v:wVal,c:'#b45309'},{l:'Project',v:pVal,c:'var(--purple)'}].map(function(t){
+      return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;height:100%;justify-content:flex-end">'
+        +'<div style="font-size:12px;font-weight:700;color:'+t.c+'">A$'+Number(t.v||0).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})+'</div>'
+        +'<div style="width:100%;background:'+t.c+'20;border-radius:4px 4px 0 0;height:'+Math.max(Math.round((t.v/max)*55),3)+'px;border-top:2px solid '+t.c+'"></div>'
+        +'<div style="font-size:11px;color:'+t.c+'">'+t.l+'</div></div>';
+    }).join('')+'</div></div>';
+}
+
+function renderWholesaleCard(title,filterFn,invoiced,fmtMoney){
+  var shops=[
+    {l:'Pt Cruz',fn:function(l){return l.lead_type!=='project'&&l.invoice_total>0&&(l.name||'').toLowerCase().includes('point cruz');},c:'#0369a1'},
+    {l:'Henderson',fn:function(l){return l.lead_type!=='project'&&l.invoice_total>0&&(l.name||'').toLowerCase().includes('henderson');},c:'#0f766e'},
+    {l:'Ranadi',fn:function(l){return l.lead_type!=='project'&&l.invoice_total>0&&(l.name||'').toLowerCase().includes('ranadi');},c:'#7c3aed'}
+  ];
+  var totals=shops.map(function(s){return {l:s.l,c:s.c,v:invoiced.filter(function(l){return s.fn(l)&&filterFn(l);}).reduce(function(sum,l){return sum+(l.invoice_total||0);},0)};});
+  var max=Math.max.apply(null,totals.map(function(t){return t.v;}).concat([1]));
+  return '<div class="metric"><div class="metric-label" style="margin-bottom:10px">'+title+'</div>'
+    +'<div style="display:flex;gap:10px;align-items:flex-end;height:80px">'
+    +totals.map(function(t){
+      return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;height:100%;justify-content:flex-end">'
+        +'<div style="font-size:11px;font-weight:700;color:'+t.c+'">'+fmtMoney(t.v)+'</div>'
+        +'<div style="width:100%;background:'+t.c+'20;border-radius:4px 4px 0 0;height:'+Math.max(Math.round((t.v/max)*55),3)+'px;border-top:2px solid '+t.c+'"></div>'
+        +'<div style="font-size:10px;color:'+t.c+'">'+t.l+'</div></div>';
+    }).join('')+'</div></div>';
+}
+
+function switchView(view,el){
+  document.querySelectorAll('.view').forEach(function(v){v.classList.remove('active');});
+  document.querySelectorAll('.nav-tab').forEach(function(t){t.classList.remove('active');});
+  document.getElementById('view-'+view).classList.add('active');
+  el.classList.add('active');
+  if(view==='reports') renderReports();
+  if(view==='drive') renderDriveView();
+}
+
+function closeModal(id){document.getElementById(id).classList.remove('open');}
+
+try {
+  setStatus('driveDot','driveLabel',true,'Drive &#10003;');
+  setStatus('emailDot','emailLabel',true,'Email &#10003;');
+  checkSession();
+} catch(e) {
+  console.error('CRM init error:', e);
+  document.getElementById('loginBtn').disabled = false;
+  document.getElementById('loginBtn').innerHTML = '<i class="ti ti-login"></i> Sign in';
 }
 </script>
 </body>

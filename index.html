@@ -798,6 +798,14 @@ async function generateFreightDocs(){
     var result=await res.json();
     if(!result.success) throw new Error(result.error||'Failed to fetch data');
     var d=result.data;
+    // Override with form data if available
+    var fd=window._freightFormData||{};
+    window._freightFormData=null;
+    if(fd.goods_description) d.goods_description=fd.goods_description;
+    if(fd.pieces) d.pieces=fd.pieces;
+    if(fd.weight) d.weight=fd.weight;
+    if(fd.dimensions) d.dimensions=fd.dimensions;
+    if(fd.marks) d.marks=fd.marks;
 
     // 1. Generate Customs Invoice PDF
     var invoicePdf=generateCustomsInvoicePDF(d);
@@ -982,7 +990,7 @@ function generateKalginSLIPDF(d){
   });
   y+=10;x=ml;
   var goodsDesc=d.goods_description||'';
-  var cargoData=['','','','',goodsDesc,''];
+  var cargoData=[d.pieces||'',d.weight||'',d.dimensions||'',d.marks||'',goodsDesc,''];
   cargoData.forEach(function(val,i){
     doc.rect(x,y,cols[i],18);
     doc.setFont('helvetica','normal');doc.setFontSize(7);
@@ -1101,7 +1109,11 @@ function generatePACSLIPDF(d){
   doc.rect(ml+cw*0.25,y,cw*0.15,18);doc.rect(ml+cw*0.4,y,cw*0.15,18);
   doc.rect(ml+cw*0.55,y,cw*0.45,18);
   doc.setFont('helvetica','normal');doc.setFontSize(8);
+  doc.setFont('helvetica','normal');doc.setFontSize(8);
   doc.text(d.goods_description||'',ml+cw*0.55+1,y+5,{maxWidth:cw*0.43});
+  if(d.pieces) doc.text(d.pieces,ml+1,y+5);
+  if(d.weight) doc.text(d.weight+' kg',ml+cw*0.25+1,y+5);
+  if(d.dimensions) doc.text(d.dimensions,ml+cw*0.4+1,y+5);
   // Totals row
   y+=18;
   doc.rect(ml+cw*0.12,y,cw*0.13,8);doc.rect(ml+cw*0.25,y,cw*0.15,8);doc.rect(ml+cw*0.4,y,cw*0.15,8);
@@ -1236,6 +1248,10 @@ function generateVanguardSLIPDF(d){
     if(i===0){
       doc.setFont('helvetica','normal');doc.setFontSize(7);
       doc.text(d.goods_description||'',ml+cw*0.3+1,y+5,{maxWidth:cw*0.33});
+      if(d.marks) doc.text(d.marks,ml+1,y+5,{maxWidth:cw*0.14});
+      if(d.pieces) doc.text(d.pieces,ml+cw*0.15+1,y+5);
+      if(d.weight) doc.text(d.weight+' kg',ml+cw*0.65+1,y+5);
+      if(d.dimensions) doc.text(d.dimensions,ml+cw*0.85+1,y+5);
     }
     y+=8;
   }
@@ -1400,6 +1416,10 @@ function generateAirwaysSLIPDF(d){
   doc.text('PIECES',ml+2,y+4);doc.text('WEIGHT',ml+cw*0.25+2,y+4);doc.text('DIMENSIONS',ml+cw*0.6+2,y+4);
   y+=10;
   doc.rect(ml,y,cw*0.25,12);doc.rect(ml+cw*0.25,y,cw*0.35,12);doc.rect(ml+cw*0.6,y,cw*0.4,12);
+  doc.setFont('helvetica','normal');doc.setFontSize(9);
+  if(d.pieces) doc.text(d.pieces,ml+2,y+7);
+  if(d.weight) doc.text(d.weight+' kg',ml+cw*0.25+2,y+7);
+  if(d.dimensions) doc.text(d.dimensions,ml+cw*0.6+2,y+7);
   y+=14;
 
   // DG question
@@ -1667,12 +1687,8 @@ async function renderDetailInfo(){
       if((l.phase||0)===3){
         var carrierName='';
         if(FREIGHT_CARRIERS[l.freight_type||'']){FREIGHT_CARRIERS[l.freight_type].forEach(function(c){if(c.id===l.freight_carrier)carrierName=c.name;});}
-        html+='<div style="margin-top:16px;padding:14px;background:var(--bg-secondary);border-radius:var(--radius-md);border:1px solid var(--border-t)">'
-          +'<div style="font-size:12px;font-weight:700;margin-bottom:10px"><i class="ti ti-file-export"></i> Generate Freight Documents</div>'
-          +(carrierName?'<div style="font-size:11px;color:var(--text-secondary);margin-bottom:10px">Carrier: <strong>'+carrierName+'</strong> &mdash; '+(l.freight_type==='sea'?'Sea':'Air')+' Freight</div>':'')
-          +'<button class="btn btn-primary" onclick="generateFreightDocs()" style="width:100%;justify-content:center">'
-          +'<i class="ti ti-download"></i> Generate &amp; Download Documents</button>'
-          +'<div style="font-size:11px;color:var(--text-secondary);text-align:center;margin-top:6px">Generates Customs Invoice &amp; SLI PDF &mdash; auto-saved to Drive</div>'
+        html+='<div style="margin-top:16px;padding:12px 14px;background:rgba(3,105,161,0.06);border-radius:var(--radius-md);border:1px solid rgba(3,105,161,0.2);font-size:12px;color:#0369a1">'
+          +'<i class="ti ti-ship"></i> '+(carrierName?'Carrier: <strong>'+carrierName+'</strong>':'No carrier selected')+' &mdash; Go to the <strong>Freight</strong> tab to generate documents'
           +'</div>';
       }
       return html;
@@ -1949,29 +1965,22 @@ function renderDetailFreight(){
   var el=document.getElementById('dtab-freight');
   if(!el) return;
 
-  // Freight type cards
   var seaSel=l.freight_type==='sea';
   var airSel=l.freight_type==='air';
-  var seaBorder=seaSel?'#0369a1':'var(--border-t)';
-  var airBorder=airSel?'#7c3aed':'var(--border-t)';
-  var seaBg=seaSel?'rgba(3,105,161,0.06)':'var(--bg-secondary)';
-  var airBg=airSel?'rgba(124,58,237,0.06)':'var(--bg-secondary)';
 
   var html='<div style="padding:4px 0">'
     +'<div style="font-size:13px;font-weight:700;margin-bottom:14px"><i class="ti ti-ship"></i> Freight Settings</div>'
     +'<label class="form-label">Freight Type</label>'
     +'<div style="display:flex;gap:10px;margin-bottom:4px">';
 
-  // Sea card
-  html+='<div style="flex:1;display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:var(--radius-md);border:2px solid '+seaBorder+';cursor:pointer;background:'+seaBg+'" onclick="setFreightType(String.fromCharCode(115,101,97))">'
+  html+='<div style="flex:1;display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:var(--radius-md);border:2px solid '+(seaSel?'#0369a1':'var(--border-t)')+';cursor:pointer;background:'+(seaSel?'rgba(3,105,161,0.06)':'var(--bg-secondary)')+'" onclick="setFreightType(String.fromCharCode(115,101,97))">'
     +'<i class="ti ti-ship" style="font-size:18px;color:#0369a1"></i>'
     +'<div><div style="font-size:13px;font-weight:600;color:#0369a1">Sea Freight</div>'
     +'<div style="font-size:11px;color:var(--text-secondary)">Kalgin, PAC, Vanguard</div></div>'
     +(seaSel?'<i class="ti ti-check" style="margin-left:auto;color:#0369a1"></i>':'')
     +'</div>';
 
-  // Air card
-  html+='<div style="flex:1;display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:var(--radius-md);border:2px solid '+airBorder+';cursor:pointer;background:'+airBg+'" onclick="setFreightType(String.fromCharCode(97,105,114))">'
+  html+='<div style="flex:1;display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:var(--radius-md);border:2px solid '+(airSel?'#7c3aed':'var(--border-t)')+';cursor:pointer;background:'+(airSel?'rgba(124,58,237,0.06)':'var(--bg-secondary)')+'" onclick="setFreightType(String.fromCharCode(97,105,114))">'
     +'<i class="ti ti-plane" style="font-size:18px;color:#7c3aed"></i>'
     +'<div><div style="font-size:13px;font-weight:600;color:#7c3aed">Air Freight</div>'
     +'<div style="font-size:11px;color:var(--text-secondary)">Airways</div></div>'
@@ -1995,23 +2004,85 @@ function renderDetailFreight(){
     html+='<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">Select a freight type above to choose a carrier</div>';
   }
 
-  // Generate docs button
+  // SLI edit form + generate button &#8212; only show when carrier selected
   if(l.freight_carrier){
     var carrierName=l.freight_carrier;
     Object.values(FREIGHT_CARRIERS).forEach(function(arr){arr.forEach(function(c){if(c.id===l.freight_carrier)carrierName=c.name;});});
+
+    // Pre-fill goods description from stored line items if available
+    var goodsDesc=window._freightGoods||(l.project||'');
+
+    html+='<div style="margin-top:20px;border-top:1px solid var(--border-t);padding-top:16px">'
+      +'<div style="font-size:13px;font-weight:700;margin-bottom:12px"><i class="ti ti-file-description"></i> SLI Details &mdash; '+carrierName+'</div>'
+      +'<div style="font-size:11px;color:var(--text-secondary);margin-bottom:12px">Fill in shipment details below before generating documents. Weight and dimensions are required for the SLI.</div>'
+
+      // Goods description
+      +'<div class="form-group"><label class="form-label">Description of Goods</label>'
+      +'<textarea class="form-input" id="sli-goods" rows="3" placeholder="e.g. Cable Markers x430, SS Labels x220">'+escHtml(goodsDesc)+'</textarea></div>'
+
+      // Pieces / Weight / Dimensions row
+      +'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:8px">'
+      +'<div class="form-group"><label class="form-label">No. of Pieces</label>'
+      +'<input class="form-input" id="sli-pieces" type="number" placeholder="e.g. 5" value="'+(window._freightPieces||'')+'"></div>'
+      +'<div class="form-group"><label class="form-label">Gross Weight (KG)</label>'
+      +'<input class="form-input" id="sli-weight" type="number" step="0.1" placeholder="e.g. 45.5" value="'+(window._freightWeight||'')+'"></div>'
+      +'<div class="form-group"><label class="form-label">Measurements (CBM/cm)</label>'
+      +'<input class="form-input" id="sli-dims" placeholder="e.g. 0.5 CBM" value="'+(window._freightDims||'')+'"></div>'
+      +'</div>'
+
+      // Marks & numbers
+      +'<div class="form-group" style="margin-top:4px"><label class="form-label">Marks &amp; Numbers</label>'
+      +'<input class="form-input" id="sli-marks" placeholder="e.g. GEL/01/2026" value="'+(window._freightMarks||'')+'"></div>'
+
+      +'</div>';
+
+    // Generate button
     html+='<div style="margin-top:16px;padding:14px;background:var(--bg-secondary);border-radius:var(--radius-md);border:1px solid var(--border-t)">'
-      +'<div style="font-size:12px;font-weight:700;margin-bottom:8px"><i class="ti ti-file-export"></i> Generate Freight Documents</div>'
+      +'<div style="font-size:12px;font-weight:700;margin-bottom:8px"><i class="ti ti-file-export"></i> Generate Documents</div>'
       +'<div style="font-size:11px;color:var(--text-secondary);margin-bottom:10px">Carrier: <strong>'+carrierName+'</strong> &mdash; '+(l.freight_type==='sea'?'Sea':'Air')+' Freight</div>'
-      +'<button class="btn btn-primary" onclick="generateFreightDocs()" style="width:100%;justify-content:center"><i class="ti ti-download"></i> Generate &amp; Download Documents</button>'
+      +'<button class="btn btn-primary" onclick="generateFreightDocsFromForm()" style="width:100%;justify-content:center"><i class="ti ti-download"></i> Generate &amp; Download Documents</button>'
       +'<div style="font-size:11px;color:var(--text-secondary);text-align:center;margin-top:6px">Generates Customs Invoice &amp; SLI PDF &mdash; auto-saved to Drive</div>'
       +'</div>';
+
   } else if(l.freight_type){
-    html+='<div style="font-size:12px;color:var(--text-secondary);text-align:center;margin-top:8px">Select a carrier above to generate documents</div>';
+    html+='<div style="font-size:12px;color:var(--text-secondary);text-align:center;margin-top:12px">Select a carrier above to fill in shipment details</div>';
   }
 
   html+='</div>';
   el.innerHTML=html;
+
+  // Pre-fill goods from quote line items
+  if(l.freight_carrier){
+    sb('quotes?lead_id=eq.'+l.id+'&order=created_at.desc&limit=1').then(function(r){return r.json();}).then(function(quotes){
+      if(!quotes.length) return;
+      return sb('quote_line_items?quote_id=eq.'+quotes[0].id+'&order=sort_order.asc').then(function(r){return r.json();}).then(function(items){
+        if(!items.length) return;
+        var desc=items.map(function(i){return (i.item_name||'')+(i.quantity?' x'+i.quantity:'');}).join(', ');
+        var el2=document.getElementById('sli-goods');
+        if(el2&&!el2.value) el2.value=desc;
+      });
+    }).catch(function(){});
+  }
 }
+
+async function generateFreightDocsFromForm(){
+  // Read values from form
+  window._freightGoods = document.getElementById('sli-goods')?.value||'';
+  window._freightPieces = document.getElementById('sli-pieces')?.value||'';
+  window._freightWeight = document.getElementById('sli-weight')?.value||'';
+  window._freightDims = document.getElementById('sli-dims')?.value||'';
+  window._freightMarks = document.getElementById('sli-marks')?.value||'';
+  // Pass to generateFreightDocs with override
+  window._freightFormData = {
+    goods_description: window._freightGoods,
+    pieces: window._freightPieces,
+    weight: window._freightWeight,
+    dimensions: window._freightDims,
+    marks: window._freightMarks
+  };
+  await generateFreightDocs();
+}
+
 
 async function setFreightType(type){
   if(!currentLead) return;

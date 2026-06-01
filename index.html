@@ -783,52 +783,51 @@ function generateCustomsInvoicePDF(d){
 }
 
 function generateSLIPDF(d){
+  var carrier=d.lead.freight_carrier||'kalgin';
+  if(carrier==='pac') return generatePACSLIPDF(d);
+  if(carrier==='vanguard') return generateVanguardSLIPDF(d);
+  if(carrier==='airways') return generateAirwaysSLIPDF(d);
+  return generateKalginSLIPDF(d);
+}
+
+function generateKalginSLIPDF(d){
   var {jsPDF}=window.jspdf;
   var doc=new jsPDF('p','mm','a4');
   var pw=210,ml=12,mt=10,mr=12;
   var cw=pw-ml-mr;
   var carrier=d.lead.freight_carrier||'kalgin';
-  // Title
   doc.setFontSize(14);doc.setFont('helvetica','bold');
   doc.text("SHIPPER'S LETTER OF INSTRUCTION",pw/2,mt+8,{align:'center'});
-  // Header table: Shipper | Delivery Address
   var y=mt+14;
   doc.setFontSize(8);doc.setDrawColor(180,180,180);
-  doc.rect(ml,y,cw/2,28);
-  doc.rect(ml+cw/2,y,cw/2,28);
+  doc.rect(ml,y,cw/2,28);doc.rect(ml+cw/2,y,cw/2,28);
   doc.setFont('helvetica','bold');doc.text('SHIPPER / SENDER',ml+2,y+5);
   doc.setFont('helvetica','normal');
   doc.text('Traverse Imports and Exports',ml+2,y+10);
   doc.text('15 Riviera Road Miami 4220 QLD',ml+2,y+15);
-  doc.text('Travis Chin  Ph. 0480 239 515',ml+2,y+20);
+  doc.text('Brandon Chin  Ph. 0480 239 515',ml+2,y+20);
   doc.setFont('helvetica','bold');doc.text('DELIVERY ADDRESS',ml+cw/2+2,y+5);
   doc.setFont('helvetica','normal');
   doc.text('AS PER BOOKING CONFIRMATION FROM',ml+cw/2+2,y+10);
-  doc.text('YOUR LOCAL '+carrier.toUpperCase()+' OFFICE',ml+cw/2+2,y+15);
-  // Consignee row
+  doc.text('YOUR LOCAL KALGIN GLOBAL OFFICE',ml+cw/2+2,y+15);
   y+=28;
-  doc.rect(ml,y,cw/2,28);
-  doc.rect(ml+cw/2,y,cw/2,28);
+  doc.rect(ml,y,cw/2,28);doc.rect(ml+cw/2,y,cw/2,28);
   doc.setFont('helvetica','bold');doc.text('CONSIGNEE / RECEIVER',ml+2,y+5);
   doc.setFont('helvetica','normal');
-  var clientName=d.quote?.client_name||d.lead.company||d.lead.name||'';
-  var clientAddr=d.quote?.client_address||'Honiara, Solomon Islands';
+  var clientName=d.quote&&d.quote.client_name?d.quote.client_name:(d.lead.company||d.lead.name||'');
+  var clientAddr=d.quote&&d.quote.client_address?d.quote.client_address:'Honiara, Solomon Islands';
   doc.text(clientName,ml+2,y+10);
   var addrLines=clientAddr.split(',');
   addrLines.forEach(function(line,i){doc.text(line.trim(),ml+2,y+15+(i*5));});
-  // Notify + Mode
   y+=28;
-  doc.rect(ml,y,cw/2,14);
-  doc.rect(ml+cw/2,y,cw/2,14);
+  doc.rect(ml,y,cw/2,14);doc.rect(ml+cw/2,y,cw/2,14);
   doc.setFont('helvetica','bold');doc.text('NOTIFY PARTY (IF REQUIRED)',ml+2,y+5);
   doc.setFont('helvetica','bold');doc.text('SPECIAL INSTRUCTIONS',ml+cw/2+2,y+5);
   y+=14;
-  doc.rect(ml,y,cw*0.4,10);
-  doc.rect(ml+cw*0.4,y,cw*0.6,10);
+  doc.rect(ml,y,cw*0.4,10);doc.rect(ml+cw*0.4,y,cw*0.6,10);
   doc.setFont('helvetica','bold');doc.text('MODE OF TRANSPORT: ',ml+2,y+4);
   doc.setFont('helvetica','normal');doc.text((d.lead.freight_type||'sea').toUpperCase(),ml+40,y+4);
   doc.text('DESTINATION: HONIARA',ml+cw*0.4+2,y+4);
-  // Cargo table
   y+=10;
   var cols=[cw*0.12,cw*0.12,cw*0.13,cw*0.13,cw*0.2,cw*0.3];
   var headers=['No. of Packages','Gross Wt (KG)','Meas (cms)','Marks & Nos','Nature & Qty of Goods',''];
@@ -840,9 +839,7 @@ function generateSLIPDF(d){
     doc.text(h,x+1,y+4,{maxWidth:cols[i]-2});
     x+=cols[i];
   });
-  // Cargo data row
-  y+=10;
-  x=ml;
+  y+=10;x=ml;
   var goodsDesc=d.goods_description||'';
   var cargoData=['','','','',goodsDesc,''];
   cargoData.forEach(function(val,i){
@@ -851,23 +848,17 @@ function generateSLIPDF(d){
     doc.text(val,x+1,y+4,{maxWidth:cols[i]-2});
     x+=cols[i];
   });
-  // Totals row
   y+=18;
   doc.rect(ml,y,cw*0.12,8);doc.rect(ml+cw*0.12,y,cw*0.12,8);doc.rect(ml+cw*0.24,y,cw*0.76,8);
   doc.setFont('helvetica','bold');doc.setFontSize(7);
-  doc.text('Total Pieces',ml+1,y+5);
-  doc.text('Total KG',ml+cw*0.12+1,y+5);
-  doc.text('Total CBM',ml+cw*0.24+1,y+5);
-  // Payment + FOB table
-  y+=12;
-  doc.setFontSize(8);
-  doc.setFillColor(240,240,240);doc.rect(ml,y,cw*0.45,8,'FD');
-  doc.rect(ml+cw*0.45,y,cw*0.55,8);
+  doc.text('Total Pieces',ml+1,y+5);doc.text('Total KG',ml+cw*0.12+1,y+5);doc.text('Total CBM',ml+cw*0.24+1,y+5);
+  y+=12;doc.setFontSize(8);
+  doc.setFillColor(240,240,240);doc.rect(ml,y,cw*0.45,8,'FD');doc.rect(ml+cw*0.45,y,cw*0.55,8);
   doc.setFont('helvetica','bold');doc.text('PAYMENT OF CHARGES - MUST BE COMPLETE',ml+2,y+5);
   doc.text('Country of Origin: Australia',ml+cw*0.45+2,y+5);
   var payRows=[
     ['FREIGHT','PREPAID','COLLECT','If Australia, please confirm state:','QLD'],
-    ['ORIGIN CHARGES','PREPAID','COLLECT','FOB Value for Customs:','AUD $'+Number(d.quote?.total||0).toFixed(2)],
+    ['ORIGIN CHARGES','PREPAID','COLLECT','FOB Value for Customs:','AUD $'+Number(d.quote&&d.quote.total?d.quote.total:0).toFixed(2)],
     ['OTHER - SPECIFY','PREPAID','COLLECT','Do you arrange your own EDN?','No'],
   ];
   payRows.forEach(function(row){
@@ -875,33 +866,24 @@ function generateSLIPDF(d){
     doc.rect(ml,y,cw*0.2,8);doc.rect(ml+cw*0.2,y,cw*0.12,8);doc.rect(ml+cw*0.32,y,cw*0.13,8);
     doc.rect(ml+cw*0.45,y,cw*0.35,8);doc.rect(ml+cw*0.8,y,cw*0.2,8);
     doc.setFont('helvetica','normal');
-    doc.text(row[0],ml+1,y+5,{maxWidth:cw*0.18});
-    doc.text(row[1],ml+cw*0.2+1,y+5);
-    doc.text(row[2],ml+cw*0.32+1,y+5);
-    doc.text(row[3],ml+cw*0.45+1,y+5,{maxWidth:cw*0.33});
+    doc.text(row[0],ml+1,y+5,{maxWidth:cw*0.18});doc.text(row[1],ml+cw*0.2+1,y+5);
+    doc.text(row[2],ml+cw*0.32+1,y+5);doc.text(row[3],ml+cw*0.45+1,y+5,{maxWidth:cw*0.33});
     doc.setFont('helvetica','bold');doc.text(row[4],ml+cw*0.8+1,y+5,{maxWidth:cw*0.18});
   });
-  // DG declaration
-  y+=14;
-  doc.setFont('helvetica','normal');doc.setFontSize(7);
+  y+=14;doc.setFont('helvetica','normal');doc.setFontSize(7);
   doc.rect(ml,y,cw,16);
   doc.text('Does this shipment contain Dangerous Goods? NO',ml+2,y+5);
   doc.text('Does your booking contain Lithium Batteries? NO',ml+2,y+10);
-  // Pickup row
   y+=16;
   doc.rect(ml,y,cw*0.5,8);doc.rect(ml+cw*0.5,y,cw*0.2,8);doc.rect(ml+cw*0.7,y,cw*0.3,8);
   doc.setFont('helvetica','bold');doc.setFontSize(8);
-  doc.text('DO YOU REQUIRE '+carrier.toUpperCase()+' TO PICK UP SHIPMENT?',ml+2,y+5);
-  doc.text('YES / NO',ml+cw*0.5+2,y+5);
-  doc.text('PICK UP DATE:',ml+cw*0.7+2,y+5);
-  // Certification
-  y+=12;
-  doc.setFont('helvetica','normal');doc.setFontSize(7);
+  doc.text('DO YOU REQUIRE KALGIN TO PICK UP SHIPMENT?',ml+2,y+5);
+  doc.text('YES / NO',ml+cw*0.5+2,y+5);doc.text('PICK UP DATE:',ml+cw*0.7+2,y+5);
+  y+=12;doc.setFont('helvetica','normal');doc.setFontSize(7);
   var cert='The shipper certifies that all particulars on this SLI are correct. It is illegal to consign an un-authorised Explosive Device. All cargo will be subject to security and clearing procedure in accordance with Government Regulations.';
   var certLines=doc.splitTextToSize(cert,cw);
   doc.text(certLines,ml,y);
-  y+=certLines.length*4+4;
-  doc.setFontSize(9);
+  y+=certLines.length*4+4;doc.setFontSize(9);
   doc.text('Name: _______________________________',ml,y);
   doc.text('Company: _______________________________',ml+80,y);
   doc.text('Date: _______________________________',ml,y+8);
@@ -909,1482 +891,484 @@ function generateSLIPDF(d){
   return doc.output('arraybuffer');
 }
 
-var FREIGHT_CARRIERS={
-  sea:[
-    {id:'kalgin',name:'Kalgin'},
-    {id:'pac',name:'PAC'},
-    {id:'vanguard',name:'Vanguard'}
-  ],
-  air:[
-    {id:'airways',name:'Airways'}
-  ]
-};
-
-function renderCarrierDropdownHTML(freightType,selectedCarrier){
-  var carriers=FREIGHT_CARRIERS[freightType]||[];
-  if(!carriers.length) return '';
-  var opts=carriers.map(function(c){
-    return '<option value="'+c.id+'"'+(selectedCarrier===c.id?' selected':'')+'>'+c.name+'</option>';
-  }).join('');
-  return '<select class="form-input" id="freight-carrier-sel" style="margin-bottom:10px" onchange="saveFreightCarrier(this.value)">'
-    +'<option value="">-- Select carrier --</option>'+opts+'</select>';
-}
-
-function renderCarrierDropdown(freightType){
-  var wrap=document.getElementById('carrier-dd-wrap');
-  if(wrap) wrap.innerHTML=renderCarrierDropdownHTML(freightType,'');
-}
-
-async function saveFreightCarrier(val){
-  if(!currentLead||!val) return;
-  await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({freight_carrier:val,updated_at:new Date().toISOString()})});
-  currentLead.freight_carrier=val;
-  var name='';
-  Object.values(FREIGHT_CARRIERS).forEach(function(arr){arr.forEach(function(c){if(c.id===val)name=c.name;});});
-  toast('Carrier saved: '+name);
-}
-
-function openNewLead(){openNewLeadPhase(0);}
-
-async function moveToQuoted(){
-  if(!currentLead) return;
-  await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({phase:1,updated_at:new Date().toISOString()})});
-  await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Moved to Quoted',detail:'Lead moved from New Lead to Quoted pipeline'})});
-  toast('Moved to Quoted &#10003;');
-  currentLead.phase=1;
-  await renderDetailInfo();
-  await loadLeads();
-}
-
-async function saveFreightType(val){
-  if(!currentLead||!val) return;
-  await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({freight_type:val,updated_at:new Date().toISOString()})});
-  currentLead.freight_type=val;
-  toast('Freight type saved: '+(val==='sea'?'Sea Freight':'Air Freight'));
-}
-
-async function moveToFreighting(){
-  if(!currentLead) return;
-  await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({phase:3,updated_at:new Date().toISOString()})});
-  await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Moved to Freighting',detail:'Lead ready to freight - moved to Freighting pipeline'})});
-  toast('Moved to Freighting &#10003;');
-  currentLead.phase=3;
-  await renderDetailInfo();
-  await loadLeads();
-}
-
-async function moveToClientApproved(){
-  if(!currentLead) return;
-  var sel=document.getElementById('freight-type-sel');
-  var ft=(sel&&sel.value)?sel.value:(currentLead.freight_type||'');
-  if(!ft){toast('Please select a freight type first','error');return;}
-  await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({phase:2,freight_type:ft,updated_at:new Date().toISOString()})});
-  await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Moved to Client Approved',detail:'Quote approved by client. Freight: '+(ft==='sea'?'Sea Freight':'Air Freight')})});
-  toast('Moved to Client Approved &#10003;');
-  currentLead.phase=2;
-  currentLead.freight_type=ft;
-  await renderDetailInfo();
-  await loadLeads();
-}
-
-function fillNewLeadFromQB(sel){
-  var opt=sel.options[sel.selectedIndex];
-  if(!opt.value) return;
-  var nm=document.getElementById('f-name');
-  var co=document.getElementById('f-company');
-  var em=document.getElementById('f-contact');
-  if(nm&&!nm.value) nm.value=opt.dataset.name||'';
-  if(co) co.value=opt.dataset.company||opt.dataset.name||'';
-  if(em&&!em.value) em.value=opt.dataset.email||'';
-  // Store QB customer ID on the form for later use
-  sel.dataset.selectedId=opt.value;
-  toast('Client details filled from QuickBooks &#10003;');
-}
-async function openNewLeadPhase(phase){
-  // Load QB customers
-  if(!qbCustomers.length) {
-    var result = await loadQBCustomers();
-    console.log('QB customers loaded:', qbCustomers.length, 'result:', result);
-  }
-  console.log('Opening new lead form, qbCustomers:', qbCustomers.length);
-  document.getElementById('leadOverlay').classList.add('open');
-  document.getElementById('modalBody').innerHTML=`
-    <div class="form-group" style="margin-bottom:10px">
-      <label class="form-label" style="display:flex;align-items:center;gap:6px"><i class="ti ti-building-store" style="color:#2CA01C"></i> Select from QuickBooks</label>
-      <select class="form-input" id="f-qb-customer" onchange="fillNewLeadFromQB(this)">
-        <option value="">-- Select QB customer (optional) --</option>
-      </select>
-      <div style="font-size:11px;color:var(--text-secondary);margin-top:3px">Or fill in manually below</div>
-    </div>
-    <div class="form-row">
-      <div class="form-group"><label class="form-label">Client name *</label><input class="form-input" id="f-name" placeholder="First Last"></div>
-      <div class="form-group"><label class="form-label">Company</label><input class="form-input" id="f-company" placeholder="GEL Point Cruz"></div>
-    </div>
-    <div class="form-row">
-      <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="f-contact" type="email" placeholder="client@email.com"></div>
-      <div class="form-group"><label class="form-label">Mobile</label><input class="form-input" id="f-mobile" placeholder="+61 400 000 000"></div>
-    </div>
-    <div class="form-row">
-      <div class="form-group"><label class="form-label">Project ref</label><input class="form-input" id="f-project" placeholder="GPC-2024-01"></div>
-      <div class="form-group"><label class="form-label">Phase</label>
-        <select class="form-input" id="f-phase">${PHASES.map((p,i)=>`<option value="${i}" ${i===phase?'selected':''}>${p.name}</option>`).join('')}</select>
-      </div>
-    </div>
-    <div class="form-group"><label class="form-label">Notes</label><input class="form-input" id="f-notes" placeholder="Additional context..."></div>
-    <div class="section-divider">Lead type</div>
-    <div style="display:flex;gap:20px;margin-bottom:14px">
-      <label style="font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px">
-        <input type="radio" name="f-type" id="f-type-wholesale" value="wholesale" checked style="accent-color:var(--accent);width:15px;height:15px">
-        <span><strong>Wholesale</strong> &#8212; for our own shops</span>
-      </label>
-      <label style="font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px">
-        <input type="radio" name="f-type" id="f-type-project" value="project" style="accent-color:var(--accent);width:15px;height:15px">
-        <span><strong>Project</strong> &#8212; client project</span>
-      </label>
-    </div>
-    <div style="display:flex;gap:16px;margin-bottom:16px">
-      <label style="font-size:13px;cursor:pointer;display:flex;align-items:center;gap:7px"><input type="checkbox" id="f-drive" checked> <i class="ti ti-brand-google-drive" style="color:var(--amber)"></i> Create Drive folder</label>
-      <label style="font-size:13px;cursor:pointer;display:flex;align-items:center;gap:7px"><input type="checkbox" id="f-email"> <i class="ti ti-send" style="color:var(--purple)"></i> Send acknowledgement</label>
-    </div>
-    <div style="display:flex;gap:8px;justify-content:flex-end">
-      <button class="btn" onclick="closeModal('leadOverlay')">Cancel</button>
-      <button class="btn btn-primary" id="saveBtn" onclick="saveLead()"><i class="ti ti-device-floppy"></i> Save lead</button>
-    </div>`;
-  // Populate QB customer dropdown now that DOM is ready
-  console.log('Populating dropdown, qbCustomers.length:', qbCustomers.length);
-  var sel=document.getElementById('f-qb-customer');
-  if(sel && qbCustomers.length){
-    qbCustomers.forEach(function(c){
-      var opt=document.createElement('option');
-      opt.value=c.id;
-      opt.dataset.name=c.name;
-      opt.dataset.company=c.company||c.name;
-      opt.dataset.email=c.email||'';
-      opt.dataset.address=c.address||'';
-      opt.textContent=c.name+(c.company&&c.company!==c.name?' ('+c.company+')':'');
-      sel.appendChild(opt);
-    });
-  }
-}
-
-async function saveLead(){
-  const name=document.getElementById('f-name').value.trim();
-  if(!name){toast('Please enter a client name','error');return;}
-  const btn=document.getElementById('saveBtn');
-  btn.innerHTML='<i class="ti ti-loader"></i> Saving...';btn.disabled=true;
-  const d=new Date();
-  const ymd=String(d.getFullYear()).slice(2)+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0');
-  const comp=document.getElementById('f-company').value;
-  const contact=document.getElementById('f-contact').value;
-  const proj=document.getElementById('f-project').value;
-  const createDrive=document.getElementById('f-drive')?.checked;
-  const sendEmail=document.getElementById('f-email')?.checked;
-  const leadType=document.querySelector('input[name="f-type"]:checked')?.value||'wholesale';
-  var qbCustId=document.getElementById('f-qb-customer')?.dataset?.selectedId||null;
-  const payload={name,company:comp,contact,mobile:document.getElementById('f-mobile').value,project:proj,phase:parseInt(document.getElementById('f-phase').value),notes:document.getElementById('f-notes').value,client:comp,emails_sent:0,quote_status:'none',lead_type:leadType,doc_code:`${ymd}-${comp.substring(0,12)}-${proj.substring(0,8)}`};
-  try{
-    const res=await sb('leads',{method:'POST',body:JSON.stringify(payload),headers:{...sbH(authToken),'Prefer':'return=representation'}});
-    if(!res.ok) throw new Error(await res.text());
-    const [saved]=await res.json();
-    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:saved.id,action:'Lead created',detail:`New lead for ${comp}`})});
-    closeModal('leadOverlay');
-    await loadLeads();
-    toast('Lead saved &#10003;');
-    const lead=leads.find(l=>l.id===saved.id)||{...saved};
-    if(createDrive) await createDriveFolderForLead(lead);
-    if(sendEmail&&contact){
-      const fn=name.split(' ')[0];
-      await sendEmailViaFunction(contact,`${name} Quote Enquiry`,`Hi ${fn},\n\nThank you for submitting a quote request with us!\n\nWe are currently checking with our suppliers and will keep you updated as soon as we receive a response.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au`,'Phase 1 &#8212; Quote acknowledgement',saved.id);
-    }
-  }catch(e){toast('Save failed: '+e.message,'error');btn.innerHTML='<i class="ti ti-device-floppy"></i> Save lead';btn.disabled=false;}
-}
-
-/* &#9472;&#9472; DETAIL &#9472;&#9472; */
-async function openDetail(id){
-  currentLead=leads.find(l=>l.id===id);
-  if(!currentLead) return;
-  document.getElementById('detailName').textContent=currentLead.name;
-  document.getElementById('detailSub').textContent=(currentLead.company||'')+(currentLead.project?' &#183; '+currentLead.project:'');
-  document.getElementById('detailPhaseSelect').value=currentLead.phase;
-  document.querySelectorAll('.detail-tab').forEach((t,i)=>t.classList.toggle('active',i===0));
-  document.querySelectorAll('.detail-section').forEach((s,i)=>s.classList.toggle('active',i===0));
-  await loadCurrentQuote();
-  await renderDetailInfo();renderDetailEmails();
-  document.getElementById('dtab-files').innerHTML='';
-  document.getElementById('dtab-quote').innerHTML='';
-  await renderDetailActivity();
-  document.getElementById('detailOverlay').classList.add('open');
-}
-
-async function loadCurrentQuote(){
-  if(!currentLead) return;
-  try{
-    const r=await sb(`quotes?lead_id=eq.${currentLead.id}&order=created_at.desc&limit=1&select=*`);
-    const rows=await r.json();
-    if(rows.length>0){
-      currentQuote=rows[0];
-      const lr=await sb(`quote_line_items?quote_id=eq.${currentQuote.id}&order=sort_order.asc&select=*`);
-      currentLineItems=await lr.json();
-    } else {currentQuote=null;currentLineItems=[];}
-  }catch(e){currentQuote=null;currentLineItems=[];}
-}
-
-async function renderDetailInfo(){
-  const l=currentLead;
-  document.getElementById('dtab-info').innerHTML=`
-    <div class="info-grid">
-      <div class="info-item"><label>Email</label><p>${l.contact||'&#8212;'}</p></div>
-      <div class="info-item"><label>Mobile</label><p>${l.mobile||'&#8212;'}</p></div>
-      <div class="info-item"><label>Project ref</label><p>${l.project||'&#8212;'}</p></div>
-      <div class="info-item"><label>Quote status</label><p>${quoteStatusBadge(l.quote_status)||'&#8212;'}</p></div>
-      <div class="info-item"><label>Lead type</label><p><span style="font-size:12px;padding:3px 9px;border-radius:99px;font-weight:600;background:${l.lead_type==='project'?'var(--purple-light)':'var(--amber-light)'};color:${l.lead_type==='project'?'var(--purple)':'#633806'}">${l.lead_type==='project'?'Project':'Wholesale'}</span></p></div>
-      <div class="info-item"><label>Emails sent</label><p>${l.emails_sent||0}</p></div>
-      ${l.freight_type?`<div class="info-item"><label>Freight type</label><p><span style="font-size:12px;padding:3px 9px;border-radius:99px;font-weight:600;background:${l.freight_type==='sea'?'rgba(3,105,161,0.1)':'rgba(124,58,237,0.1)'};color:${l.freight_type==='sea'?'#0369a1':'#7c3aed'}"><i class="ti ti-${l.freight_type==='sea'?'ship':'plane'}"></i> ${l.freight_type==='sea'?'Sea Freight':'Air Freight'}</span></p></div>`:''}
-      ${l.freight_carrier?(function(){var name=l.freight_carrier;Object.values(FREIGHT_CARRIERS).forEach(function(arr){arr.forEach(function(c){if(c.id===l.freight_carrier)name=c.name;});});return '<div class="info-item"><label>Freight carrier</label><p><span style="font-size:12px;padding:3px 9px;border-radius:99px;font-weight:600;background:rgba(15,118,110,0.1);color:#0f766e">'+name+'</span></p></div>';})():''}
-      <div class="info-item"><label>Drive folder</label><p>${l.drive_folder_id?'<span style="color:var(--green)">&#10003; Linked</span>':'Not created'}</p></div>
-    </div>
-    ${l.doc_code?`<div style="margin-bottom:12px"><label class="form-label">Document code</label>
-    <div style="font-size:12px;font-family:monospace;background:var(--bg-secondary);padding:8px 11px;border-radius:var(--radius-md)">${l.doc_code}</div></div>`:''}
-    ${l.notes?`<div style="margin-bottom:12px"><label class="form-label">Notes</label><p style="font-size:13px;color:var(--text-secondary)">${l.notes}</p></div>`:''}
-    ${(function(){
-      var html='';
-      if((l.phase||0)===0){
-        html+='<div style="margin-top:16px;padding:14px;background:var(--bg-secondary);border-radius:var(--radius-md);border:1px solid var(--border-t)">'
-          +'<button class="btn btn-primary" onclick="moveToQuoted()" style="width:100%;justify-content:center"><i class="ti ti-arrow-right"></i> Move to Quoted</button>'
-          +'<div style="font-size:11px;color:var(--text-secondary);text-align:center;margin-top:6px">Move this lead to the Quoted pipeline once supplier data is ready</div>'
-          +'</div>';
-      }
-      if((l.phase||0)===1){
-        html+='<div style="margin-top:16px;padding:14px;background:var(--bg-secondary);border-radius:var(--radius-md);border:1px solid var(--border-t)">'
-          +'<div style="font-size:12px;font-weight:700;margin-bottom:8px"><i class="ti ti-truck"></i> Freight Type</div>'
-          +'<select class="form-input" id="freight-type-sel" style="margin-bottom:8px" onchange="saveFreightType(this.value);renderCarrierDropdown(this.value)">'
-          +'<option value="">-- Select freight type --</option>'
-          +'<option value="sea"'+(l.freight_type==='sea'?' selected':'')+'>Sea Freight</option>'
-          +'<option value="air"'+(l.freight_type==='air'?' selected':'')+'>Air Freight</option>'
-          +'</select>'
-          +'<div id="carrier-dd-wrap">'+(l.freight_type?renderCarrierDropdownHTML(l.freight_type,l.freight_carrier||''):'')+'</div>'
-          +'<button class="btn btn-primary" onclick="moveToClientApproved()" style="width:100%;justify-content:center"><i class="ti ti-check"></i> Move to Client Approved</button>'
-          +'<div style="font-size:11px;color:var(--text-secondary);text-align:center;margin-top:6px">Move once quote has been sent and approved by client</div>'
-          +'</div>';
-      }
-      if((l.phase||0)===2){
-        html+='<div style="margin-top:16px;padding:14px;background:var(--bg-secondary);border-radius:var(--radius-md);border:1px solid var(--border-t)">'
-          +'<button class="btn btn-primary" onclick="moveToFreighting()" style="width:100%;justify-content:center;background:var(--green);border-color:var(--green)">'
-          +'<i class="ti ti-ship"></i> Ready to Freight</button>'
-          +'<div style="font-size:11px;color:var(--text-secondary);text-align:center;margin-top:6px">Move this lead to Freighting to generate freight documents</div>'
-          +'</div>';
-      }
-      if((l.phase||0)===3){
-        var carrierName='';
-        if(FREIGHT_CARRIERS[l.freight_type||'']){FREIGHT_CARRIERS[l.freight_type].forEach(function(c){if(c.id===l.freight_carrier)carrierName=c.name;});}
-        html+='<div style="margin-top:16px;padding:14px;background:var(--bg-secondary);border-radius:var(--radius-md);border:1px solid var(--border-t)">'
-          +'<div style="font-size:12px;font-weight:700;margin-bottom:10px"><i class="ti ti-file-export"></i> Generate Freight Documents</div>'
-          +(carrierName?'<div style="font-size:11px;color:var(--text-secondary);margin-bottom:10px">Carrier: <strong>'+carrierName+'</strong> &mdash; '+(l.freight_type==='sea'?'Sea':'Air')+' Freight</div>':'')
-          +'<button class="btn btn-primary" onclick="generateFreightDocs()" style="width:100%;justify-content:center">'
-          +'<i class="ti ti-download"></i> Generate &amp; Download Documents</button>'
-          +'<div style="font-size:11px;color:var(--text-secondary);text-align:center;margin-top:6px">Generates Customs Invoice &amp; SLI PDF &mdash; auto-saved to Drive</div>'
-          +'</div>';
-      }
-      return html;
-    })()}
-    <div id="detail-quote-summary"></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
-      ${!l.drive_folder_id?`<button class="btn btn-green" onclick="createFolderFromDetail()"><i class="ti ti-brand-google-drive"></i> Create Drive folder</button>`:''}
-      <button class="btn btn-danger" style="margin-left:auto" onclick="deleteLead('${l.id}')"><i class="ti ti-trash"></i> Delete lead</button>
-    </div>`;
-  // Fetch and render quote summary
-  try {
-    var qr = await sb('quotes?lead_id=eq.'+l.id+'&order=created_at.desc&limit=1');
-    var quotes = await qr.json();
-    var summaryEl = document.getElementById('detail-quote-summary');
-    if(summaryEl && quotes && quotes.length){
-      var q = quotes[0];
-      // Fetch line items
-      var liRes = await sb('quote_line_items?quote_id=eq.'+q.id+'&order=sort_order.asc');
-      var items = await liRes.json();
-      var itemsHtml = '';
-      if(items && items.length){
-        itemsHtml = '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:8px">'
-          +'<thead><tr style="background:var(--bg-primary)">'
-          +'<th style="padding:6px 8px;text-align:left;font-weight:700;border-bottom:1px solid var(--border-t)">Item</th>'
-          +'<th style="padding:6px 8px;text-align:center;font-weight:700;border-bottom:1px solid var(--border-t)">Qty</th>'
-          +'<th style="padding:6px 8px;text-align:right;font-weight:700;border-bottom:1px solid var(--border-t)">Rate</th>'
-          +'<th style="padding:6px 8px;text-align:right;font-weight:700;border-bottom:1px solid var(--border-t)">Amount</th>'
-          +'</tr></thead><tbody>';
-        items.forEach(function(item){
-          itemsHtml += '<tr style="border-bottom:1px solid var(--border-t)">'
-            +'<td style="padding:6px 8px">'
-            +(item.item_name?'<div style="font-weight:600">'+item.item_name+'</div>':'')
-            +(item.description?'<div style="color:var(--text-secondary);font-size:11px">'+item.description+'</div>':'')
-            +'</td>'
-            +'<td style="padding:6px 8px;text-align:center">'+Number(item.quantity||1)+'</td>'
-            +'<td style="padding:6px 8px;text-align:right">A$'+Number(item.rate||0).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})+'</td>'
-            +'<td style="padding:6px 8px;text-align:right;font-weight:600">A$'+Number(item.amount||0).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})+'</td>'
-            +'</tr>';
-        });
-        itemsHtml += '</tbody></table>';
-      }
-      summaryEl.innerHTML = '<div style="margin:16px 0;padding:14px;background:var(--bg-secondary);border-radius:var(--radius-md);border:1px solid var(--border-t)">'
-        +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'
-        +'<div style="font-size:13px;font-weight:700"><i class="ti ti-file-invoice"></i> Quote '+q.quote_number+'</div>'
-        +'<span style="font-size:11px;padding:2px 8px;border-radius:99px;font-weight:600;background:'+(q.status==='sent'?'rgba(34,197,94,0.12)':'rgba(245,158,11,0.12)')+';color:'+(q.status==='sent'?'var(--green)':'#b45309')+'">'+q.status+'</span>'
-        +'</div>'
-        + itemsHtml
-        +'<div style="display:flex;justify-content:flex-end;gap:16px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border-t)">'
-        +(q.gst_total>0?'<div style="font-size:12px;color:var(--text-secondary)">GST: A$'+Number(q.gst_total||0).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})+'</div>':'')
-        +'<div style="font-size:14px;font-weight:700">Total: A$'+Number(q.total||0).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})+'</div>'
-        +'</div>'
-        +'</div>';
-    } else if(summaryEl) {
-      summaryEl.innerHTML = '';
-    }
-  } catch(e) { console.warn('Quote summary error:', e); }
-}
-
-/* &#9472;&#9472; QUOTE TAB &#9472;&#9472; */
-async function renderQuoteTab(){
-  const el=document.getElementById('dtab-quote');
-  console.log('renderQuoteTab called, el:', el, 'currentQuote:', currentQuote, 'currentLineItems:', currentLineItems);
-  if(!el){ console.error('dtab-quote element not found'); return; }
-  el.innerHTML='<div style="padding:20px;font-size:13px;color:var(--text-secondary)"><i class="ti ti-loader"></i> Loading...</div>';
-  try {
-    if(!qbCustomers.length) await loadQBCustomers();
-    console.log('QB customers loaded:', qbCustomers.length);
-    if(currentQuote && currentQuote.status!=='draft'){
-      console.log('Showing quote review, status:', currentQuote.status);
-      renderQuoteReview(el);
-      return;
-    }
-    if(currentQuote && currentQuote.status==='draft' && currentLineItems.length>0){
-      console.log('Showing pricing step, items:', currentLineItems.length);
-      renderPricingStep(el);
-      return;
-    }
-    console.log('Showing document scan (no quote yet)');
-    renderDocumentScan(el);
-  } catch(e) {
-    console.error('renderQuoteTab error:', e);
-    el.innerHTML='<div style="padding:20px;font-size:13px;color:var(--danger)">Error loading quote tab: '+e.message+'</div>';
-  }
-}
-
-function renderDocumentScan(el){
-  el.innerHTML=`
-    <div style="margin-bottom:14px">
-      <div style="font-size:14px;font-weight:600;margin-bottom:4px">Step 1 &#8212; Upload supplier document</div>
-      <div style="font-size:13px;color:var(--text-secondary)">Drop a supplier quote, spec sheet, or invoice PDF/JPEG. Claude will scan it and extract line items automatically.</div>
-    </div>
-    <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)">
-      <i class="ti ti-cloud-upload"></i>
-      <p>Drop PDF or JPEG here</p>
-      <span>or click to browse</span>
-    </div>
-    <input type="file" id="fileInput" accept=".pdf,.jpg,.jpeg,.png" style="display:none" onchange="handleFileSelect(event)">
-    <div id="scanProgress" style="display:none;margin-top:16px;text-align:center;padding:20px;background:var(--bg-secondary);border-radius:var(--radius-md)">
-      <i class="ti ti-loader" style="font-size:24px;color:var(--accent);margin-bottom:8px;display:block"></i>
-      <div style="font-size:13px;font-weight:500">Scanning document...</div>
-      <div style="font-size:12px;color:var(--text-secondary);margin-top:4px">Claude is reading your document and extracting line items</div>
-    </div>`;
-}
-
-function handleDragOver(e){e.preventDefault();document.getElementById('dropZone').classList.add('dragover');}
-function handleDragLeave(e){document.getElementById('dropZone').classList.remove('dragover');}
-function handleDrop(e){e.preventDefault();document.getElementById('dropZone').classList.remove('dragover');const f=e.dataTransfer.files[0];if(f) processFile(f);}
-function handleFileSelect(e){const f=e.target.files[0];if(f) processFile(f);}
-
-async function processFile(file){
-  const allowed=['application/pdf','image/jpeg','image/jpg','image/png'];
-  if(!allowed.includes(file.type)){toast('Please upload a PDF or JPEG/PNG image','error');return;}
-  document.getElementById('dropZone').style.display='none';
-  document.getElementById('scanProgress').style.display='block';
-  try{
-    const base64=await fileToBase64(file);
-    const isPdf=file.type==='application/pdf';
-    const mediaType=file.type;
-    const resp=await fetch(SB_URL+'/functions/v1/scan-document',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},
-      body:JSON.stringify({base64,mediaType,isPdf})
-    });
-    const result=await resp.json();
-    if(!resp.ok||!result.success) throw new Error(result.error||'Scan failed');
-    await createDraftQuote(result.data,file.name);
-    // Save scanned file to Drive if folder exists
-    if(currentLead&&currentLead.drive_folder_id&&currentLead.drive_folder_id!=='created'){
-      await saveToDrive(currentLead.id,currentLead.drive_folder_id,'Scan-'+file.name,base64,file.type);
-    }
-  }catch(e){
-    toast('Scan failed: '+e.message,'error');
-    document.getElementById('dropZone').style.display='block';
-    document.getElementById('scanProgress').style.display='none';
-  }
-}
-
-function fileToBase64(file){
-  return new Promise((res,rej)=>{
-    const r=new FileReader();
-    r.onload=()=>res(r.result.split(',')[1]);
-    r.onerror=()=>rej(new Error('File read failed'));
-    r.readAsDataURL(file);
-  });
-}
-
-async function createDraftQuote(parsed,fileName){
-  const qnRes=await sbRpc('next_quote_number');
-  const qnData=await qnRes.json();
-  const quoteNumber=qnData||`TIE-${String(Date.now()).slice(-4)}`;
-  const quotePayload={
-    lead_id:currentLead.id,
-    quote_number:quoteNumber,
-    status:'draft',
-    client_name:parsed.client_name||currentLead.company||'',
-    client_address:parsed.client_address||'',
-    scanned_file_name:fileName,
-  };
-  const qRes=await sb('quotes',{method:'POST',body:JSON.stringify(quotePayload),headers:{...sbH(authToken),'Prefer':'return=representation'}});
-  const [quote]=await qRes.json();
-  currentQuote=quote;
-  const items=(parsed.line_items||[]).map((item,i)=>({
-    quote_id:quote.id,
-    item_name:item.item_name||'Item',
-    description:item.description||'',
-    quantity:parseFloat(item.quantity)||1,
-    rate:0,
-    gst_applicable:item.gst_applicable!==false,
-    amount:0,
-    sort_order:i
-  }));
-  if(items.length>0){
-    await sb('quote_line_items',{method:'POST',body:JSON.stringify(items)});
-    const liRes=await sb(`quote_line_items?quote_id=eq.${quote.id}&order=sort_order.asc&select=*`);
-    currentLineItems=await liRes.json();
-  }
-  await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Document scanned',detail:`${items.length} line items extracted from ${fileName}`})});
-  toast(`${items.length} items extracted &#10003;`);
-  renderPricingStep(document.getElementById('dtab-quote'));
-}
-
-function renderPricingStep(el){
-  const q=currentQuote;
-  el.innerHTML=`
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-      <div>
-        <div style="font-size:14px;font-weight:600">Step 2 &#8212; Set your pricing</div>
-        <div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Add your rate per item after speaking to suppliers and adding margin. Green fields = pricing only.</div>
-      </div>
-      <div style="display:flex;gap:8px;align-items:center">
-        <span style="font-size:12px;color:var(--text-secondary)">Quote: <strong>${q.quote_number}</strong></span>
-        <button class="btn btn-sm" onclick="renderDocumentScan(document.getElementById('dtab-quote'))"><i class="ti ti-refresh"></i> Re-scan</button>
-      </div>
-    </div>
-    <div style="margin-bottom:12px">
-      <div class="form-group" style="margin-bottom:8px">
-        <label class="form-label">QuickBooks customer</label>
-        <div>${buildCustomerPicker(q.qb_customer_id||'')}</div>
-        <div style="font-size:11px;color:var(--text-secondary);margin-top:4px">Or enter manually below</div>
-      </div>
-      <div class="form-row">
-        <div class="form-group"><label class="form-label">Client name</label><input class="form-input" id="q-client" value="${q.client_name||currentLead.company||''}" placeholder="Client company name"></div>
-        <div class="form-group"><label class="form-label">Expiry date</label><input class="form-input" type="date" id="q-expiry" value="${q.expiry_date||''}"></div>
-      </div>
-      <div class="form-group"><label class="form-label">Client address</label><input class="form-input" id="q-address" value="${q.client_address||''}" placeholder="123 Main Street, City, State 1234"></div>
-    </div>
-    <table class="line-items-table">
-      <thead><tr>
-        <th style="width:20%">Item</th>
-        <th style="width:30%">Description</th>
-        <th style="width:10%">Qty</th>
-        <th style="width:16%">Rate (A$) *</th>
-        <th style="width:8%">GST</th>
-        <th style="width:12%">Amount</th>
-        <th style="width:4%"></th>
-      </tr></thead>
-      <tbody id="lineItemsBody"></tbody>
-    </table>
-    <button class="btn btn-sm" onclick="addLineItem()" style="margin-bottom:12px"><i class="ti ti-plus"></i> Add line item</button>
-    <div class="totals-box" id="totalsBox"></div>
-    <div style="font-size:12px;color:var(--text-secondary);margin:10px 0 4px">* Rate fields highlighted green &#8212; fill these in after supplier discussions.</div>
-    <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end">
-      <button class="btn" onclick="savePricing(false)"><i class="ti ti-device-floppy"></i> Save draft</button>
-      <button class="btn btn-primary" onclick="savePricing(true)"><i class="ti ti-file-invoice"></i> Generate quote</button>
-    </div>`;
-  renderLineItemsBody();
-}
-
-function renderLineItemsBody(){
-  const tbody=document.getElementById('lineItemsBody');
-  if(!tbody) return;
-  tbody.innerHTML=currentLineItems.map((item,i)=>`
-    <tr id="row-${i}">
-      <td><input value="${item.item_name||''}" oninput="updateItem(${i},'item_name',this.value)" placeholder="Item name"></td>
-      <td><input value="${item.description||''}" oninput="updateItem(${i},'description',this.value)" placeholder="Description"></td>
-      <td><input type="number" value="${item.quantity||1}" min="0.01" step="0.01" oninput="updateItem(${i},'quantity',parseFloat(this.value)||0);recalc()" style="width:70px"></td>
-      <td><input type="number" value="${item.rate||''}" min="0" step="0.01" placeholder="0.00" class="rate-input" oninput="updateItem(${i},'rate',parseFloat(this.value)||0);recalc()"></td>
-      <td style="text-align:center"><input type="checkbox" class="gst-check" ${item.gst_applicable?'checked':''} onchange="updateItem(${i},'gst_applicable',this.checked);recalc()"></td>
-      <td class="num" id="amt-${i}">A$${((item.quantity||1)*(item.rate||0)).toFixed(2)}</td>
-      <td><button style="background:none;border:none;cursor:pointer;color:var(--danger);font-size:16px" onclick="removeItem(${i})"><i class="ti ti-trash"></i></button></td>
-    </tr>`).join('');
-  recalc();
-}
-
-function updateItem(i,field,val){currentLineItems[i][field]=val;}
-
-function recalc(){
-  let sub=0,gst=0;
-  currentLineItems.forEach((item,i)=>{
-    const amt=(item.quantity||1)*(item.rate||0);
-    item.amount=amt;sub+=amt;
-    if(item.gst_applicable) gst+=amt*0.1;
-    const el=document.getElementById('amt-'+i);
-    if(el) el.textContent='A$'+amt.toFixed(2);
-  });
-  const total=sub+gst;
-  const tb=document.getElementById('totalsBox');
-  if(tb) tb.innerHTML=`
-    <div class="totals-row"><span>Subtotal</span><span>A$${sub.toFixed(2)}</span></div>
-    <div class="totals-row"><span>Total GST (10%)</span><span>A$${gst.toFixed(2)}</span></div>
-    <div class="totals-row total"><span>TOTAL</span><span>A$${total.toFixed(2)}</span></div>`;
-}
-
-function addLineItem(){
-  currentLineItems.push({quote_id:currentQuote?.id,item_name:'',description:'',quantity:1,rate:0,gst_applicable:true,amount:0,sort_order:currentLineItems.length});
-  renderLineItemsBody();
-}
-
-function removeItem(i){currentLineItems.splice(i,1);renderLineItemsBody();}
-
-async function savePricing(andGenerate){
-  if(!currentQuote) return;
-  const clientName=document.getElementById('q-client')?.value||'';
-  const clientAddress=document.getElementById('q-address')?.value||'';
-  const expiryDate=document.getElementById('q-expiry')?.value||null;
-  let sub=0,gst=0;
-  currentLineItems.forEach(item=>{const a=(item.quantity||1)*(item.rate||0);item.amount=a;sub+=a;if(item.gst_applicable)gst+=a*0.1;});
-  const total=sub+gst;
-  await sb(`quotes?id=eq.${currentQuote.id}`,{method:'PATCH',body:JSON.stringify({client_name:clientName,client_address:clientAddress,expiry_date:expiryDate||null,subtotal:sub,gst_total:gst,total,updated_at:new Date().toISOString()})});
-  await sb(`quote_line_items?quote_id=eq.${currentQuote.id}`,{method:'DELETE'});
-  if(currentLineItems.length>0){
-    const toInsert=currentLineItems.map((item,i)=>({quote_id:currentQuote.id,item_name:item.item_name,description:item.description,quantity:item.quantity,rate:item.rate,gst_applicable:item.gst_applicable,amount:item.amount,sort_order:i}));
-    await sb('quote_line_items',{method:'POST',body:JSON.stringify(toInsert)});
-    const lr=await sb(`quote_line_items?quote_id=eq.${currentQuote.id}&order=sort_order.asc&select=*`);
-    currentLineItems=await lr.json();
-  }
-  currentQuote.client_name=clientName;currentQuote.client_address=clientAddress;currentQuote.expiry_date=expiryDate;currentQuote.subtotal=sub;currentQuote.gst_total=gst;currentQuote.total=total;
-  toast('Pricing saved &#10003;');
-  if(andGenerate) showEditableQuote();
-}
-
-/* &#9472;&#9472; EDITABLE QUOTE TEMPLATE &#9472;&#9472; */
-function showEditableQuote(){
-  // Sync latest line items into editable state
-  renderEditableQuoteModal();
-  document.getElementById('previewOverlay').classList.add('open');
-}
-
-function renderEditableQuoteModal(){
-  const q=currentQuote;
-  const today=new Date().toLocaleDateString('en-AU');
-  const expiry=q.expiry_date?new Date(q.expiry_date).toLocaleDateString('en-AU'):'&#8212;';
-  document.getElementById('previewQuoteNum').textContent=q.quote_number;
-
-  // Build editable line item rows
-  const rows=currentLineItems.map((item,i)=>`
-    <tr id="eq-row-${i}">
-      <td contenteditable="true" oninput="editQItem(${i},'item_name',this.innerText)" style="padding:7px 8px;border-bottom:0.5px solid #eee;min-width:100px">${item.item_name||''}</td>
-      <td contenteditable="true" oninput="editQItem(${i},'description',this.innerText)" style="padding:7px 8px;border-bottom:0.5px solid #eee;min-width:140px">${item.description||''}</td>
-      <td style="padding:7px 8px;border-bottom:0.5px solid #eee;text-align:right">
-        <input type="number" value="${item.quantity||1}" min="0.01" step="0.01" oninput="editQItem(${i},'quantity',parseFloat(this.value)||1);recalcEditable()" style="width:55px;text-align:right;border:0.5px solid #ddd;border-radius:4px;padding:2px 4px;font-family:inherit;font-size:12px">
-      </td>
-      <td style="padding:7px 8px;border-bottom:0.5px solid #eee;text-align:right">
-        <input type="number" value="${item.rate||0}" min="0" step="0.01" oninput="editQItem(${i},'rate',parseFloat(this.value)||0);recalcEditable()" style="width:70px;text-align:right;border:0.5px solid #ddd;border-radius:4px;padding:2px 4px;font-family:inherit;font-size:12px;color:#3B6D11;font-weight:600">
-      </td>
-      <td style="padding:7px 8px;border-bottom:0.5px solid #eee;text-align:right;font-weight:500" id="eq-amt-${i}">A$${(item.amount||0).toFixed(2)}</td>
-      <td style="padding:7px 8px;border-bottom:0.5px solid #eee;text-align:center">
-        <input type="checkbox" ${item.gst_applicable?'checked':''} onchange="editQItem(${i},'gst_applicable',this.checked);recalcEditable()" style="cursor:pointer;accent-color:#185FA5">
-      </td>
-      <td style="padding:7px 8px;border-bottom:0.5px solid #eee;text-align:center">
-        <button onclick="removeEQItem(${i})" style="background:none;border:none;cursor:pointer;color:#A32D2D;font-size:14px"><i class="ti ti-trash"></i></button>
-      </td>
-    </tr>`).join('');
-
-  document.getElementById('quotePreviewContent').innerHTML=`
-    <div style="background:#f0f7ff;border:0.5px solid #185FA5;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#0C447C;display:flex;align-items:center;gap:8px">
-      <i class="ti ti-pencil" style="font-size:16px"></i>
-      <span><strong>Editable mode</strong> &#8212; all fields are live. Make amendments directly on the quote, then send to client when ready.</span>
-    </div>
-    <div class="quote-preview" style="font-family:'Times New Roman',serif">
-      <div class="qp-header">
-        <div>
-          <div class="qp-company">Traverse Imports & Exports P/L</div>
-          <div class="qp-company-sub">15 Riviera Road, Miami QLD 4220<br>+61 402 393 464 | accounts@traverse-exports.com.au<br>ABN 27 058 599 795</div>
-        </div>
-        <div style="text-align:right">
-          <div class="qp-title">QUOTE</div>
-          <div style="font-size:13px;margin-top:4px"><strong>${q.quote_number}</strong></div>
-        </div>
-      </div>
-      <div class="qp-meta">
-        <div class="qp-meta-box">
-          <div class="qp-meta-label">Address</div>
-          <div contenteditable="true" id="eq-client-name" oninput="currentQuote.client_name=this.innerText" style="font-size:13px;min-height:18px;border-bottom:1px dashed #ccc;padding-bottom:2px;margin-bottom:4px;outline:none">${q.client_name||''}</div>
-          <div contenteditable="true" id="eq-client-addr" oninput="currentQuote.client_address=this.innerText" style="font-size:13px;min-height:18px;border-bottom:1px dashed #ccc;padding-bottom:2px;outline:none">${(q.client_address||'').replace(/\n/g,'<br>')}</div>
-        </div>
-        <div class="qp-meta-box" style="text-align:right">
-          <div style="margin-bottom:8px"><span class="qp-meta-label">Date</span><br><span style="font-size:13px">${today}</span></div>
-          <div><span class="qp-meta-label">Expiration date</span><br>
-            <input type="date" id="eq-expiry" value="${q.expiry_date||''}" onchange="currentQuote.expiry_date=this.value" style="font-size:13px;border:0.5px solid #ddd;border-radius:4px;padding:2px 6px;font-family:inherit;text-align:right">
-          </div>
-        </div>
-      </div>
-      <table class="qp-table" style="font-size:12px">
-        <thead><tr><th>Activity</th><th>Description</th><th style="text-align:right">QTY</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th><th style="text-align:center">GST</th><th></th></tr></thead>
-        <tbody id="eq-tbody">${rows}</tbody>
-      </table>
-      <div style="margin-bottom:10px">
-        <button onclick="addEQItem()" class="btn btn-sm" style="font-size:11px"><i class="ti ti-plus"></i> Add line item</button>
-      </div>
-      <div style="display:flex;justify-content:flex-end">
-        <div class="qp-totals" id="eq-totals">
-          <div class="qp-totals-row"><span>Subtotal</span><span id="eq-sub">A$${(q.subtotal||0).toFixed(2)}</span></div>
-          <div class="qp-totals-row"><span>Total GST (10%)</span><span id="eq-gst">A$${(q.gst_total||0).toFixed(2)}</span></div>
-          <div class="qp-totals-row total"><span>TOTAL</span><span id="eq-total" style="color:var(--accent)">A$${(q.total||0).toFixed(2)}</span></div>
-        </div>
-      </div>
-      <div class="qp-bank"><strong>Bank Details &#8212; Westpac Bank</strong><br>Branch: Pacific Fair Shopping Centre, Broadbeach QLD 4218<br>Swift Code: WPACAU2SXXX &nbsp;|&nbsp; BSB: 034-637 &nbsp;|&nbsp; Account: 21-1660</div>
-      <div class="qp-thankyou">THANK YOU FOR YOUR BUSINESS!</div>
-    </div>`;
-}
-
-function editQItem(i,field,val){currentLineItems[i][field]=val;}
-
-function recalcEditable(){
-  let sub=0,gst=0;
-  currentLineItems.forEach((item,i)=>{
-    const amt=(item.quantity||1)*(item.rate||0);
-    item.amount=amt;sub+=amt;
-    if(item.gst_applicable) gst+=amt*0.1;
-    const el=document.getElementById('eq-amt-'+i);
-    if(el) el.textContent='A$'+amt.toFixed(2);
-  });
-  const total=sub+gst;
-  currentQuote.subtotal=sub;currentQuote.gst_total=gst;currentQuote.total=total;
-  const s=document.getElementById('eq-sub');const g=document.getElementById('eq-gst');const t=document.getElementById('eq-total');
-  if(s) s.textContent='A$'+sub.toFixed(2);
-  if(g) g.textContent='A$'+gst.toFixed(2);
-  if(t) t.textContent='A$'+total.toFixed(2);
-}
-
-function addEQItem(){
-  currentLineItems.push({quote_id:currentQuote?.id,item_name:'',description:'',quantity:1,rate:0,gst_applicable:true,amount:0,sort_order:currentLineItems.length});
-  renderEditableQuoteModal();
-}
-
-function removeEQItem(i){
-  currentLineItems.splice(i,1);
-  renderEditableQuoteModal();
-}
-
-function generateQuotePDF(quote, lineItems) {
-  if(typeof window.jspdf === 'undefined') throw new Error('jsPDF not loaded');
-  var jsPDF = window.jspdf.jsPDF;
-  var doc = new jsPDF({ orientation:'portrait', unit:'mm', format:'a4' });
-  var pw = doc.internal.pageSize.getWidth();
-  var ph = doc.internal.pageSize.getHeight();
-  var ml = 15, mr = 15, mt = 15;
-  var cw = pw - ml - mr;
-  var y = mt;
-
-  function checkPage(needed) {
-    if (y + needed > ph - 15) { doc.addPage(); y = mt; }
-  }
-
-  // Header background
-  doc.setFillColor(26,26,26);
-  doc.rect(0, 0, pw, 28, 'F');
-
-  // Company name
-  doc.setTextColor(255,255,255);
-  doc.setFontSize(13);
-  doc.setFont('helvetica','bold');
-  doc.text('Traverse Imports & Exports P/L', ml, 10);
-  doc.setFontSize(8);
+function generatePACSLIPDF(d){
+  var {jsPDF}=window.jspdf;
+  var doc=new jsPDF('p','mm','a4');
+  var pw=210,ml=10,mt=10,mr=10;
+  var cw=pw-ml-mr;
+  // Title
+  doc.setFontSize(13);doc.setFont('helvetica','bold');
+  doc.text("Seafreight Shipper's Letter of Instruction / Packing List",pw/2,mt+7,{align:'center'});
+  // Row 0: Shipper | PAC details
+  var y=mt+12;
+  doc.setFontSize(8);doc.setDrawColor(180,180,180);
+  doc.rect(ml,y,cw*0.55,30);doc.rect(ml+cw*0.55,y,cw*0.45,30);
+  doc.setFont('helvetica','bold');doc.text('SHIPPER / SENDER',ml+2,y+5);
   doc.setFont('helvetica','normal');
-  doc.text('15 Riviera Road, Miami QLD 4220', ml, 15);
-  doc.text('+61 402 393 464  |  accounts@traverse-exports.com.au  |  ABN 27 058 599 795', ml, 19);
+  doc.text('Brandon Chin',ml+2,y+10);
+  doc.text('Traverse Exports',ml+2,y+15);
+  doc.text('Address: Unit 3, 26 Ern Harley Drive, Burleigh Waters',ml+2,y+20);
+  doc.text('Email: sales@traverse-exports.com.au  Ph: 0480 239 515',ml+2,y+25);
+  doc.setFont('helvetica','bold');doc.text('PAC - Pacific Air Cargo',ml+cw*0.55+2,y+5);
+  doc.setFont('helvetica','normal');
+  doc.text('Toll Free: 1800 735 665',ml+cw*0.55+2,y+10);
+  doc.text('20 Harvey Street North, Eagle Farm QLD 4009',ml+cw*0.55+2,y+15);
+  doc.text('seafreight@pacificaircargo.com.au',ml+cw*0.55+2,y+20);
+  // Row 1: Consignee
+  y+=30;
+  doc.rect(ml,y,cw,24);
+  doc.setFont('helvetica','bold');doc.text('CONSIGNEE / RECEIVER',ml+2,y+5);
+  doc.setFont('helvetica','normal');
+  var clientName=d.quote&&d.quote.client_name?d.quote.client_name:(d.lead.company||d.lead.name||'');
+  var clientAddr=d.quote&&d.quote.client_address?d.quote.client_address:'PO Box 521, Honiara, Solomon Islands';
+  doc.text(clientName,ml+2,y+10);
+  doc.text('Address: '+clientAddr,ml+2,y+15);
+  doc.text('Email: '+d.lead.contact,ml+2,y+20);
+  // Row 2: Notify | Special Instructions
+  y+=24;
+  doc.rect(ml,y,cw*0.55,16);doc.rect(ml+cw*0.55,y,cw*0.45,16);
+  doc.setFont('helvetica','bold');doc.text('NOTIFY PARTY (IF REQUIRED)',ml+2,y+5);
+  doc.text('SPECIAL INSTRUCTIONS',ml+cw*0.55+2,y+5);
+  // Row 3: Pickup
+  y+=16;
+  doc.rect(ml,y,cw,10);
+  doc.setFont('helvetica','bold');doc.text('DO YOU REQUIRE PAC TO PICK UP SHIPMENT?   YES  /  NO',ml+2,y+6);
+  // Row 4: Vessel/Voyage/Origin/Destination
+  y+=10;
+  doc.rect(ml,y,cw*0.15,8);doc.rect(ml+cw*0.15,y,cw*0.2,8);
+  doc.rect(ml+cw*0.35,y,cw*0.15,8);doc.rect(ml+cw*0.5,y,cw*0.5,8);
+  doc.setFont('helvetica','bold');doc.text('VESSEL:',ml+2,y+5);doc.setFont('helvetica','normal');doc.text('',ml+cw*0.15+2,y+5);
+  doc.setFont('helvetica','bold');doc.text('ORIGIN:',ml+cw*0.35+2,y+5);doc.setFont('helvetica','normal');doc.text('Brisbane',ml+cw*0.5+2,y+5);
+  y+=8;
+  doc.rect(ml,y,cw*0.15,8);doc.rect(ml+cw*0.15,y,cw*0.2,8);
+  doc.rect(ml+cw*0.35,y,cw*0.15,8);doc.rect(ml+cw*0.5,y,cw*0.5,8);
+  doc.setFont('helvetica','bold');doc.text('VOYAGE:',ml+2,y+5);doc.setFont('helvetica','normal');doc.text('',ml+cw*0.15+2,y+5);
+  doc.setFont('helvetica','bold');doc.text('DESTINATION:',ml+cw*0.35+2,y+5);doc.setFont('helvetica','normal');doc.text('Honiara',ml+cw*0.5+2,y+5);
+  // Cargo header
+  y+=8;
+  doc.setFillColor(240,240,240);
+  doc.rect(ml,y,cw*0.12,10,'FD');doc.rect(ml+cw*0.12,y,cw*0.13,10,'FD');
+  doc.rect(ml+cw*0.25,y,cw*0.15,10,'FD');doc.rect(ml+cw*0.4,y,cw*0.15,10,'FD');
+  doc.rect(ml+cw*0.55,y,cw*0.45,10,'FD');
+  doc.setFont('helvetica','bold');doc.setFontSize(7);
+  doc.text('CARTONS/PALLET',ml+1,y+4);doc.text('No. of Packages',ml+cw*0.12+1,y+4);
+  doc.text('Gross Weight (KG)',ml+cw*0.25+1,y+4);doc.text('Measurements (mm)',ml+cw*0.4+1,y+4);
+  doc.text('Description of Goods',ml+cw*0.55+1,y+4);
+  // Cargo data row
+  y+=10;
+  doc.rect(ml,y,cw*0.12,18);doc.rect(ml+cw*0.12,y,cw*0.13,18);
+  doc.rect(ml+cw*0.25,y,cw*0.15,18);doc.rect(ml+cw*0.4,y,cw*0.15,18);
+  doc.rect(ml+cw*0.55,y,cw*0.45,18);
+  doc.setFont('helvetica','normal');doc.setFontSize(8);
+  doc.text(d.goods_description||'',ml+cw*0.55+1,y+5,{maxWidth:cw*0.43});
+  // Totals row
+  y+=18;
+  doc.rect(ml+cw*0.12,y,cw*0.13,8);doc.rect(ml+cw*0.25,y,cw*0.15,8);doc.rect(ml+cw*0.4,y,cw*0.15,8);
+  doc.setFont('helvetica','bold');doc.setFontSize(7);
+  doc.text('Total Pieces',ml+cw*0.12+1,y+5);doc.text('Total KG',ml+cw*0.25+1,y+5);doc.text('Total CBM',ml+cw*0.4+1,y+5);
+  // Insurance/Timber row
+  y+=8;
+  doc.rect(ml,y,cw*0.55,14);doc.rect(ml+cw*0.55,y,cw*0.45,14);
+  doc.setFont('helvetica','normal');doc.setFontSize(7);
+  doc.text('IS TIMBER PACKAGING ISPM 15 TREATED?  YES / NO',ml+2,y+5);
+  doc.text('INSURANCE REQUIRED:  YES / NO',ml+cw*0.55+2,y+5);
+  doc.text('INSURANCE AMOUNT AUD $:',ml+cw*0.55+2,y+10);
+  // Payment row
+  y+=14;
+  doc.rect(ml,y,cw*0.3,8);doc.rect(ml+cw*0.3,y,cw*0.15,8);doc.rect(ml+cw*0.45,y,cw*0.15,8);doc.rect(ml+cw*0.6,y,cw*0.4,8);
+  doc.setFont('helvetica','bold');doc.text('Payment of Freight Charges',ml+2,y+5);
+  doc.text('SHIPPER',ml+cw*0.3+2,y+5);doc.text('RECEIVER',ml+cw*0.45+2,y+5);doc.text('EDN #:',ml+cw*0.6+2,y+5);
+  // Declared value
+  y+=8;
+  doc.rect(ml,y,cw,10);
+  doc.setFont('helvetica','bold');doc.text('DECLARED VALUE FOR CUSTOMS (& currency): ',ml+2,y+6);
+  doc.setFont('helvetica','normal');doc.text('AUD $'+Number(d.quote&&d.quote.total?d.quote.total:0).toFixed(2),ml+90,y+6);
+  // DG row
+  y+=10;
+  doc.rect(ml,y,cw,12);
+  doc.setFont('helvetica','normal');doc.setFontSize(7);
+  var dg='Does this shipment contain Dangerous Goods?  YES / NO   If yes please specify: UN#      Class:      Pkg Group:';
+  doc.text(dg,ml+2,y+5,{maxWidth:cw-4});
+  // Signature
+  y+=16;
+  doc.setFontSize(8);doc.setFont('helvetica','bold');
+  doc.text('As the Shipper, I certify that all particulars on this SLI are correct & I have read and accepted the Standard Terms and Conditions of Contract.',ml,y,{maxWidth:cw});
+  y+=10;
+  doc.text('Signature: ___________________________',ml,y);
+  doc.text('Date: ___________________________',ml+100,y);
+  doc.text('Name (printed): Brandon Chin',ml,y+8);
+  doc.text('Email: sales@traverse-exports.com.au',ml+100,y+8);
+  return doc.output('arraybuffer');
+}
 
-  // QUOTE title
-  doc.setFontSize(22);
-  doc.setFont('helvetica','bold');
-  doc.text('QUOTE', pw - mr, 12, { align:'right' });
+function generateVanguardSLIPDF(d){
+  var {jsPDF}=window.jspdf;
+  var doc=new jsPDF('p','mm','a4');
+  var pw=210,ml=8,mt=8,mr=8;
+  var cw=pw-ml-mr;
+  // Header
+  doc.setFontSize(14);doc.setFont('helvetica','bold');doc.setTextColor(200,50,50);
+  doc.text('Seafreight Shippers Letter of Instruction',ml,mt+7);
+  doc.setFontSize(16);doc.setTextColor(50,50,120);
+  doc.text('VANGUARD',pw-mr,mt+5,{align:'right'});
   doc.setFontSize(10);
-  doc.setFont('helvetica','normal');
-  doc.text(quote.quote_number || '', pw - mr, 20, { align:'right' });
-
-  y = 36;
-
-  // Address section
-  doc.setTextColor(26,26,26);
+  doc.text('LOGISTICS',pw-mr,mt+11,{align:'right'});
+  doc.setTextColor(0,0,0);
   doc.setFontSize(7);
-  doc.setFont('helvetica','bold');
-  doc.setTextColor(100,100,100);
-  doc.text('ADDRESS', ml, y);
-  y += 4;
-  doc.setFont('helvetica','normal');
-  doc.setTextColor(26,26,26);
-  doc.setFontSize(9);
-  if(quote.client_name) { doc.text(quote.client_name, ml, y); y += 4; }
-  if(quote.client_address) {
-    var addrLines = doc.splitTextToSize(quote.client_address, cw * 0.55);
-    addrLines.forEach(function(line) { doc.text(line, ml, y); y += 4; });
+  doc.text('Unit 5C & 5B, 23 Breene Place, Morningside QLD 4170 | Phone +61 7 3909 7600 | ABN 38 082 987 773',pw/2,mt+16,{align:'center'});
+  doc.setDrawColor(200,50,50);doc.setLineWidth(0.5);doc.line(ml,mt+18,pw-mr,mt+18);
+  doc.setDrawColor(0,0,0);doc.setLineWidth(0.1);
+
+  var clientName=d.quote&&d.quote.client_name?d.quote.client_name:(d.lead.company||d.lead.name||'');
+  var clientAddr=d.quote&&d.quote.client_address?d.quote.client_address:'PO Box 521, Honiara, Solomon Islands';
+  var fobVal='AUD $'+Number(d.quote&&d.quote.total?d.quote.total:0).toFixed(2);
+
+  // Helper to draw a label+value row
+  function row(y,h,label,value,labelW,x){
+    x=x||ml;labelW=labelW||30;
+    doc.setFillColor(240,240,240);doc.rect(x,y,labelW,h,'F');
+    doc.setFont('helvetica','bold');doc.setFontSize(7);
+    doc.text(label,x+1,y+h*0.65,{maxWidth:labelW-2});
+    doc.setFont('helvetica','normal');
+    doc.text(value||'',x+labelW+1,y+h*0.65,{maxWidth:cw-labelW-2});
+    doc.rect(x,y,cw,h);
+  }
+  function halfRow(y,h,label1,val1,label2,val2){
+    var hw=cw/2;
+    doc.setFillColor(240,240,240);
+    doc.rect(ml,y,30,h,'F');doc.rect(ml+hw,y,30,h,'F');
+    doc.setFont('helvetica','bold');doc.setFontSize(7);
+    doc.text(label1,ml+1,y+h*0.65,{maxWidth:28});
+    doc.text(label2,ml+hw+1,y+h*0.65,{maxWidth:28});
+    doc.setFont('helvetica','normal');
+    doc.text(val1||'',ml+31,y+h*0.65,{maxWidth:hw-33});
+    doc.text(val2||'',ml+hw+31,y+h*0.65,{maxWidth:hw-33});
+    doc.rect(ml,y,hw,h);doc.rect(ml+hw,y,hw,h);
   }
 
-  // Date / Expiry (right side)
-  var today = new Date().toLocaleDateString('en-AU');
-  var expiry = quote.expiry_date ? new Date(quote.expiry_date).toLocaleDateString('en-AU') : '-';
-  var dateY = 36;
-  doc.setFontSize(7);
-  doc.setFont('helvetica','bold');
-  doc.setTextColor(100,100,100);
-  doc.text('DATE', pw - mr, dateY, { align:'right' });
+  var y=mt+20;var rh=7;
+  // Shipper rows
+  row(y,rh,'Shipper:','Traverse Imports and Exports',30);y+=rh;
+  row(y,rh,'','15 Riviera Road Miami  QLD 4220',30);y+=rh;
+  halfRow(y,rh,'Email Address:','admin@traverse-exports.com.au','Vanguard Booking Number:','');y+=rh;
+  halfRow(y,rh,'Phone:','0402393464','Booked by (Company Name):','Traverse Exports');y+=rh;
+  // blank ref rows
+  halfRow(y,rh,'','','Shippers Reference Number:',d.quote?d.quote.quote_number:'');y+=rh;
+  halfRow(y,rh,'','','Consignee Reference Number:','');y+=rh;
+  halfRow(y,rh,'','','Shipment Terms:','Paid in Advance');y+=rh;
+  halfRow(y,rh,'','','Quote Number:',d.quote?d.quote.quote_number:'');y+=rh;
+  // Consignee
+  row(y,rh,'Consignee:',clientName,30);y+=rh;
+  var addrParts=clientAddr.split(',');
+  addrParts.forEach(function(part,i){
+    row(y,rh,'',part.trim(),30);y+=rh;
+  });
+  halfRow(y,rh,'Email Address:',d.lead.contact||'','VLS to arrange EDN:','YES');y+=rh;
+  halfRow(y,rh,'Phone:','','Country of Origin:','Australia');y+=rh;
+  halfRow(y,rh,'Notify Party:','As above','VLS to arrange Pick Up:','NO');y+=rh;
+  halfRow(y,rh,'','','Hazardous Cargo:','NO');y+=rh;
+  halfRow(y,rh,'Email Address:','','Original HBL Required:','YES');y+=rh;
+  halfRow(y,rh,'Phone:','','VLS to obtain FCL VGM:','NO');y+=rh;
+  // Vessel row
+  halfRow(y,rh,'Vessel:','','Port of Loading:','BNE');y+=rh;
+  halfRow(y,rh,'Discharge Port:','BNE','Final Destination:','HON');y+=rh;
+  // Cargo table header
+  doc.setFillColor(230,230,230);
+  doc.rect(ml,y,cw*0.15,10,'F');doc.rect(ml+cw*0.15,y,cw*0.15,10,'F');
+  doc.rect(ml+cw*0.3,y,cw*0.35,10,'F');doc.rect(ml+cw*0.65,y,cw*0.2,10,'F');
+  doc.rect(ml+cw*0.85,y,cw*0.15,10,'F');
+  doc.setFont('helvetica','bold');doc.setFontSize(7);
+  doc.text('Marks & Numbers',ml+1,y+4,{maxWidth:cw*0.14});
+  doc.text('Number and Type of packages',ml+cw*0.15+1,y+4,{maxWidth:cw*0.14});
+  doc.text('Good Description',ml+cw*0.3+1,y+4,{maxWidth:cw*0.34});
+  doc.text('Gross Cargo Weight (KG)',ml+cw*0.65+1,y+4,{maxWidth:cw*0.19});
+  doc.text('Total CBM Measurement',ml+cw*0.85+1,y+4,{maxWidth:cw*0.14});
+  doc.rect(ml,y,cw*0.15,10);doc.rect(ml+cw*0.15,y,cw*0.15,10);
+  doc.rect(ml+cw*0.3,y,cw*0.35,10);doc.rect(ml+cw*0.65,y,cw*0.2,10);
+  doc.rect(ml+cw*0.85,y,cw*0.15,10);
+  y+=10;
+  // Cargo data rows (6 empty rows + goods description)
+  for(var i=0;i<6;i++){
+    doc.rect(ml,y,cw*0.15,8);doc.rect(ml+cw*0.15,y,cw*0.15,8);
+    doc.rect(ml+cw*0.3,y,cw*0.35,8);doc.rect(ml+cw*0.65,y,cw*0.2,8);
+    doc.rect(ml+cw*0.85,y,cw*0.15,8);
+    if(i===0){
+      doc.setFont('helvetica','normal');doc.setFontSize(7);
+      doc.text(d.goods_description||'',ml+cw*0.3+1,y+5,{maxWidth:cw*0.33});
+    }
+    y+=8;
+  }
+  // Special instructions
+  row(y,8,'Special Instructions:','',35);y+=8;
+  // Charges row
+  doc.setFillColor(230,230,230);doc.rect(ml,y,cw*0.18,6,'F');
+  doc.setFont('helvetica','bold');doc.setFontSize(7);
+  doc.text('Charges Payable by:',ml+1,y+4);
+  doc.rect(ml,y,cw,6);
+  var cx=ml+cw*0.18;
+  ['Shipper','Consignee','Other','If other, please state','Signed:'].forEach(function(t,i){
+    var w=[cw*0.1,cw*0.1,cw*0.08,cw*0.25,cw*0.29][i];
+    doc.setFont('helvetica','normal');doc.text(t,cx+1,y+4);
+    doc.rect(cx,y,w,6);cx+=w;
+  });
+  y+=6;
+  var chargeRows=[
+    ['Origin Cartage','X','',''],
+    ['Export Clearance & Doc','X','',''],
+    ['Freight','X','',''],
+    ['Destination Charges','','X',''],
+  ];
+  chargeRows.forEach(function(r){
+    doc.rect(ml,y,cw*0.18,6);doc.rect(ml+cw*0.18,y,cw*0.1,6);
+    doc.rect(ml+cw*0.28,y,cw*0.1,6);doc.rect(ml+cw*0.38,y,cw*0.08,6);
+    doc.rect(ml+cw*0.46,y,cw*0.25,6);doc.rect(ml+cw*0.71,y,cw*0.29,6);
+    doc.setFont('helvetica','normal');doc.setFontSize(7);
+    doc.text(r[0],ml+1,y+4);
+    if(r[1]) doc.text(r[1],ml+cw*0.18+3,y+4);
+    if(r[2]) doc.text(r[2],ml+cw*0.28+3,y+4);
+    y+=6;
+  });
+  // Name/date/email row
+  doc.rect(ml,y,cw*0.35,6);doc.rect(ml+cw*0.35,y,cw*0.3,6);doc.rect(ml+cw*0.65,y,cw*0.35,6);
+  doc.setFont('helvetica','bold');doc.setFontSize(7);
+  doc.text('Date:',ml+1,y+4);
+  doc.text('Name: Brandon Chin',ml+cw*0.35+1,y+4);
+  doc.text('Email Address: sales@traverse-exports.com.au',ml+cw*0.65+1,y+4,{maxWidth:cw*0.34});
+  y+=6;
+  // Delivery footer
+  doc.setFillColor(230,230,230);doc.rect(ml,y,cw/2,6,'FD');doc.rect(ml+cw/2,y,cw/2,6,'FD');
+  doc.setFont('helvetica','bold');doc.setFontSize(8);
+  doc.text('Delivery Address',ml+cw/4,y+4,{align:'center'});
+  doc.text('Delivery Instructions',ml+cw*0.75,y+4,{align:'center'});
+  y+=6;
+  doc.rect(ml,y,cw/2,20);doc.rect(ml+cw/2,y,cw/2,20);
+  doc.setFont('helvetica','bold');doc.setFontSize(7);
+  doc.text('QUBE Logistics',ml+2,y+5);
   doc.setFont('helvetica','normal');
-  doc.setFontSize(9);
-  doc.setTextColor(26,26,26);
-  doc.text(today, pw - mr, dateY + 4, { align:'right' });
+  doc.text('76 Port Drive',ml+2,y+10);
+  doc.text('Port of Brisbane QLD 4178',ml+2,y+15);
+  doc.text('Delivery Hours: Mon-Fri 6:00am - 3:00pm',ml+2,y+19);
   doc.setFontSize(7);
-  doc.setFont('helvetica','bold');
-  doc.setTextColor(100,100,100);
-  doc.text('EXPIRATION DATE', pw - mr, dateY + 10, { align:'right' });
+  doc.text('- Cargo must have shipping marks & numbers',ml+cw/2+2,y+5);
+  doc.text('- All deliveries must have a time slot booked',ml+cw/2+2,y+10);
+  doc.text('- Bookings via www.inboundconnect.com',ml+cw/2+2,y+15);
+  // Footer
+  y+=22;
+  doc.setFontSize(6);doc.setTextColor(100,100,100);
+  doc.text('vanguardlogistics.com | Unit 5C & 5B, 23 Breene Place, Morningside QLD 4170 | ABN 38 082 987 773',pw/2,y,{align:'center'});
+  return doc.output('arraybuffer');
+}
+
+function generateAirwaysSLIPDF(d){
+  var {jsPDF}=window.jspdf;
+  var doc=new jsPDF('p','mm','a4');
+  var pw=210,ml=12,mt=8,mr=12;
+  var cw=pw-ml-mr;
+
+  var clientName=d.quote&&d.quote.client_name?d.quote.client_name:(d.lead.company||d.lead.name||'');
+  var clientAddr=d.quote&&d.quote.client_address?d.quote.client_address:'PO Box 521, Honiara, Solomon Islands';
+  var fobVal='AUD $'+Number(d.quote&&d.quote.total?d.quote.total:0).toFixed(2);
+  var goodsDesc=d.goods_description||'';
+
+  // Pakfresh header
+  doc.setFontSize(9);doc.setFont('helvetica','normal');doc.setTextColor(80,80,80);
+  doc.text('5 Cyperus Street, Brisbane Airport 4008',ml,mt+4);
+  doc.text('PO Box 852, Hamilton 4007  QUEENSLAND Australia',ml,mt+8);
+  doc.text('email: bneexports@pakfresh.com.au   Ph: 61 7 3119-2571',ml,mt+12);
+  doc.setDrawColor(0,0,0);doc.setLineWidth(0.3);doc.line(ml,mt+15,pw-mr,mt+15);
+
+  // Title
+  doc.setFontSize(14);doc.setFont('helvetica','bold');doc.setTextColor(0,0,0);
+  doc.text('FORWARDING INSTRUCTION',pw/2,mt+22,{align:'center'});
+  doc.setFontSize(9);doc.setFont('helvetica','normal');
+  doc.text('Traverse Imports and Exports',ml,mt+28);
+  doc.text('ABN: 27 058 599 795',ml+80,mt+28);
+  doc.setFontSize(8);
+  doc.text('PLEASE ARRANGE FOR SHIPMENT OF THE FOLLOWING GOODS ON OUR BEHALF:',ml,mt+33);
+  doc.text('sales@traverse-exports.com.au   accounts@traverse-exports.com.au',ml+90,mt+33);
+
+  doc.line(ml,mt+35,pw-mr,mt+35);
+
+  // Two-column layout: Shipper left | Receiver right
+  var y=mt+38;var bw=cw/2-2;
+
+  // Shipper box
+  doc.setDrawColor(0,0,0);doc.rect(ml,y,bw,40);
+  doc.setFont('helvetica','bold');doc.setFontSize(8);
+  doc.text('SHIPPER',ml+2,y+5);
+  doc.setFont('helvetica','normal');doc.setFontSize(8);
+  doc.text('Traverse Imports and Exports',ml+2,y+12);
+  doc.text('26 Ern Harley Drive, Burleigh Waters',ml+2,y+18);
+  doc.text('ABN: 27 058 599 795',ml+2,y+24);
+  doc.setFont('helvetica','bold');doc.text('CONTACT: ',ml+2,y+30);
+  doc.setFont('helvetica','normal');doc.text('Brandon Chin',ml+22,y+30);
+  doc.text('Ph: 0480 239 515',ml+2,y+36);
+  doc.text('Email: sales@traverse-exports.com.au',ml+2,y+40);
+
+  // Receiver box
+  var rx=ml+bw+4;
+  doc.rect(rx,y,bw,40);
+  doc.setFont('helvetica','bold');doc.setFontSize(8);
+  doc.text('RECEIVER',rx+2,y+5);
+  doc.setFont('helvetica','normal');doc.setFontSize(8);
+  doc.text(clientName,rx+2,y+12);
+  var addrParts=clientAddr.split(',');
+  addrParts.forEach(function(part,i){
+    doc.text(part.trim(),rx+2,y+18+(i*6));
+  });
+  doc.text('Email: '+( d.lead.contact||''),rx+2,y+36);
+
+  // Final destination
+  y+=42;
+  doc.setFont('helvetica','bold');doc.setFontSize(8);
+  doc.text('FINAL DESTINATION:',ml,y+4);
   doc.setFont('helvetica','normal');
-  doc.setFontSize(9);
-  doc.setTextColor(26,26,26);
-  doc.text(expiry, pw - mr, dateY + 14, { align:'right' });
+  doc.text('Honiara, Solomon Islands',ml+40,y+4);
+  doc.line(ml,y+7,pw-mr,y+7);
 
-  y = Math.max(y, dateY + 20) + 4;
+  // Checklist items
+  y+=10;
+  var items=[
+    {label:'INDICATE:',value:'AIR FREIGHT  X'},
+    {label:'DECLARED COUNTRY OF ORIGIN:',value:'Australia'},
+    {label:'VALUE FOR CUSTOMS:',value:fobVal},
+    {label:'EXPORT CLEARANCE No:',value:'(Required for shipments over $2,000.00)'},
+    {label:'FREIGHT CHARGES:',value:'PREPAID   /   COLLECT'},
+  ];
+  items.forEach(function(item){
+    doc.setFont('helvetica','bold');doc.setFontSize(8);
+    doc.text(item.label,ml,y+4);
+    doc.setFont('helvetica','normal');
+    doc.text(item.value,ml+55,y+4);
+    y+=8;
+  });
 
-  // Divider
-  doc.setDrawColor(200,200,200);
-  doc.line(ml, y, pw - mr, y);
-  y += 6;
+  doc.line(ml,y,pw-mr,y);y+=4;
 
-  // Table header
-  var cols = [
-    { label:'ACTIVITY', x:ml, w:cw*0.2, align:'left' },
-    { label:'DESCRIPTION', x:ml+cw*0.2, w:cw*0.35, align:'left' },
-    { label:'QTY', x:ml+cw*0.55, w:cw*0.1, align:'right' },
-    { label:'RATE', x:ml+cw*0.65, w:cw*0.15, align:'right' },
-    { label:'AMOUNT', x:ml+cw*0.80, w:cw*0.2, align:'right' },
+  // Description of contents
+  doc.setFont('helvetica','bold');doc.setFontSize(8);
+  doc.text('DESCRIPTION OF CONTENTS:',ml,y+4);
+  doc.setFont('helvetica','normal');
+  var descLines=doc.splitTextToSize(goodsDesc,cw-60);
+  doc.text(descLines,ml+55,y+4);
+  y+=Math.max(descLines.length*5,8)+4;
+
+  // Pieces / Weight / Dimensions
+  doc.rect(ml,y,cw*0.25,10);doc.rect(ml+cw*0.25,y,cw*0.35,10);doc.rect(ml+cw*0.6,y,cw*0.4,10);
+  doc.setFont('helvetica','bold');doc.setFontSize(7);
+  doc.text('PIECES',ml+2,y+4);doc.text('WEIGHT',ml+cw*0.25+2,y+4);doc.text('DIMENSIONS',ml+cw*0.6+2,y+4);
+  y+=10;
+  doc.rect(ml,y,cw*0.25,12);doc.rect(ml+cw*0.25,y,cw*0.35,12);doc.rect(ml+cw*0.6,y,cw*0.4,12);
+  y+=14;
+
+  // DG question
+  doc.setFont('helvetica','bold');doc.setFontSize(8);
+  doc.text('ARE THE CONTENTS DANGEROUS GOODS?',ml,y+4);
+  doc.text('YES  /  NO',ml+80,y+4);
+  y+=10;
+  doc.setFont('helvetica','normal');doc.setFontSize(7);
+  doc.text('(Must not be in any way flammable, corrosive, packed under pressure, radioactive or have any properties which may affect movement of these goods.)',ml,y+4,{maxWidth:cw});
+  y+=10;
+
+  // Numbered items
+  var numbered=[
+    'IT IS ILLEGAL TO CONSIGN, AS CARGO, AN UNAUTHORISED EXPLOSIVE DEVICE',
+    'CONSIGNED CARGO WILL BE SUBJECT TO SECURITY AND CLEARING PROCEDURES',
+    'SPECIAL INSTRUCTIONS:',
+  ];
+  numbered.forEach(function(t,i){
+    doc.setFont('helvetica','bold');doc.setFontSize(7);
+    doc.text((i+11)+'.  '+t,ml,y+4);
+    if(i===2){doc.rect(ml,y+6,cw,10);}
+    y+=i===2?18:8;
+  });
+
+  // Declaration
+  doc.setFontSize(7);doc.setFont('helvetica','normal');
+  var decl='I / We undertake to pay all freight and other expenses on the above consignment, and hereby declare the above to be full and correct account of the contents, weight and values and certify to the accuracy of the particulars stated.';
+  var declLines=doc.splitTextToSize(decl,cw);
+  doc.text(declLines,ml,y);
+  y+=declLines.length*4+4;
+
+  // Signature line
+  doc.line(ml,y,ml+70,y);doc.line(ml+80,y,ml+130,y);
+  doc.setFontSize(8);
+  doc.text('SIGNATURE',ml,y+4);
+  doc.text('DATE',ml+80,y+4);
+  doc.text('Brandon Chin',ml+100,y+4);
+  y+=10;
+  doc.setFontSize(7);
+  doc.text('For and on behalf of the owner',ml,y);
+
+  // Page 2 - Dangerous Goods Declaration
+  doc.addPage();
+  doc.setFontSize(11);doc.setFont('helvetica','bold');
+  doc.text('Declaration for Carriage',pw/2,20,{align:'center'});
+  doc.setFontSize(8);doc.setFont('helvetica','normal');
+  doc.text('The following details are required to assist in determining whether the provisions of the Dangerous Goods',ml,28,{maxWidth:cw});
+  doc.text('Regulations and Department of Transport Regulations are applicable to the dispatch of your consignment.',ml,33,{maxWidth:cw});
+  doc.line(ml,36,pw-mr,36);
+
+  doc.setFont('helvetica','bold');
+  doc.text('Dangerous Goods Declaration',pw/2,42,{align:'center'});
+  doc.setFont('helvetica','normal');doc.setFontSize(7);
+  doc.text('I acknowledge this consignment may travel by air and make this statement for the purposes of Section 23A of the Civil Aviation Act. This consignment does not contain dangerous goods unless indicated below by completion of "check" box.',ml,48,{maxWidth:cw});
+  doc.setFont('helvetica','bold');doc.setFontSize(8);
+  doc.text('Are any of the following items included in the consignment being presented?',ml,56);
+  doc.text('Please circle Yes or No as appropriate.',ml,61);
+
+  var dgItems=[
+    'Fireworks, ammunition, sporting ammunition, fireworks or explosives',
+    'Cylinders of compressed air oxygen or liquid petroleum gas (LPG), any type of Aerosol can (eg deodorant, shaving cream, hair spray, paints etc.)',
+    'Camping stoves, Cigarettes/Pipe lighters, or Cigarette lighter refills',
+    'Nail Polish, colognes, perfumes, paint, fuel or paint thinners',
+    'Matches',
+    'Dry Ice, Specimens or Samples',
+    'Detergents, bleaches, drain or oven cleaners',
+    'Fibreglass repair kits, adhesives & puncture repair kits',
+    'Medicines containing alcohol',
+    'Any type of chemical pesticides, herbicides etc.',
+    'Camping Equipment',
+    'Diving Equipment',
+    'Machinery with internal combustion engines such as chainsaws, lawnmowers or garden trimmers',
+    'Any electrical items containing batteries',
   ];
 
-  doc.setFillColor(26,26,26);
-  doc.rect(ml, y, cw, 7, 'F');
-  doc.setTextColor(255,255,255);
-  doc.setFontSize(7.5);
-  doc.setFont('helvetica','bold');
-  cols.forEach(function(col) {
-    var tx = col.align === 'right' ? col.x + col.w : col.x + 1;
-    doc.text(col.label, tx, y + 4.8, { align: col.align });
-  });
-  y += 9;
-
-  // Table rows
-  doc.setFont('helvetica','normal');
-  doc.setFontSize(8.5);
-  var rowEven = false;
-  lineItems.forEach(function(item) {
-    var nameLines = doc.splitTextToSize(item.item_name || '', cols[0].w - 2);
-    var descLines = doc.splitTextToSize(item.description || '', cols[1].w - 2);
-    var rowH = Math.max(nameLines.length, descLines.length) * 4.5 + 3;
-    checkPage(rowH + 2);
-
-    if(rowEven) {
-      doc.setFillColor(248,248,247);
-      doc.rect(ml, y, cw, rowH, 'F');
-    }
-    rowEven = !rowEven;
-
-    doc.setTextColor(26,26,26);
-    nameLines.forEach(function(line, li) { doc.text(line, cols[0].x + 1, y + 4 + li*4.5); });
-    descLines.forEach(function(line, li) { doc.text(line, cols[1].x + 1, y + 4 + li*4.5); });
-    doc.text(Number(item.quantity||1).toFixed(0), cols[2].x + cols[2].w, y + 4, { align:'right' });
-    doc.text('A$' + Number(item.rate||0).toFixed(2), cols[3].x + cols[3].w, y + 4, { align:'right' });
-    doc.text('A$' + Number(item.amount||0).toFixed(2), cols[4].x + cols[4].w, y + 4, { align:'right' });
-
-    doc.setDrawColor(220,220,220);
-    doc.line(ml, y + rowH, pw - mr, y + rowH);
-    y += rowH;
+  var dy=66;
+  dgItems.forEach(function(item,i){
+    doc.setFont('helvetica','normal');doc.setFontSize(7);
+    doc.rect(ml,dy,6,6);
+    doc.text(String(i+1)+'.',ml+1,dy+4);
+    var lines=doc.splitTextToSize(item,cw-30);
+    doc.text(lines,ml+8,dy+4);
+    doc.setFont('helvetica','bold');
+    doc.text('YES',pw-mr-20,dy+4);
+    doc.text('NO',pw-mr-8,dy+4);
+    dy+=Math.max(lines.length*4,7)+1;
   });
 
-  y += 6;
+  dy+=4;
+  doc.line(ml,dy,pw-mr,dy);dy+=4;
+  doc.setFont('helvetica','normal');doc.setFontSize(7);
+  doc.text('This consignment does not contain any explosive or incendiary device.',ml,dy+4);
+  doc.text('I understand that this consignment will be subject to security & clearing procedures.',ml,dy+9);
+  dy+=16;
+  doc.setFont('helvetica','bold');doc.setFontSize(8);
+  doc.text('As the Shipper, are you fully aware of the contents of this consignment?',ml,dy);
+  doc.text('YES  /  NO',pw-mr-30,dy);
+  dy+=8;
+  doc.setFont('helvetica','normal');doc.setFontSize(7);
+  doc.text('Security Declaration in accordance with approved Regulated Air Cargo Agents (RACA) Transport Security Program',ml,dy,{maxWidth:cw});
+  dy+=8;
+  doc.setFont('helvetica','bold');doc.setFontSize(8);
+  doc.text("Shippers Name: Brandon Chin",ml,dy);
+  doc.text('Date: _____________',ml+100,dy);
+  dy+=8;
+  doc.text("Shippers Signature: ___________________________________",ml,dy);
 
-  // Totals
-  checkPage(30);
-  var totX = pw - mr - 65;
-  var totW = 65;
-
-  function totRow(label, val, bold) {
-    if(bold) {
-      doc.setFont('helvetica','bold');
-      doc.setFontSize(10);
-      doc.setFillColor(26,26,26);
-      doc.rect(totX - 2, y - 3, totW + 4, 8, 'F');
-      doc.setTextColor(255,255,255);
-    } else {
-      doc.setFont('helvetica','normal');
-      doc.setFontSize(9);
-      doc.setTextColor(26,26,26);
-    }
-    doc.text(label, totX, y + 2);
-    doc.text(val, pw - mr, y + 2, { align:'right' });
-    if(!bold) {
-      doc.setDrawColor(220,220,220);
-      doc.line(totX, y + 4, pw - mr, y + 4);
-    }
-    y += bold ? 7 : 6;
-    doc.setTextColor(26,26,26);
-  }
-
-  totRow('Subtotal', 'A$' + Number(quote.subtotal||0).toFixed(2), false);
-  totRow('Total GST (10%)', 'A$' + Number(quote.gst_total||0).toFixed(2), false);
-  totRow('TOTAL', 'A$' + Number(quote.total||0).toFixed(2), true);
-
-  y += 8;
-  checkPage(20);
-
-  // Bank details
-  doc.setFillColor(245,245,245);
-  doc.rect(ml, y, cw, 18, 'F');
-  doc.setFont('helvetica','bold');
-  doc.setFontSize(8.5);
-  doc.setTextColor(26,26,26);
-  doc.text('Bank Details - Westpac Bank', ml + 3, y + 5);
-  doc.setFont('helvetica','normal');
-  doc.setFontSize(8);
-  doc.text('Branch: Pacific Fair Shopping Centre, Broadbeach QLD 4218', ml + 3, y + 10);
-  doc.text('Swift Code: WPACAU2SXXX  |  BSB: 034-637  |  Account: 21-1660', ml + 3, y + 14.5);
-  y += 22;
-
-  // Thank you
-  doc.setFont('helvetica','bold');
-  doc.setFontSize(10);
-  doc.setTextColor(26,26,26);
-  doc.text('THANK YOU FOR YOUR BUSINESS!', pw/2, y, { align:'center' });
-
-  return doc.output('datauristring').split(',')[1];
+  return doc.output('arraybuffer');
 }
 
-
-async function sendQuoteToClient(){
-  if(!currentLead?.contact){toast('No client email on this lead &#8212; add one in Details first','error');return;}
-  const btn=document.getElementById('previewSendBtn');
-  btn.innerHTML='<i class="ti ti-loader"></i> Saving & sending...';btn.disabled=true;
-  // Save latest edits back to DB first
-  currentQuote.client_name=document.getElementById('eq-client-name')?.innerText||currentQuote.client_name;
-  currentQuote.client_address=document.getElementById('eq-client-addr')?.innerText||currentQuote.client_address;
-  currentQuote.expiry_date=document.getElementById('eq-expiry')?.value||currentQuote.expiry_date;
-  let sub=0,gst=0;
-  currentLineItems.forEach(item=>{const a=(item.quantity||1)*(item.rate||0);item.amount=a;sub+=a;if(item.gst_applicable)gst+=a*0.1;});
-  currentQuote.subtotal=sub;currentQuote.gst_total=gst;currentQuote.total=sub+gst;
-  await sb(`quotes?id=eq.${currentQuote.id}`,{method:'PATCH',body:JSON.stringify({client_name:currentQuote.client_name,client_address:currentQuote.client_address,expiry_date:currentQuote.expiry_date||null,subtotal:sub,gst_total:gst,total:sub+gst,status:'sent',updated_at:new Date().toISOString()})});
-  await sb(`quote_line_items?quote_id=eq.${currentQuote.id}`,{method:'DELETE'});
-  if(currentLineItems.length>0){
-    const toInsert=currentLineItems.map((item,i)=>({quote_id:currentQuote.id,item_name:item.item_name,description:item.description,quantity:item.quantity,rate:item.rate,gst_applicable:item.gst_applicable,amount:item.amount,sort_order:i}));
-    await sb('quote_line_items',{method:'POST',body:JSON.stringify(toInsert)});
-  }
-  const subject=`Quote ${currentQuote.quote_number} &#8212; Traverse Imports & Exports`;
-  const fn=(currentLead.name||'').split(' ')[0];
-  const body=`Hi ${fn},\n\nPlease find your quote ${currentQuote.quote_number} below.\n\nTotal: A$${(currentQuote.total||0).toFixed(2)}\nExpiry: ${currentQuote.expiry_date?new Date(currentQuote.expiry_date).toLocaleDateString('en-AU'):'&#8212;'}\n\nPlease review and let us know if you\'d like to proceed, or if you have any changes.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au`;
-  try{
-    btn.innerHTML='<i class="ti ti-loader"></i> Generating PDF...';
-    var pdfB64 = null;
-    try {
-      if(typeof window.jspdf !== 'undefined') {
-        pdfB64 = generateQuotePDF(currentQuote, currentLineItems);
-        if(pdfB64) console.log('PDF generated, size:', pdfB64.length);
-      } else {
-        console.warn('jsPDF not loaded, sending without PDF');
-      }
-    } catch(pdfErr) {
-      console.error('PDF generation failed:', pdfErr);
-    }
-    btn.innerHTML='<i class="ti ti-loader"></i> Sending...';
-    const emailController = new AbortController();
-    const emailTimeout = setTimeout(function(){ emailController.abort(); }, 30000);
-    const res=await fetch(EMAIL_FN,{method:'POST',signal:emailController.signal,headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify({to:currentLead.contact,subject,body,pdfBase64:pdfB64,quoteNumber:currentQuote.quote_number})});
-    clearTimeout(emailTimeout);
-    const data=await res.json();
-    if(!res.ok) throw new Error(data.error||'Send failed');
-    await sb(`leads?id=eq.${currentLead.id}`,{method:'PATCH',body:JSON.stringify({quote_status:'sent',emails_sent:(currentLead.emails_sent||0)+1,updated_at:new Date().toISOString()})});
-    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Quote sent',detail:`${currentQuote.quote_number} sent to ${currentLead.contact}`})});
-    currentQuote.status='sent';currentLead.quote_status='sent';
-    const idx=leads.findIndex(l=>l.id===currentLead.id);
-    if(idx>-1){leads[idx].quote_status='sent';leads[idx].emails_sent=(leads[idx].emails_sent||0)+1;}
-    closeModal('previewOverlay');
-    renderBoard();
-    renderQuoteReview(document.getElementById('dtab-quote'));
-    toast('Quote sent to '+currentLead.contact+' &#10003;');
-    // Auto-create Drive folder if not exists, then save PDF
-    var driveId = currentLead.drive_folder_id;
-    if(!driveId || driveId==='created') {
-      toast('Creating Drive folder...','info');
-      driveId = await createDriveFolderForLead(currentLead);
-    }
-    if(driveId && pdfB64) {
-      await saveToDrive(currentLead.id, driveId, 'Quote-'+currentQuote.quote_number+'.pdf', pdfB64, 'application/pdf');
-    }
-  }catch(e){
-    console.error('sendQuoteToClient error:', e);
-    toast('Send failed: '+e.message,'error');
-    btn.innerHTML='<i class="ti ti-send"></i> Save &amp; send to client';
-    btn.disabled=false;
-  } finally {
-    // Always re-enable button
-    if(btn.disabled) { btn.innerHTML='<i class="ti ti-send"></i> Save &amp; send to client'; btn.disabled=false; }
-  }
-}
-
-function renderQuoteReview(el){
-  const q=currentQuote;
-  const statusColors={sent:'#633806',approved:'var(--green)',invoiced:'var(--accent)',draft:'var(--text-secondary)'};
-  const statusBg={sent:'#FAEEDA',approved:'#EAF3DE',invoiced:'#E6F1FB',draft:'#f3f2f0'};
-  el.innerHTML=`
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px">
-      <div>
-        <div style="font-size:14px;font-weight:600">${q.quote_number}</div>
-        <span style="font-size:11px;padding:3px 9px;border-radius:99px;font-weight:600;background:${statusBg[q.status]||'#f3f2f0'};color:${statusColors[q.status]||'var(--text-secondary)'};text-transform:capitalize;display:inline-block;margin-top:4px">${q.status}</span>
-      </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn btn-sm" onclick="showEditableQuote()"><i class="ti ti-pencil"></i> Edit & preview</button>
-        ${q.status==='sent'||q.status==='draft'?`<button class="btn btn-amber btn-sm" onclick="reviseQuote()"><i class="ti ti-refresh"></i> Revise quote</button>`:''}
-        ${q.status==='sent'?`<button class="btn btn-green btn-sm" onclick="markQuoteApproved()"><i class="ti ti-check"></i> Client approved</button>`:''}
-        ${q.status==='approved'?`<button class="btn btn-primary btn-sm" onclick="generateQBInvoice()"><i class="ti ti-file-invoice"></i> Generate QB Invoice</button>`:''}
-      </div>
-    </div>
-    <div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:12px 16px;margin-bottom:14px">
-      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-secondary)">Client</span><span>${q.client_name||'&#8212;'}</span></div>
-      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-secondary)">Expiry</span><span>${q.expiry_date?new Date(q.expiry_date).toLocaleDateString('en-AU'):'&#8212;'}</span></div>
-      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-secondary)">Subtotal</span><span>A$${(q.subtotal||0).toFixed(2)}</span></div>
-      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-secondary)">GST</span><span>A$${(q.gst_total||0).toFixed(2)}</span></div>
-      <div style="display:flex;justify-content:space-between;font-weight:700;font-size:15px;border-top:0.5px solid var(--border-t);padding-top:8px;margin-top:6px"><span>Total</span><span style="color:var(--accent)">A$${(q.total||0).toFixed(2)}</span></div>
-    </div>
-    <table class="line-items-table">
-      <thead><tr><th>Item</th><th>Description</th><th style="text-align:right">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th><th style="text-align:center">GST</th></tr></thead>
-      <tbody>${currentLineItems.map(item=>`<tr>
-        <td>${item.item_name||''}</td>
-        <td style="color:var(--text-secondary)">${item.description||''}</td>
-        <td style="text-align:right">${(item.quantity||1).toFixed(0)}</td>
-        <td style="text-align:right;color:var(--green);font-weight:600">A$${(item.rate||0).toFixed(2)}</td>
-        <td style="text-align:right;font-weight:500">A$${(item.amount||0).toFixed(2)}</td>
-        <td style="text-align:center;font-size:12px">${item.gst_applicable?'&#10003;':'&#8212;'}</td>
-      </tr>`).join('')}</tbody>
-    </table>
-    ${q.status==='sent'?`<div style="background:#FAEEDA;border:0.5px solid #633806;border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:#633806"><i class="ti ti-clock"></i> <strong>Awaiting client approval.</strong> Click "Revise quote" if the client requests changes, or "Client approved" once confirmed.</div>`:''}
-    ${q.status==='approved'?`<div style="background:var(--green-light);border:0.5px solid var(--green);border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:var(--green)"><i class="ti ti-check"></i> <strong>Client approved.</strong> Click "Generate QB Invoice" to create the official invoice in QuickBooks once access is granted.</div>`:''}
-    ${q.status==='invoiced'?`<div style="background:var(--accent-light);border:0.5px solid var(--accent);border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:var(--accent-dark)"><i class="ti ti-check"></i> <strong>Invoiced.</strong> QB Invoice ID: ${q.qb_invoice_id||'Pending'}</div>`:''}`;
-}
-
-async function reviseQuote(){
-  // Reopen the editable quote for amendments then re-send
-  await sb(`quotes?id=eq.${currentQuote.id}`,{method:'PATCH',body:JSON.stringify({status:'draft',updated_at:new Date().toISOString()})});
-  await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Quote revised',detail:`${currentQuote.quote_number} reopened for revision`})});
-  currentQuote.status='draft';
-  const idx=leads.findIndex(l=>l.id===currentLead.id);
-  if(idx>-1) leads[idx].quote_status='draft';
-  currentLead.quote_status='draft';
-  toast('Quote reopened for revision &#8212; make your changes then send again');
-  showEditableQuote();
-  document.getElementById('previewOverlay').classList.add('open');
-}
-
-async function generateQBInvoice(){
-  toast('QuickBooks integration requires admin access &#8212; contact your accountant to grant access, then this button will generate the invoice automatically.','info');
-  await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'QB Invoice pending',detail:`Awaiting QuickBooks admin access to generate invoice for ${currentQuote.quote_number}`})});
-}
-
-/* &#9472;&#9472; EMAIL &#9472;&#9472; */
-function renderDetailEmails(){
-  const l=currentLead;
-  const fn=(l.name||'').split(' ')[0];
-  const to=l.contact||'';
-  const fromInfo=to
-    ?' &rarr; to <strong>'+to+'</strong>'
-    :'<span style="color:var(--danger)"> &mdash; add client email in Details first</span>';
-  const templates=[
-    {phase:'Phase 1',name:'Quote acknowledgement',
-     subj:l.name+' Quote Enquiry',
-     body:'Hi '+fn+',\n\nThank you for submitting a quote request with us!\n\nWe are currently checking with our suppliers and will keep you updated as soon as we receive a response.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au'},
-    {phase:'Phase 2',name:'Supplier enquiry',
-     subj:'Quote Request for '+(l.company||''),
-     body:'Hi '+fn+',\n\nI hope this email finds you well.\n\nWe have received a request from our client and would like to enquire about availability and pricing for '+(l.company||'your company')+'.\n\nCould you please provide a quote with lead times?\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au'},
-    {phase:'Phase 3',name:'Client approval & PO',
-     subj:'Purchase Order - '+(l.company||''),
-     body:'Hi '+fn+',\n\nThank you for your patience.\n\nThe quote has been approved and we would like to proceed with the attached purchase order.\n\nIf you could keep us updated on lead times and delivery that would be greatly appreciated.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au'},
-    {phase:'Phase 4',name:'Freight documentation',
-     subj:'Freight Documentation - '+(l.company||'')+' cargo',
-     body:'Hi '+fn+',\n\nPlease see attached documentation for the cargo we will be dropping off. We will provide a hard copy once dropped off.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au'},
-  ];
-  var header='<div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:9px 13px;margin-bottom:14px;font-size:12px;display:flex;align-items:center;gap:8px;border:0.5px solid var(--border-t)">'
-    +'<i class="ti ti-send" style="color:var(--purple)"></i> From <strong>sales@traverse-exports.com.au</strong>'+fromInfo+'</div>';
-  var rows=templates.map(function(t,i){
-    return '<div class="email-template">'
-      +'<div class="email-phase">'+t.phase+'</div>'
-      +'<div class="email-subject-line">'+t.subj+'</div>'
-      +'<div class="email-body" id="ebody-'+i+'" contenteditable="true">'+t.body+'</div>'
-      +'<div class="email-actions">'
-      +'<button class="btn btn-sm" onclick="copyEmailBody('+i+')"><i class="ti ti-copy"></i> Copy</button>'
-      +'<button class="btn btn-send btn-sm" id="sendBtn-'+i+'" onclick="sendFromTemplate('+i+',this.dataset.subj,this.dataset.name)" data-subj="'+t.subj.replace(/"/g,'&quot;')+'" data-name="'+t.name+'"><i class="ti ti-send"></i> Send</button>'
-      +'<span class="send-status" id="sendStatus-'+i+'"></span>'
-      +'</div></div>';
-  }).join('');
-  document.getElementById('dtab-emails').innerHTML=header+rows;
-}
-
-async function sendEmailViaFunction(to,subject,body,templateName,leadId){
-  const lid=leadId||currentLead?.id;
-  if(!to){toast('No client email on this lead','error');return false;}
-  toast('Sending...','sending');
-  try{
-    const res=await fetch(EMAIL_FN,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify({to,subject,body})});
-    const data=await res.json();
-    if(!res.ok) throw new Error(data.error||'Send failed');
-    if(lid) await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:lid,action:'Email sent',detail:`${templateName} &#8594; ${to}`})});
-    if(currentLead&&lid===currentLead.id){
-      const emailsSent=(currentLead.emails_sent||0)+1;
-      await sb(`leads?id=eq.${currentLead.id}`,{method:'PATCH',body:JSON.stringify({emails_sent:emailsSent,updated_at:new Date().toISOString()})});
-      currentLead.emails_sent=emailsSent;
-      const idx=leads.findIndex(l=>l.id===currentLead.id);
-      if(idx>-1) leads[idx].emails_sent=emailsSent;
-    }
-    setStatus('emailDot','emailLabel',true,'Email &#10003;');
-    document.getElementById('toast').classList.remove('show');
-    toast(`Email sent to ${to} &#10003;`);
-    renderBoard();
-    if(lid===currentLead?.id) await renderDetailActivity();
-    return true;
-  }catch(e){
-    setStatus('emailDot','emailLabel',false,'Email error');
-    document.getElementById('toast').classList.remove('show');
-    toast('Send failed: '+e.message,'error');
-    return false;
-  }
-}
-
-async function sendFromTemplate(i,subjectArg,nameArg){
-  var btn=document.getElementById('sendBtn-'+i);
-  var subject=subjectArg||btn.dataset.subj||'';
-  var name=nameArg||btn.dataset.name||'';
-  var body=document.getElementById('ebody-'+i).innerText;
-  var status=document.getElementById('sendStatus-'+i);
-  btn.disabled=true;btn.innerHTML='<i class="ti ti-loader"></i> Sending...';
-  var ok=await sendEmailViaFunction(currentLead?currentLead.contact:null,subject,body,name);
-  if(ok){
-    btn.innerHTML='<i class="ti ti-check"></i> Sent';
-    status.textContent='Sent '+new Date().toLocaleTimeString();
-    setTimeout(function(){btn.innerHTML='<i class="ti ti-send"></i> Send';btn.disabled=false;status.textContent='';},4000);
-  } else {
-    btn.innerHTML='<i class="ti ti-send"></i> Send';btn.disabled=false;
-  }
-}
-function copyEmailBody(i){navigator.clipboard?.writeText(document.getElementById('ebody-'+i).innerText);toast('Copied &#10003;');}
-
-/* &#9472;&#9472; DRIVE &#9472;&#9472; */
-async function createDriveFolderForLead(lead){
-  toast('Creating Drive folder...','info');
-  try{
-    var parts=[];
-    if(lead.name) parts.push(lead.name);
-    if(lead.company) parts.push(lead.company);
-    if(!parts.length) parts.push(lead.doc_code||('Lead-'+new Date().toISOString().slice(0,10)));
-    var folderName=parts.join(' - ');
-    var data=await callDriveAPI('create_folder',{folderName:folderName,leadId:lead.id});
-    if(!data.success) throw new Error(data.error||'Folder creation failed');
-    var folderId=data.folderId||'created';
-    var idx=leads.findIndex(function(l){return l.id===lead.id;});
-    if(idx>-1) leads[idx].drive_folder_id=folderId;
-    if(currentLead&&currentLead.id===lead.id) currentLead.drive_folder_id=folderId;
-    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:lead.id,action:'Drive folder created',detail:folderName})});
-    setStatus('driveDot','driveLabel',true,'Drive &#10003;');
-    toast('Drive folder + subfolders created &#10003;');
-    renderBoard();
-    return folderId;
-  }catch(e){
-    setStatus('driveDot','driveLabel',false,'Drive error');
-    toast('Drive error: '+e.message,'error');
-    return null;
-  }
-}
-
-async function createFolderFromDetail(){
-  if(!currentLead) return;
-  await createDriveFolderForLead(currentLead);await renderDetailInfo();
-}
-
-async function renderDriveView(){
-  const el=document.getElementById('driveView');
-  el.innerHTML=`<div class="empty-state"><i class="ti ti-loader"></i> Loading...</div>`;
-  const withDrive=leads.filter(l=>l.drive_folder_id);
-  const withoutDrive=leads.filter(l=>!l.drive_folder_id);
-  let html='';
-  if(withDrive.length>0){
-    html+=`<div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:8px">Linked folders (${withDrive.length})</div>`;
-    html+=withDrive.map(l=>`<div class="drive-lead-card" style="cursor:pointer" onclick="openDetail('${l.id}')">
-      <i class="ti ti-folder" style="font-size:22px;color:var(--amber)"></i>
-      <div style="flex:1"><div style="font-size:13px;font-weight:600">${l.doc_code||l.name}</div>
-      <div style="font-size:12px;color:var(--text-secondary)">${l.company||''} &#183; ${l.project||''}</div></div>
-      <span style="font-size:11px;color:var(--green)"><i class="ti ti-check"></i> Linked</span>
-    </div>`).join('');
-  }
-  if(withoutDrive.length>0){
-    html+=`<div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin:16px 0 8px">No folder yet (${withoutDrive.length})</div>`;
-    html+=withoutDrive.map(l=>`<div class="drive-lead-card">
-      <i class="ti ti-folder" style="font-size:22px;color:var(--text-tertiary)"></i>
-      <div style="flex:1"><div style="font-size:13px;font-weight:600">${l.name}</div>
-      <div style="font-size:12px;color:var(--text-secondary)">${l.company||''}</div></div>
-      <button class="btn btn-green btn-sm" onclick="event.stopPropagation();quickCreateFolder('${l.id}')"><i class="ti ti-brand-google-drive"></i> Create</button>
-    </div>`).join('');
-  }
-  if(leads.length===0) html=`<div class="empty-state">No leads yet.</div>`;
-  el.innerHTML=html;
-}
-
-async function quickCreateFolder(id){const lead=leads.find(l=>l.id===id);if(lead){await createDriveFolderForLead(lead);renderDriveView();}}
-
-function renderDetailFiles(){
-  const l=currentLead;
-  document.getElementById('dtab-files').innerHTML=`
-    <div style="background:var(--bg-secondary);border:0.5px solid var(--border-t);border-radius:var(--radius-md);padding:12px 14px;margin-bottom:12px;display:flex;align-items:center;gap:12px">
-      <i class="ti ti-folder" style="font-size:28px;color:var(--amber)"></i>
-      <div style="flex:1">
-        <div style="font-size:13px;font-weight:600;margin-bottom:2px">${l.doc_code||l.name}</div>
-        <div style="font-size:11px;font-family:monospace;color:var(--text-secondary)">/Traverse CRM / ${l.client||l.company||'Client'} / ${l.project||'Project'} /</div>
-        <div style="font-size:11px;color:var(--text-tertiary);margin-top:3px">Quotes &#183; Invoices &#183; Purchase Orders &#183; Freight Docs &#183; Receipts</div>
-      </div>
-      ${l.drive_folder_id?`<span style="font-size:12px;color:var(--green)"><i class="ti ti-check"></i> Linked</span>`:''}
-    </div>
-    ${!l.drive_folder_id
-      ?`<div style="text-align:center;padding:20px"><button class="btn btn-green" onclick="createFolderFromDetail()"><i class="ti ti-brand-google-drive"></i> Create Drive folder now</button></div>`
-      :`<a href="https://drive.google.com" target="_blank" class="btn btn-green btn-sm"><i class="ti ti-brand-google-drive"></i> Open Google Drive</a>`}`;
-}
-
-/* &#9472;&#9472; ACTIVITY &#9472;&#9472; */
-async function renderDetailActivity(){
-  document.getElementById('dtab-activity').innerHTML=`<div class="empty-state">Loading...</div>`;
-  try{
-    const res=await sb(`activity_log?lead_id=eq.${currentLead.id}&order=created_at.desc&select=*`);
-    const rows=await res.json();
-    const cfg={
-      'Lead created':{cls:'',icon:'ti-plus'},
-      'Email sent':{cls:'email-i',icon:'ti-mail'},
-      'Phase changed':{cls:'',icon:'ti-arrows-exchange'},
-      'Drive folder created':{cls:'drive-i',icon:'ti-brand-google-drive'},
-      'Document scanned':{cls:'quote-i',icon:'ti-scan'},
-      'Quote sent':{cls:'quote-i',icon:'ti-file-invoice'},
-      'Quote approved':{cls:'drive-i',icon:'ti-check'},
-      'QB Invoice pending':{cls:'quote-i',icon:'ti-file-invoice'},
-    };
-    document.getElementById('dtab-activity').innerHTML=rows.length===0
-      ?`<div class="empty-state">No activity yet</div>`
-      :rows.map(r=>{const c=cfg[r.action]||{cls:'',icon:'ti-point'};return `<div class="activity-item">
-        <div class="act-icon ${c.cls}"><i class="ti ${c.icon}"></i></div>
-        <div style="flex:1"><div style="font-size:13px">${r.action}${r.detail?' &#8212; '+r.detail:''}</div>
-        <div style="font-size:11px;color:var(--text-tertiary)">${(r.created_at||'').slice(0,16).replace('T',' ')} UTC</div></div>
-      </div>`;}).join('');
-  }catch(e){document.getElementById('dtab-activity').innerHTML=`<div class="empty-state" style="color:var(--danger)">Could not load activity</div>`;}
-}
-
-/* &#9472;&#9472; PHASE UPDATE &#9472;&#9472; */
-async function updatePhase(){
-  if(!currentLead) return;
-  const newPhase=parseInt(document.getElementById('detailPhaseSelect').value);
-  if(newPhase===currentLead.phase) return;
-  const old=currentLead.phase;
-  try{
-    await sb(`leads?id=eq.${currentLead.id}`,{method:'PATCH',body:JSON.stringify({phase:newPhase,updated_at:new Date().toISOString()})});
-    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Phase changed',detail:`Phase ${old+1} &#8594; Phase ${newPhase+1}`})});
-    currentLead.phase=newPhase;
-    const idx=leads.findIndex(l=>l.id===currentLead.id);
-    if(idx>-1) leads[idx].phase=newPhase;
-    renderBoard();toast('Phase updated &#10003;');
-  }catch(e){toast('Update failed','error');}
-}
-
-async function deleteLead(id){
-  if(!confirm('Delete this lead? This cannot be undone.')) return;
-  try{await sb(`leads?id=eq.${id}`,{method:'DELETE'});closeModal('detailOverlay');await loadLeads();toast('Lead deleted');}
-  catch(e){toast('Delete failed','error');}
-}
-
-/* &#9472;&#9472; DETAIL TABS &#9472;&#9472; */
-function switchDetailTab(tab,el){
-  document.querySelectorAll('.detail-tab').forEach(t=>t.classList.remove('active'));
-  document.querySelectorAll('.detail-section').forEach(s=>s.classList.remove('active'));
-  el.classList.add('active');
-  document.getElementById('dtab-'+tab).classList.add('active');
-  if(tab==='activity') renderDetailActivity();
-  if(tab==='files') renderDetailFiles();
-  if(tab==='quote') renderQuoteTab().catch(function(e){console.error('Quote tab error:',e);});
-}
-
-/* &#9472;&#9472; REPORTS &#9472;&#9472; */
-function escHtml(s){
-  return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-function renderReports(){
-  const now = new Date();
-  const thisMonth = now.getMonth();
-  const thisYear = now.getFullYear();
-
-  // Helper: parse invoice_date
-  function invDate(l){ return l.invoice_date ? new Date(l.invoice_date) : new Date(l.created_at); }
-  function fmtMoney(n){ return 'A$'+Number(n||0).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2}); }
-  function sameMonth(d,m,y){ return d.getFullYear()===y && d.getMonth()===m; }
-
-  const invoiced = leads.filter(l=>l.invoice_total>0||l.phase===5);
-  const thisMonthLeads = invoiced.filter(l=>sameMonth(invDate(l),thisMonth,thisYear));
-  const paidThisMonth = thisMonthLeads.filter(l=>l.invoice_paid!==false).reduce((s,l)=>s+(l.invoice_total||0),0);
-  const pendingThisMonth = thisMonthLeads.filter(l=>l.invoice_paid===false).reduce((s,l)=>s+(l.invoice_total||0),0);
-  const wholesaleMonth = thisMonthLeads.filter(l=>l.lead_type!=='project').reduce((s,l)=>s+(l.invoice_total||0),0);
-  const projectMonth = thisMonthLeads.filter(l=>l.lead_type==='project').reduce((s,l)=>s+(l.invoice_total||0),0);
-
-  // Monthly target from localStorage or default
-  var monthlyTarget = parseFloat(localStorage.getItem('monthly_target')||'100000');
-  var totalMonth = paidThisMonth + pendingThisMonth;
-  var targetPct = Math.min(Math.round((paidThisMonth/monthlyTarget)*100),100);
-
-  // Previous 3 years same month
-  var prevYears = [thisYear-1, thisYear-2, thisYear-3].map(function(yr){
-    var total = invoiced.filter(l=>sameMonth(invDate(l),thisMonth,yr)).reduce(function(s,l){return s+(l.invoice_total||0);},0);
-    return {year:yr, total:total};
-  });
-
-  // Build HTML
-  var monthName = now.toLocaleString('default',{month:'long'});
-
-  document.getElementById('view-reports').innerHTML = `
-  <div style="max-width:1100px;margin:0 auto;padding:24px">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:12px">
-      <h2 style="font-size:18px;font-weight:700;margin:0">Financial Reports</h2>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <button class="btn" onclick="exportReportCSV()" style="font-size:12px"><i class="ti ti-download"></i> Export CSV</button>
-      </div>
-    </div>
-
-    <!-- Dashboard Row 1: Paid / Pending / Target -->
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:16px">
-      <div class="metric" style="border-color:var(--green)">
-        <div class="metric-label" style="color:var(--green)">Paid This Month</div>
-        <div class="metric-val" style="color:var(--green)">${fmtMoney(paidThisMonth)}</div>
-        <div class="metric-sub">${monthName} ${thisYear}</div>
-      </div>
-      <div class="metric" style="border-color:var(--amber)">
-        <div class="metric-label" style="color:#b45309">Pending This Month</div>
-        <div class="metric-val" style="color:#b45309">${fmtMoney(pendingThisMonth)}</div>
-        <div class="metric-sub">${thisMonthLeads.filter(l=>l.invoice_paid===false).length} invoice(s)</div>
-      </div>
-      <div class="metric" style="border-color:var(--purple)">
-        <div class="metric-label" style="color:var(--purple)">Monthly Target</div>
-        <div style="display:flex;align-items:center;gap:8px;margin:6px 0">
-          <input type="number" value="${monthlyTarget}" onchange="localStorage.setItem('monthly_target',this.value);renderReports()" style="width:130px;font-size:16px;font-weight:700;border:1px solid var(--border-t);border-radius:6px;padding:4px 8px;color:var(--purple)">
-        </div>
-        <div style="background:var(--border-t);border-radius:99px;height:8px;margin-top:4px">
-          <div style="background:${targetPct>=100?'var(--green)':'var(--purple)'};height:8px;border-radius:99px;width:${targetPct}%;transition:width 0.5s"></div>
-        </div>
-        <div class="metric-sub" style="margin-top:4px">${targetPct}% of target hit (paid)</div>
-      </div>
-    </div>
-
-    <!-- Dashboard Row 2: Wholesale vs Project -->
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:16px">
-      <div class="metric">
-        <div class="metric-label" style="margin-bottom:10px">W vs P &mdash; This Month</div>
-        ${(function(){
-          var max=Math.max(wholesaleMonth,projectMonth,1);
-          return '<div style="display:flex;gap:12px;align-items:flex-end;height:80px">'
-            +[{l:'Wholesale',v:wholesaleMonth,c:'#b45309'},{l:'Project',v:projectMonth,c:'var(--purple)'}].map(function(t){
-              return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;height:100%;justify-content:flex-end">'
-                +'<div style="font-size:12px;font-weight:700;color:'+t.c+'">'+fmtMoney(t.v)+'</div>'
-                +'<div style="width:100%;background:'+t.c+'20;border-radius:4px 4px 0 0;height:'+Math.max(Math.round((t.v/max)*55),3)+'px;border-top:2px solid '+t.c+'"></div>'
-                +'<div style="font-size:11px;color:'+t.c+'">'+t.l+'</div></div>';
-            }).join('')+'</div>';
-        })()}
-      </div>
-      <div class="metric">
-        <div class="metric-label" style="margin-bottom:10px">W vs P &mdash; This Quarter</div>
-        ${(function(){
-          var qStart=new Date(now.getFullYear(),Math.floor(now.getMonth()/3)*3,1);
-          var wQ=invoiced.filter(function(l){return invDate(l)>=qStart&&l.lead_type!=='project';}).reduce(function(s,l){return s+(l.invoice_total||0);},0);
-          var pQ=invoiced.filter(function(l){return invDate(l)>=qStart&&l.lead_type==='project';}).reduce(function(s,l){return s+(l.invoice_total||0);},0);
-          var max=Math.max(wQ,pQ,1);
-          return '<div style="display:flex;gap:12px;align-items:flex-end;height:80px">'
-            +[{l:'Wholesale',v:wQ,c:'#b45309'},{l:'Project',v:pQ,c:'var(--purple)'}].map(function(t){
-              return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;height:100%;justify-content:flex-end">'
-                +'<div style="font-size:12px;font-weight:700;color:'+t.c+'">'+fmtMoney(t.v)+'</div>'
-                +'<div style="width:100%;background:'+t.c+'20;border-radius:4px 4px 0 0;height:'+Math.max(Math.round((t.v/max)*55),3)+'px;border-top:2px solid '+t.c+'"></div>'
-                +'<div style="font-size:11px;color:'+t.c+'">'+t.l+'</div></div>';
-            }).join('')+'</div>';
-        })()}
-      </div>
-      <div class="metric">
-        <div class="metric-label" style="margin-bottom:10px">W vs P &mdash; FY YTD (Jul-Jun)</div>
-        ${(function(){
-          var fyStart=new Date(now.getMonth()>=6?now.getFullYear():now.getFullYear()-1,6,1);
-          var wY=invoiced.filter(function(l){return invDate(l)>=fyStart&&l.lead_type!=='project';}).reduce(function(s,l){return s+(l.invoice_total||0);},0);
-          var pY=invoiced.filter(function(l){return invDate(l)>=fyStart&&l.lead_type==='project';}).reduce(function(s,l){return s+(l.invoice_total||0);},0);
-          var max=Math.max(wY,pY,1);
-          return '<div style="display:flex;gap:12px;align-items:flex-end;height:80px">'
-            +[{l:'Wholesale',v:wY,c:'#b45309'},{l:'Project',v:pY,c:'var(--purple)'}].map(function(t){
-              return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;height:100%;justify-content:flex-end">'
-                +'<div style="font-size:12px;font-weight:700;color:'+t.c+'">'+fmtMoney(t.v)+'</div>'
-                +'<div style="width:100%;background:'+t.c+'20;border-radius:4px 4px 0 0;height:'+Math.max(Math.round((t.v/max)*55),3)+'px;border-top:2px solid '+t.c+'"></div>'
-                +'<div style="font-size:11px;color:'+t.c+'">'+t.l+'</div></div>';
-            }).join('')+'</div>';
-        })()}
-      </div>
-    </div>
-
-    <!-- Dashboard Row 3: Wholesale Breakdown -->
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:20px">
-      <div class="metric">
-        <div class="metric-label" style="margin-bottom:10px">Wholesale &mdash; This Month</div>
-        ${(function(){
-          function wsFilter(l){return l.lead_type!=='project'&&l.invoice_total>0;}
-          var shops=[
-            {l:'Pt Cruz',fn:function(l){return wsFilter(l)&&(l.name||'').toLowerCase().includes('point cruz');},c:'#0369a1'},
-            {l:'Henderson',fn:function(l){return wsFilter(l)&&(l.name||'').toLowerCase().includes('henderson');},c:'#0f766e'},
-            {l:'Ranadi',fn:function(l){return wsFilter(l)&&(l.name||'').toLowerCase().includes('ranadi');},c:'#7c3aed'}
-          ];
-          var totals=shops.map(function(s){return {l:s.l,c:s.c,v:invoiced.filter(function(l){return s.fn(l)&&sameMonth(invDate(l),thisMonth,thisYear);}).reduce(function(sum,l){return sum+(l.invoice_total||0);},0)};});
-          var max=Math.max.apply(null,totals.map(function(t){return t.v;}).concat([1]));
-          return '<div style="display:flex;gap:10px;align-items:flex-end;height:80px">'
-            +totals.map(function(t){
-              return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;height:100%;justify-content:flex-end">'
-                +'<div style="font-size:11px;font-weight:700;color:'+t.c+'">'+fmtMoney(t.v)+'</div>'
-                +'<div style="width:100%;background:'+t.c+'20;border-radius:4px 4px 0 0;height:'+Math.max(Math.round((t.v/max)*55),3)+'px;border-top:2px solid '+t.c+'"></div>'
-                +'<div style="font-size:10px;color:'+t.c+'">'+t.l+'</div></div>';
-            }).join('')+'</div>';
-        })()}
-      </div>
-      <div class="metric">
-        <div class="metric-label" style="margin-bottom:10px">Wholesale &mdash; This Quarter</div>
-        ${(function(){
-          var qStart=new Date(now.getFullYear(),Math.floor(now.getMonth()/3)*3,1);
-          function wsFilter(l){return l.lead_type!=='project'&&l.invoice_total>0;}
-          var shops=[
-            {l:'Pt Cruz',fn:function(l){return wsFilter(l)&&(l.name||'').toLowerCase().includes('point cruz');},c:'#0369a1'},
-            {l:'Henderson',fn:function(l){return wsFilter(l)&&(l.name||'').toLowerCase().includes('henderson');},c:'#0f766e'},
-            {l:'Ranadi',fn:function(l){return wsFilter(l)&&(l.name||'').toLowerCase().includes('ranadi');},c:'#7c3aed'}
-          ];
-          var totals=shops.map(function(s){return {l:s.l,c:s.c,v:invoiced.filter(function(l){return s.fn(l)&&invDate(l)>=qStart;}).reduce(function(sum,l){return sum+(l.invoice_total||0);},0)};});
-          var max=Math.max.apply(null,totals.map(function(t){return t.v;}).concat([1]));
-          return '<div style="display:flex;gap:10px;align-items:flex-end;height:80px">'
-            +totals.map(function(t){
-              return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;height:100%;justify-content:flex-end">'
-                +'<div style="font-size:11px;font-weight:700;color:'+t.c+'">'+fmtMoney(t.v)+'</div>'
-                +'<div style="width:100%;background:'+t.c+'20;border-radius:4px 4px 0 0;height:'+Math.max(Math.round((t.v/max)*55),3)+'px;border-top:2px solid '+t.c+'"></div>'
-                +'<div style="font-size:10px;color:'+t.c+'">'+t.l+'</div></div>';
-            }).join('')+'</div>';
-        })()}
-      </div>
-      <div class="metric">
-        <div class="metric-label" style="margin-bottom:10px">Wholesale &mdash; FY YTD (Jul-Jun)</div>
-        ${(function(){
-          var fyStart=new Date(now.getMonth()>=6?now.getFullYear():now.getFullYear()-1,6,1);
-          function wsFilter(l){return l.lead_type!=='project'&&l.invoice_total>0;}
-          var shops=[
-            {l:'Pt Cruz',fn:function(l){return wsFilter(l)&&(l.name||'').toLowerCase().includes('point cruz');},c:'#0369a1'},
-            {l:'Henderson',fn:function(l){return wsFilter(l)&&(l.name||'').toLowerCase().includes('henderson');},c:'#0f766e'},
-            {l:'Ranadi',fn:function(l){return wsFilter(l)&&(l.name||'').toLowerCase().includes('ranadi');},c:'#7c3aed'}
-          ];
-          var totals=shops.map(function(s){return {l:s.l,c:s.c,v:invoiced.filter(function(l){return s.fn(l)&&invDate(l)>=fyStart;}).reduce(function(sum,l){return sum+(l.invoice_total||0);},0)};});
-          var max=Math.max.apply(null,totals.map(function(t){return t.v;}).concat([1]));
-          return '<div style="display:flex;gap:10px;align-items:flex-end;height:80px">'
-            +totals.map(function(t){
-              return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;height:100%;justify-content:flex-end">'
-                +'<div style="font-size:11px;font-weight:700;color:'+t.c+'">'+fmtMoney(t.v)+'</div>'
-                +'<div style="width:100%;background:'+t.c+'20;border-radius:4px 4px 0 0;height:'+Math.max(Math.round((t.v/max)*55),3)+'px;border-top:2px solid '+t.c+'"></div>'
-                +'<div style="font-size:10px;color:'+t.c+'">'+t.l+'</div></div>';
-            }).join('')+'</div>';
-        })()}
-      </div>
-    </div>
-
-    <!-- Same Month Previous 3 Years -->
-    <div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:16px;margin-bottom:20px;border:1px solid var(--border-t)">
-      <div style="font-size:13px;font-weight:700;margin-bottom:12px">${monthName} &#8212; Previous 3 Years Comparison</div>
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
-        ${prevYears.map(function(py){
-          return '<div style="text-align:center;padding:12px;background:var(--bg-primary);border-radius:var(--radius-sm);border:1px solid var(--border-t)">'
-            +'<div style="font-size:11px;color:var(--text-secondary);margin-bottom:4px">'+monthName+' '+py.year+'</div>'
-            +'<div style="font-size:16px;font-weight:700;color:var(--text-primary)">'+fmtMoney(py.total)+'</div>'
-            +(py.total===0?'<div style="font-size:10px;color:var(--text-secondary);margin-top:2px">No data</div>':'')
-            +'</div>';
-        }).join('')}
-      </div>
-    </div>
-
-    <!-- Filters -->
-    <div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:16px;margin-bottom:16px;border:1px solid var(--border-t)">
-      <div style="font-size:13px;font-weight:700;margin-bottom:12px"><i class="ti ti-filter"></i> Filter Invoices</div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
-        <div>
-          <div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px">Client / Company</div>
-          <input class="form-input" id="rpt-client" placeholder="Search client..." style="width:180px;font-size:12px" oninput="renderReportTable()">
-        </div>
-        <div>
-          <div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px">Project Name</div>
-          <input class="form-input" id="rpt-project" placeholder="Search project..." style="width:180px;font-size:12px" oninput="renderReportTable()">
-        </div>
-        <div>
-          <div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px">Type</div>
-          <select class="form-input" id="rpt-type" style="width:120px;font-size:12px" onchange="renderReportTable()">
-            <option value="">All types</option>
-            <option value="project">Project</option>
-            <option value="wholesale">Wholesale</option>
-          </select>
-        </div>
-        <div>
-          <div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px">From Date</div>
-          <input class="form-input" id="rpt-from" type="date" style="width:140px;font-size:12px" onchange="renderReportTable()">
-        </div>
-        <div>
-          <div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px">To Date</div>
-          <input class="form-input" id="rpt-to" type="date" style="width:140px;font-size:12px" onchange="renderReportTable()">
-        </div>
-        <div>
-          <div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px">Status</div>
-          <select class="form-input" id="rpt-paid" style="width:120px;font-size:12px" onchange="renderReportTable()">
-            <option value="">All</option>
-            <option value="paid">Paid</option>
-            <option value="pending">Pending</option>
-          </select>
-        </div>
-        <button class="btn" onclick="document.getElementById('rpt-client').value='';document.getElementById('rpt-project').value='';document.getElementById('rpt-type').value='';document.getElementById('rpt-from').value='';document.getElementById('rpt-to').value='';document.getElementById('rpt-paid').value='';renderReportTable()" style="font-size:12px">Clear</button>
-      </div>
-    </div>
-
-    <!-- Totals Summary -->
-    <div id="rpt-summary" style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap"></div>
-
-    <!-- Table -->
-    <div style="overflow-x:auto;border-radius:var(--radius-md);border:1px solid var(--border-t)">
-      <table style="width:100%;border-collapse:collapse;font-size:12px" id="rpt-table">
-        <thead>
-          <tr style="background:var(--bg-secondary)">
-            <th style="padding:10px 12px;text-align:left;font-weight:700;white-space:nowrap">Date</th>
-            <th style="padding:10px 12px;text-align:left;font-weight:700">Client / Name</th>
-            <th style="padding:10px 12px;text-align:left;font-weight:700">Project</th>
-            <th style="padding:10px 12px;text-align:left;font-weight:700">Type</th>
-            <th style="padding:10px 12px;text-align:right;font-weight:700">Amount</th>
-            <th style="padding:10px 12px;text-align:center;font-weight:700">Status</th>
-          </tr>
-        </thead>
-        <tbody id="rpt-tbody"></tbody>
-      </table>
-    </div>
-  </div>`;
-
-  renderReportTable();
-}
 
 function renderReportTable(){
   function invDate(l){ return l.invoice_date ? new Date(l.invoice_date) : new Date(l.created_at); }

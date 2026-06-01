@@ -373,6 +373,34 @@ const SB_URL='https://dwmpunbcwrprhhzwduyx.supabase.co';
 var DRIVE_API_URL='https://dwmpunbcwrprhhzwduyx.supabase.co/functions/v1/drive-api';
 var GOOGLE_AUTH_URL='https://dwmpunbcwrprhhzwduyx.supabase.co/functions/v1/google-auth';
 var FREIGHT_DOCS_URL='https://dwmpunbcwrprhhzwduyx.supabase.co/functions/v1/generate-freight-docs';
+var FREIGHT_CARRIERS={
+  sea:[
+    {id:'kalgin',name:'Kalgin'},
+    {id:'pac',name:'PAC'},
+    {id:'vanguard',name:'Vanguard'}
+  ],
+  air:[
+    {id:'airways',name:'Airways'}
+  ]
+};
+function renderCarrierDropdownHTML(freightType,selectedCarrier){
+  var carriers=FREIGHT_CARRIERS[freightType]||[];
+  if(!carriers.length) return '';
+  var opts=carriers.map(function(c){return '<option value="'+c.id+'"'+(selectedCarrier===c.id?' selected':'')+'>'+c.name+'</option>';}).join('');
+  return '<select class="form-input" id="freight-carrier-sel" style="margin-bottom:10px" onchange="saveFreightCarrier(this.value)"><option value="">-- Select carrier --</option>'+opts+'</select>';
+}
+function renderCarrierDropdown(freightType){
+  var wrap=document.getElementById('carrier-dd-wrap');
+  if(wrap) wrap.innerHTML=renderCarrierDropdownHTML(freightType,'');
+}
+async function saveFreightCarrier(val){
+  if(!currentLead||!val) return;
+  await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({freight_carrier:val,updated_at:new Date().toISOString()})});
+  currentLead.freight_carrier=val;
+  var name='';
+  Object.values(FREIGHT_CARRIERS).forEach(function(arr){arr.forEach(function(c){if(c.id===val)name=c.name;});});
+  toast('Carrier saved: '+name);
+}
 var QB_API_URL='https://dwmpunbcwrprhhzwduyx.supabase.co/functions/v1/quickbooks-api';
 var qbCustomers=[];
 function connectQB(){window.open('https://dwmpunbcwrprhhzwduyx.supabase.co/functions/v1/quickbooks-auth?action=connect','_blank','width=600,height=700');}

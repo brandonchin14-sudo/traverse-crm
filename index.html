@@ -2192,42 +2192,58 @@ async function generateFreightDocsFromForm(){
   if(!currentLead){toast('No lead selected','error');return;}
   if(!currentLead.freight_carrier){toast('Please select a carrier first','error');return;}
 
-  var btn=event.target.closest('button');
+  // Get button safely
+  var btn=null;
+  try{btn=event&&event.target?event.target.closest('button'):null;}catch(e){}
   if(btn){btn.disabled=true;btn.innerHTML='<i class="ti ti-loader"></i> Loading...';}
 
   try{
-    // Read SLI form values
+    // Read SLI form values from freight tab
     var fd={
-      goods_description:document.getElementById('sli-goods')?.value||'',
-      pieces:document.getElementById('sli-pieces')?.value||'',
-      weight:document.getElementById('sli-weight')?.value||'',
-      dimensions:document.getElementById('sli-dims')?.value||'',
-      marks:document.getElementById('sli-marks')?.value||''
+      goods_description:(document.getElementById('sli-goods')&&document.getElementById('sli-goods').value)||'',
+      pieces:(document.getElementById('sli-pieces')&&document.getElementById('sli-pieces').value)||'',
+      weight:(document.getElementById('sli-weight')&&document.getElementById('sli-weight').value)||'',
+      dimensions:(document.getElementById('sli-dims')&&document.getElementById('sli-dims').value)||'',
+      marks:(document.getElementById('sli-marks')&&document.getElementById('sli-marks').value)||''
     };
 
-    // Fetch data from edge function
-    var res=await fetch(FREIGHT_DOCS_URL,{
-      method:'POST',
-      headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},
-      body:JSON.stringify({lead_id:currentLead.id})
-    });
-    var result=await res.json();
-    if(!result.success) throw new Error(result.error||'Failed to fetch data');
-    var d=result.data;
+    // Build data directly from currentLead + currentQuote (no edge function needed)
+    var d={
+      lead:{
+        id:currentLead.id,
+        name:currentLead.name,
+        company:currentLead.company,
+        contact:currentLead.contact,
+        project:currentLead.project,
+        freight_type:currentLead.freight_type,
+        freight_carrier:currentLead.freight_carrier,
+        drive_folder_id:currentLead.drive_folder_id
+      },
+      quote:currentQuote?{
+        quote_number:currentQuote.quote_number,
+        total:currentQuote.total||0,
+        subtotal:currentQuote.subtotal||0,
+        client_name:currentQuote.client_name||currentLead.company||currentLead.name||'',
+        client_address:currentQuote.client_address||'',
+        expiry_date:currentQuote.expiry_date||null
+      }:null,
+      line_items:(currentLineItems||[]).map(function(i){
+        return {item_name:i.item_name,description:i.description,quantity:i.quantity,rate:i.rate,amount:i.amount};
+      }),
+      goods_description:fd.goods_description||currentLineItems.map(function(i){return (i.item_name||'')+(i.quantity?' x'+i.quantity:'');}).join(', ')||currentLead.project||'',
+      invoice_date:new Date().toLocaleDateString('en-AU'),
+      pieces:fd.pieces,
+      weight:fd.weight,
+      dimensions:fd.dimensions,
+      marks:fd.marks
+    };
 
-    // Merge form data into d
-    if(fd.goods_description) d.goods_description=fd.goods_description;
-    d.pieces=fd.pieces;
-    d.weight=fd.weight;
-    d.dimensions=fd.dimensions;
-    d.marks=fd.marks;
-
-    // Store data globally for preview
+    // Store globally and open preview
     window._freightPreviewData=d;
-
-    // Open preview modal and populate
     openFreightPreview(d);
+
   }catch(e){
+    console.error('generateFreightDocsFromForm error:',e);
     toast('Error: '+e.message,'error');
   }finally{
     if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-eye"></i> Preview &amp; Edit Documents';}

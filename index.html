@@ -460,6 +460,57 @@ function renderCarrierDropdown(freightType){
   var wrap=document.getElementById('carrier-dd-wrap');
   if(wrap) wrap.innerHTML=renderCarrierDropdownHTML(freightType,'');
 }
+async function moveToQuoted(){
+  if(!currentLead) return;
+  await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({phase:1,updated_at:new Date().toISOString()})});
+  await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Moved to Quoted',detail:'Lead moved from New Lead to Quoted pipeline'})});
+  toast('Moved to Quoted &#10003;');
+  currentLead.phase=1;
+  var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
+  if(idx>-1) leads[idx].phase=1;
+  await renderDetailInfo();
+  await loadLeads();
+}
+
+async function moveToClientApproved(){
+  if(!currentLead) return;
+  var sel=document.getElementById('freight-type-sel');
+  var ft=(sel&&sel.value)?sel.value:(currentLead.freight_type||'');
+  if(!ft){toast('Please select a freight type first','error');return;}
+  await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({phase:2,freight_type:ft,updated_at:new Date().toISOString()})});
+  await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Moved to Client Approved',detail:'Quote approved by client. Freight: '+(ft==='sea'?'Sea Freight':'Air Freight')})});
+  toast('Moved to Client Approved &#10003;');
+  currentLead.phase=2;
+  currentLead.freight_type=ft;
+  var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
+  if(idx>-1){leads[idx].phase=2;leads[idx].freight_type=ft;}
+  await renderDetailInfo();
+  await loadLeads();
+}
+
+async function moveToFreighting(){
+  if(!currentLead) return;
+  await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({phase:3,updated_at:new Date().toISOString()})});
+  await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Moved to Freighting',detail:'Lead ready to freight - moved to Freighting pipeline'})});
+  toast('Moved to Freighting &#10003;');
+  currentLead.phase=3;
+  var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
+  if(idx>-1) leads[idx].phase=3;
+  await renderDetailInfo();
+  await loadLeads();
+}
+
+async function saveFreightType(val){
+  if(!currentLead||!val) return;
+  await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({freight_type:val,updated_at:new Date().toISOString()})});
+  currentLead.freight_type=val;
+  var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
+  if(idx>-1) leads[idx].freight_type=val;
+  toast('Freight type saved: '+(val==='sea'?'Sea Freight':'Air Freight'));
+  var wrap=document.getElementById('carrier-dd-wrap');
+  if(wrap) wrap.innerHTML=renderCarrierDropdownHTML(val,'');
+}
+
 async function saveFreightCarrier(val){
   if(!currentLead||!val) return;
   await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({freight_carrier:val,updated_at:new Date().toISOString()})});
@@ -2535,11 +2586,6 @@ async function reviseQuote(){
 function showEditableQuote(){
   renderPricingStep(document.getElementById('dtab-quote'));
 }
-
-async function generateQBInvoice(){
-  toast('QuickBooks integration coming soon','info');
-}
-
 
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 

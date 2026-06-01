@@ -20,54 +20,13 @@
           <button class="close-btn" onclick="closeModal('freightPreviewOverlay')"><i class="ti ti-x"></i></button>
         </div>
       </div>
-      <!-- Tabs -->
       <div class="detail-tabs">
         <div class="detail-tab active" id="ftab-btn-invoice" onclick="switchFreightTab('invoice',this)"><i class="ti ti-file-invoice" style="font-size:12px"></i> Customs Invoice</div>
         <div class="detail-tab" id="ftab-btn-sli" onclick="switchFreightTab('sli',this)"><i class="ti ti-file-description" style="font-size:12px"></i> SLI Document</div>
       </div>
-      <div style="overflow-y:auto;max-height:65vh;padding:20px">
-        <!-- Customs Invoice Editor -->
-        <div id="ftab-invoice" style="display:block">
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
-            <div>
-              <div style="font-size:12px;font-weight:700;margin-bottom:10px;color:var(--text-secondary)">INVOICE DETAILS</div>
-              <div class="form-group"><label class="form-label">Invoice / Quote Number</label><input class="form-input" id="fi-number" placeholder="TIE-0001"></div>
-              <div class="form-group"><label class="form-label">Invoice Date</label><input class="form-input" id="fi-date" type="date"></div>
-            </div>
-            <div>
-              <div style="font-size:12px;font-weight:700;margin-bottom:10px;color:var(--text-secondary)">BILL TO</div>
-              <div class="form-group"><label class="form-label">Client Name / Company</label><input class="form-input" id="fi-client"></div>
-              <div class="form-group"><label class="form-label">Address Line 1</label><input class="form-input" id="fi-addr1"></div>
-              <div class="form-group"><label class="form-label">Address Line 2</label><input class="form-input" id="fi-addr2"></div>
-            </div>
-          </div>
-          <div style="font-size:12px;font-weight:700;margin-bottom:10px;color:var(--text-secondary)">LINE ITEMS</div>
-          <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:8px">
-            <thead>
-              <tr style="background:var(--bg-secondary)">
-                <th style="padding:8px;text-align:left;font-weight:700;border:1px solid var(--border-t)">#</th>
-                <th style="padding:8px;text-align:left;font-weight:700;border:1px solid var(--border-t)">Description</th>
-                <th style="padding:8px;text-align:right;font-weight:700;border:1px solid var(--border-t)">Qty</th>
-                <th style="padding:8px;text-align:right;font-weight:700;border:1px solid var(--border-t)">Unit Price</th>
-                <th style="padding:8px;text-align:right;font-weight:700;border:1px solid var(--border-t)">Total</th>
-                <th style="padding:8px;border:1px solid var(--border-t)"></th>
-              </tr>
-            </thead>
-            <tbody id="fi-items"></tbody>
-          </table>
-          <button class="btn btn-sm" onclick="addFreightInvoiceItem()"><i class="ti ti-plus"></i> Add item</button>
-          <div style="display:flex;justify-content:flex-end;margin-top:12px">
-            <div style="background:var(--bg-secondary);padding:12px 16px;border-radius:var(--radius-md);min-width:200px">
-              <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>Subtotal</span><span id="fi-subtotal">A$0.00</span></div>
-              <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>GST</span><span>A$0.00</span></div>
-              <div style="display:flex;justify-content:space-between;font-weight:700;font-size:14px;border-top:1px solid var(--border-t);padding-top:8px;margin-top:4px"><span>Total Payable</span><span id="fi-total" style="color:var(--accent)">A$0.00</span></div>
-            </div>
-          </div>
-        </div>
-        <!-- SLI Editor -->
-        <div id="ftab-sli" style="display:none">
-          <div id="sli-editor-content"></div>
-        </div>
+      <div style="overflow-y:auto;max-height:68vh;padding:0">
+        <div id="ftab-invoice" style="display:block;padding:24px"></div>
+        <div id="ftab-sli" style="display:none;padding:24px"></div>
       </div>
     </div>
   </div>
@@ -2253,34 +2212,190 @@ async function generateFreightDocsFromForm(){
 function openFreightPreview(d){
   var carrierName=d.lead.freight_carrier||'';
   Object.values(FREIGHT_CARRIERS).forEach(function(arr){arr.forEach(function(c){if(c.id===d.lead.freight_carrier)carrierName=c.name;});});
-  document.getElementById('freightPreviewSub').textContent=carrierName+' &#8212; '+(d.lead.freight_type==='sea'?'Sea':'Air')+' Freight';
+  document.getElementById('freightPreviewSub').textContent=carrierName+' — '+(d.lead.freight_type==='sea'?'Sea':'Air')+' Freight';
 
-  // Populate Customs Invoice fields
-  document.getElementById('fi-number').value=d.quote?.quote_number||'';
-  document.getElementById('fi-date').value=new Date().toISOString().slice(0,10);
-  var clientName=d.quote?.client_name||d.lead.company||d.lead.name||'';
-  var clientAddr=d.quote?.client_address||'';
-  document.getElementById('fi-client').value=clientName;
-  var addrParts=clientAddr.split(',');
-  document.getElementById('fi-addr1').value=(addrParts[0]||'').trim();
-  document.getElementById('fi-addr2').value=(addrParts.slice(1).join(',').trim());
+  var clientName=d.quote&&d.quote.client_name?d.quote.client_name:(d.lead.company||d.lead.name||'');
+  var clientAddr=d.quote&&d.quote.client_address?d.quote.client_address:'';
+  var invoiceNum=d.quote&&d.quote.quote_number?d.quote.quote_number:'';
+  var invoiceDate=new Date().toLocaleDateString('en-AU');
+  var fobVal='AUD $'+Number(d.quote&&d.quote.total?d.quote.total:0).toFixed(2);
+  var items=d.line_items||[];
+  var subtotal=items.reduce(function(s,i){return s+(i.amount||(i.quantity||1)*(i.rate||0));},0);
 
-  // Populate line items
-  window._freightInvoiceItems=(d.line_items||[]).map(function(i){
-    return {description:(i.item_name||'')+(i.description?' - '+i.description:''),qty:i.quantity||1,rate:i.rate||0,amount:i.amount||0};
+  // Build Customs Invoice as styled HTML document
+  var invoiceHTML='<div style="max-width:760px;margin:0 auto;font-family:helvetica,sans-serif;font-size:13px;background:#fff;border:1px solid #e0e0e0;border-radius:8px;overflow:hidden">'
+    +'<div style="background:#1a1a1a;color:#fff;padding:18px 24px;display:flex;justify-content:space-between;align-items:center">'
+    +'<div><div style="font-size:15px;font-weight:700">Traverse Imports &amp; Exports P/L</div>'
+    +'<div style="font-size:11px;opacity:0.7;margin-top:2px">15 Riviera Road, Miami QLD 4220 &nbsp;|&nbsp; ABN 27 058 599 795</div></div>'
+    +'<div style="text-align:right"><div style="font-size:22px;font-weight:700;letter-spacing:1px">CUSTOMS INVOICE</div>'
+    +'<div style="font-size:12px;opacity:0.8;margin-top:2px" contenteditable="true" id="fp-inv-num">'+escHtml(invoiceNum)+'</div></div>'
+    +'</div>'
+    +'<div style="display:flex;gap:0;border-bottom:1px solid #e0e0e0">'
+    +'<div style="flex:1;padding:16px 24px;border-right:1px solid #e0e0e0">'
+    +'<div style="font-size:10px;font-weight:700;color:#888;margin-bottom:6px;letter-spacing:1px">INVOICE TO</div>'
+    +'<div style="font-weight:600;font-size:14px" contenteditable="true" id="fp-client">'+escHtml(clientName)+'</div>'
+    +'<div style="color:#555;font-size:12px;margin-top:4px" contenteditable="true" id="fp-addr">'+escHtml(clientAddr)+'</div>'
+    +'</div>'
+    +'<div style="padding:16px 24px;min-width:180px">'
+    +'<div style="font-size:10px;font-weight:700;color:#888;margin-bottom:4px;letter-spacing:1px">DATE</div>'
+    +'<div contenteditable="true" id="fp-date">'+invoiceDate+'</div>'
+    +'<div style="font-size:10px;font-weight:700;color:#888;margin-top:10px;margin-bottom:4px;letter-spacing:1px">DELIVERY TO</div>'
+    +'<div contenteditable="true" id="fp-delivery">As per freight booking</div>'
+    +'</div>'
+    +'</div>'
+    +'<table style="width:100%;border-collapse:collapse;font-size:12px">'
+    +'<thead><tr style="background:#1a1a1a;color:#fff">'
+    +'<th style="padding:8px 12px;text-align:left;font-weight:600;width:5%">#</th>'
+    +'<th style="padding:8px 12px;text-align:left;font-weight:600">Description</th>'
+    +'<th style="padding:8px 12px;text-align:right;font-weight:600;width:8%">Qty</th>'
+    +'<th style="padding:8px 12px;text-align:right;font-weight:600;width:12%">Unit Price AUD$</th>'
+    +'<th style="padding:8px 12px;text-align:right;font-weight:600;width:12%">Line Total AUD$</th>'
+    +'</tr></thead>'
+    +'<tbody id="fp-items">';
+
+  items.forEach(function(item,i){
+    var amt=(item.amount||(item.quantity||1)*(item.rate||0));
+    var desc=(item.item_name||'')+(item.description?' - '+item.description:'');
+    invoiceHTML+='<tr style="border-bottom:1px solid #f0f0f0;background:'+(i%2?'#fafafa':'#fff')+'">'
+      +'<td style="padding:8px 12px;color:#888">'+(i+1)+'</td>'
+      +'<td style="padding:8px 12px" contenteditable="true">'+escHtml(desc)+'</td>'
+      +'<td style="padding:8px 12px;text-align:right" contenteditable="true">'+Number(item.quantity||1)+'</td>'
+      +'<td style="padding:8px 12px;text-align:right" contenteditable="true">'+Number(item.rate||0).toFixed(2)+'</td>'
+      +'<td style="padding:8px 12px;text-align:right;font-weight:600">'+amt.toFixed(2)+'</td>'
+      +'</tr>';
   });
-  if(!window._freightInvoiceItems.length){
-    window._freightInvoiceItems=[{description:'',qty:1,rate:0,amount:0}];
-  }
-  renderFreightInvoiceItems();
 
-  // Populate SLI editor
-  renderSLIEditor(d, carrierName);
+  invoiceHTML+='</tbody></table>'
+    +'<div style="display:flex;justify-content:flex-end;padding:16px 24px;border-top:1px solid #e0e0e0">'
+    +'<div style="min-width:220px">'
+    +'<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px;color:#555"><span>SUBTOTAL</span><span>AUD $'+subtotal.toFixed(2)+'</span></div>'
+    +'<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px;color:#555"><span>GST TOTAL</span><span>AUD $0.00</span></div>'
+    +'<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px;color:#555"><span>TOTAL</span><span>AUD $'+subtotal.toFixed(2)+'</span></div>'
+    +'<div style="display:flex;justify-content:space-between;padding:8px 0 4px;font-size:15px;font-weight:700;border-top:2px solid #1a1a1a;margin-top:4px"><span>PAYABLE AUD</span><span>$'+subtotal.toFixed(2)+'</span></div>'
+    +'</div></div>'
+    +'<div style="background:#f5f5f5;padding:12px 24px;font-size:11px;color:#555;border-top:1px solid #e0e0e0">'
+    +'Traverse Imports and Exports Pty Ltd &nbsp;|&nbsp; Westpac Bank, Pacific Fair Shopping Centre, Broadbeach QLD 4218 &nbsp;|&nbsp; BSB: 034-637 &nbsp;|&nbsp; Account: 21-1660 &nbsp;|&nbsp; Swift: WPACAU2SXXX'
+    +'</div>'
+    +'<div style="text-align:center;padding:12px;font-weight:700;color:#1a1a1a;font-size:13px">THANK YOU FOR YOUR BUSINESS!</div>'
+    +'</div>';
 
-  // Show modal
+  document.getElementById('ftab-invoice').innerHTML='<div style="font-size:11px;color:var(--text-secondary);margin-bottom:12px;padding:8px 12px;background:rgba(99,56,6,0.06);border-radius:6px;border-left:3px solid #b45309"><i class="ti ti-pencil"></i> Click any field on the document to edit it directly before downloading.</div>'+invoiceHTML;
+
+  // Build SLI as styled HTML document
+  renderFreightSLIPreview(d, carrierName, fobVal);
+
   switchFreightTab('invoice',document.getElementById('ftab-btn-invoice'));
   document.getElementById('freightPreviewOverlay').classList.add('open');
 }
+
+function renderFreightSLIPreview(d, carrierName, fobVal){
+  var clientName=d.quote&&d.quote.client_name?d.quote.client_name:(d.lead.company||d.lead.name||'');
+  var clientAddr=d.quote&&d.quote.client_address?d.quote.client_address:'PO Box 521, Honiara, Solomon Islands';
+
+  var html='<div style="font-size:11px;color:var(--text-secondary);margin-bottom:12px;padding:8px 12px;background:rgba(99,56,6,0.06);border-radius:6px;border-left:3px solid #b45309"><i class="ti ti-pencil"></i> Click any field on the document to edit it directly before downloading.</div>'
+    +'<div style="max-width:760px;margin:0 auto;font-family:helvetica,sans-serif;font-size:12px;background:#fff;border:1px solid #e0e0e0;border-radius:8px;overflow:hidden">'
+    // Header
+    +'<div style="background:#1a1a1a;color:#fff;padding:14px 20px;display:flex;justify-content:space-between;align-items:center">'
+    +'<div style="font-size:14px;font-weight:700">SHIPPER\'S LETTER OF INSTRUCTION</div>'
+    +'<div style="font-size:13px;font-weight:700;text-transform:uppercase">'+escHtml(carrierName)+'</div>'
+    +'</div>'
+    // Shipper / Booking ref row
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid #e0e0e0">'
+    +'<div style="padding:12px 16px;border-right:1px solid #e0e0e0">'
+    +'<div style="font-size:10px;font-weight:700;color:#888;margin-bottom:6px">SHIPPER / SENDER</div>'
+    +'<div style="font-weight:600" contenteditable="true" id="sli-shipper">Traverse Imports and Exports</div>'
+    +'<div contenteditable="true" id="sli-shipper-addr">15 Riviera Road Miami QLD 4220</div>'
+    +'<div contenteditable="true" id="sli-shipper-contact">Brandon Chin &nbsp; Ph: 0480 239 515</div>'
+    +'<div contenteditable="true" id="sli-shipper-email">sales@traverse-exports.com.au</div>'
+    +'</div>'
+    +'<div style="padding:12px 16px">'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'
+    +'<div><div style="font-size:10px;color:#888">Booking Number</div><div contenteditable="true" id="sli-booking"></div></div>'
+    +'<div><div style="font-size:10px;color:#888">Shippers Ref</div><div contenteditable="true" id="sli-ref">'+escHtml(d.quote&&d.quote.quote_number?d.quote.quote_number:'')+'</div></div>'
+    +'<div><div style="font-size:10px;color:#888">Shipment Terms</div><div contenteditable="true" id="sli-terms">Paid in Advance</div></div>'
+    +'<div><div style="font-size:10px;color:#888">Quote Number</div><div contenteditable="true" id="sli-quote-num">'+escHtml(d.quote&&d.quote.quote_number?d.quote.quote_number:'')+'</div></div>'
+    +'</div>'
+    +'</div>'
+    +'</div>'
+    // Consignee row
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid #e0e0e0">'
+    +'<div style="padding:12px 16px;border-right:1px solid #e0e0e0">'
+    +'<div style="font-size:10px;font-weight:700;color:#888;margin-bottom:6px">CONSIGNEE / RECEIVER</div>'
+    +'<div style="font-weight:600" contenteditable="true" id="sli-consignee">'+escHtml(clientName)+'</div>'
+    +'<div contenteditable="true" id="sli-consignee-addr">'+escHtml(clientAddr)+'</div>'
+    +'<div contenteditable="true" id="sli-consignee-email">'+escHtml(d.lead.contact||'')+'</div>'
+    +'</div>'
+    +'<div style="padding:12px 16px">'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'
+    +'<div><div style="font-size:10px;color:#888">EDN Required</div><div contenteditable="true">YES</div></div>'
+    +'<div><div style="font-size:10px;color:#888">Country of Origin</div><div contenteditable="true">Australia</div></div>'
+    +'<div><div style="font-size:10px;color:#888">Hazardous</div><div contenteditable="true">NO</div></div>'
+    +'<div><div style="font-size:10px;color:#888">Original HBL</div><div contenteditable="true">YES</div></div>'
+    +'</div>'
+    +'</div>'
+    +'</div>'
+    // Vessel / Port row
+    +'<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;border-bottom:1px solid #e0e0e0">'
+    +'<div style="padding:10px 16px;border-right:1px solid #e0e0e0"><div style="font-size:10px;color:#888">Vessel</div><div contenteditable="true" id="sli-vessel"></div></div>'
+    +'<div style="padding:10px 16px;border-right:1px solid #e0e0e0"><div style="font-size:10px;color:#888">Port of Loading</div><div contenteditable="true">BNE</div></div>'
+    +'<div style="padding:10px 16px;border-right:1px solid #e0e0e0"><div style="font-size:10px;color:#888">Discharge Port</div><div contenteditable="true">BNE</div></div>'
+    +'<div style="padding:10px 16px"><div style="font-size:10px;color:#888">Final Destination</div><div contenteditable="true">HON</div></div>'
+    +'</div>'
+    // Cargo table
+    +'<table style="width:100%;border-collapse:collapse;font-size:11px">'
+    +'<thead><tr style="background:#f0f0f0">'
+    +'<th style="padding:8px 10px;text-align:left;font-weight:700;border:1px solid #e0e0e0;width:12%">Marks &amp; Numbers</th>'
+    +'<th style="padding:8px 10px;text-align:left;font-weight:700;border:1px solid #e0e0e0;width:12%">No. of Packages</th>'
+    +'<th style="padding:8px 10px;text-align:left;font-weight:700;border:1px solid #e0e0e0">Good Description</th>'
+    +'<th style="padding:8px 10px;text-align:left;font-weight:700;border:1px solid #e0e0e0;width:13%">Gross Weight (KG)</th>'
+    +'<th style="padding:8px 10px;text-align:left;font-weight:700;border:1px solid #e0e0e0;width:13%">Total CBM</th>'
+    +'</tr></thead>'
+    +'<tbody><tr>'
+    +'<td style="padding:10px;border:1px solid #e0e0e0;min-height:40px" contenteditable="true" id="sli-marks">'+escHtml(d.marks||'')+'</td>'
+    +'<td style="padding:10px;border:1px solid #e0e0e0" contenteditable="true" id="sli-pieces">'+escHtml(d.pieces||'')+'</td>'
+    +'<td style="padding:10px;border:1px solid #e0e0e0" contenteditable="true" id="sli-goods">'+escHtml(d.goods_description||'')+'</td>'
+    +'<td style="padding:10px;border:1px solid #e0e0e0" contenteditable="true" id="sli-weight">'+escHtml(d.weight||'')+'</td>'
+    +'<td style="padding:10px;border:1px solid #e0e0e0" contenteditable="true" id="sli-cbm">'+escHtml(d.dimensions||'')+'</td>'
+    +'</tr></tbody>'
+    +'</table>'
+    // Charges + FOB row
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;border-top:1px solid #e0e0e0">'
+    +'<div style="padding:12px 16px;border-right:1px solid #e0e0e0">'
+    +'<div style="font-size:10px;font-weight:700;color:#888;margin-bottom:6px">CHARGES PAYABLE BY</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;font-size:11px">'
+    +'<div>Origin Cartage<br><strong contenteditable="true">Shipper</strong></div>'
+    +'<div>Export Clearance<br><strong contenteditable="true">Shipper</strong></div>'
+    +'<div>Freight<br><strong contenteditable="true">Shipper</strong></div>'
+    +'<div>Dest. Charges<br><strong contenteditable="true">Consignee</strong></div>'
+    +'</div>'
+    +'</div>'
+    +'<div style="padding:12px 16px">'
+    +'<div style="font-size:10px;font-weight:700;color:#888;margin-bottom:6px">CUSTOMS / FOB</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:11px">'
+    +'<div>Country of Origin<br><strong contenteditable="true">Australia (QLD)</strong></div>'
+    +'<div>FOB Value for Customs<br><strong contenteditable="true" id="sli-fob">'+escHtml(fobVal)+'</strong></div>'
+    +'<div>Dangerous Goods<br><strong contenteditable="true">NO</strong></div>'
+    +'<div>Lithium Batteries<br><strong contenteditable="true">NO</strong></div>'
+    +'</div>'
+    +'</div>'
+    +'</div>'
+    // Special instructions
+    +'<div style="padding:10px 16px;border-top:1px solid #e0e0e0">'
+    +'<div style="font-size:10px;font-weight:700;color:#888;margin-bottom:4px">SPECIAL INSTRUCTIONS</div>'
+    +'<div contenteditable="true" id="sli-special" style="min-height:30px"></div>'
+    +'</div>'
+    // Signature row
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;padding:12px 16px;border-top:1px solid #e0e0e0;font-size:11px;background:#f9f9f9">'
+    +'<div>Name: <strong contenteditable="true">Brandon Chin</strong></div>'
+    +'<div>Date: <span contenteditable="true">'+new Date().toLocaleDateString('en-AU')+'</span></div>'
+    +'<div>Email: <span contenteditable="true">sales@traverse-exports.com.au</span></div>'
+    +'<div>Phone: <span contenteditable="true">0480 239 515</span></div>'
+    +'</div>'
+    +'</div>';
+
+  document.getElementById('ftab-sli').innerHTML=html;
+}
+
 
 function switchFreightTab(tab,el){
   document.getElementById('ftab-invoice').style.display=tab==='invoice'?'block':'none';
@@ -2366,253 +2481,66 @@ async function downloadFreightDocs(){
   if(btn){btn.disabled=true;btn.innerHTML='<i class="ti ti-loader"></i> Generating...';}
   try{
     var d=window._freightPreviewData;
-    if(!d) throw new Error('No data');
+    if(!d) throw new Error('No preview data');
 
-    // Build updated data from form
-    d.goods_description=document.getElementById('sli-edit-goods')?.value||d.goods_description;
-    d.pieces=document.getElementById('sli-edit-pieces')?.value||d.pieces;
-    d.weight=document.getElementById('sli-edit-weight')?.value||d.weight;
-    d.dimensions=document.getElementById('sli-edit-dims')?.value||d.dimensions;
-    d.marks=document.getElementById('sli-edit-marks')?.value||d.marks;
+    // Read contenteditable values from invoice preview
+    function getField(id){ var el=document.getElementById(id); return el?el.innerText.trim():''; }
 
-    // Update consignee from SLI form
+    d._invoiceOverride={
+      number:getField('fp-inv-num'),
+      date:getField('fp-date'),
+      client:getField('fp-client'),
+      addr1:getField('fp-addr'),
+      addr2:'',
+      items:[]
+    };
+    // Read line items from table
+    var rows=document.querySelectorAll('#fp-items tr');
+    rows.forEach(function(row){
+      var cells=row.querySelectorAll('td[contenteditable]');
+      if(cells.length>=3){
+        var desc=cells[0].innerText.trim();
+        var qty=parseFloat(cells[1].innerText)||1;
+        var rate=parseFloat(cells[2].innerText)||0;
+        d._invoiceOverride.items.push({description:desc,qty:qty,rate:rate,amount:qty*rate});
+      }
+    });
+
+    // Read SLI values from document
+    d.goods_description=getField('sli-goods')||d.goods_description;
+    d.pieces=getField('sli-pieces')||d.pieces;
+    d.weight=getField('sli-weight')||d.weight;
+    d.dimensions=getField('sli-cbm')||d.dimensions;
+    d.marks=getField('sli-marks')||d.marks;
     if(d.quote){
-      d.quote.client_name=document.getElementById('sli-consignee-name')?.value||d.quote.client_name;
-      d.quote.client_address=document.getElementById('sli-consignee-addr')?.value||d.quote.client_address;
+      d.quote.client_name=getField('sli-consignee')||d.quote.client_name;
+      d.quote.client_address=getField('sli-consignee-addr')||d.quote.client_address;
     }
 
-    // Update invoice from customs form
-    d._invoiceOverride={
-      number:document.getElementById('fi-number')?.value||'',
-      date:document.getElementById('fi-date')?.value||'',
-      client:document.getElementById('fi-client')?.value||'',
-      addr1:document.getElementById('fi-addr1')?.value||'',
-      addr2:document.getElementById('fi-addr2')?.value||'',
-      items:window._freightInvoiceItems||[]
-    };
-
-    // Generate both PDFs
+    // Generate PDFs
     var invoicePdf=generateCustomsInvoicePDF(d);
     var sliPdf=generateSLIPDF(d);
 
-    var qNum=d.quote?.quote_number||d.lead.name||'';
+    var qNum=d.quote&&d.quote.quote_number?d.quote.quote_number:(d.lead.name||'');
     downloadBlob(invoicePdf,'Customs_Invoice_'+qNum+'.pdf','application/pdf');
     downloadBlob(sliPdf,'SLI_'+(d.lead.freight_carrier||'').toUpperCase()+'_'+qNum+'.pdf','application/pdf');
 
     // Save to Drive
-    if(currentLead.drive_folder_id){
+    if(currentLead&&currentLead.drive_folder_id){
       var invoiceB64=arrayBufferToBase64(invoicePdf);
       var sliB64=arrayBufferToBase64(sliPdf);
       await callDriveAPI('save_file',{folderId:currentLead.drive_folder_id,fileName:'Customs_Invoice_'+qNum+'.pdf',fileBase64:invoiceB64,mimeType:'application/pdf',subfolder:'Freight Docs'});
       await callDriveAPI('save_file',{folderId:currentLead.drive_folder_id,fileName:'SLI_'+(d.lead.freight_carrier||'').toUpperCase()+'_'+qNum+'.pdf',fileBase64:sliB64,mimeType:'application/pdf',subfolder:'Freight Docs'});
     }
-    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Freight documents generated',detail:'Customs Invoice and SLI for '+(d.lead.freight_carrier||'')})});
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Freight documents generated',detail:'Customs Invoice and SLI generated for '+(d.lead.freight_carrier||'')})});
     toast('Documents downloaded &#10003;');
     closeModal('freightPreviewOverlay');
   }catch(e){
+    console.error('downloadFreightDocs:',e);
     toast('Error: '+e.message,'error');
   }finally{
     if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-download"></i> Download Both PDFs';}
   }
-}
-
-
-async function setFreightType(type){
-  if(!currentLead) return;
-  // If same type clicked, deselect
-  var newType = currentLead.freight_type===type ? null : type;
-  await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({freight_type:newType,freight_carrier:null,updated_at:new Date().toISOString()})});
-  currentLead.freight_type=newType;
-  currentLead.freight_carrier=null;
-  var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
-  if(idx>-1){leads[idx].freight_type=newType;leads[idx].freight_carrier=null;}
-  renderDetailFreight();
-  toast('Freight type saved: '+(newType||'cleared'));
-}
-
-async function markQuoteApproved(){
-  if(!currentQuote) return;
-  await sb('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({status:'approved',updated_at:new Date().toISOString()})});
-  await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Quote approved',detail:currentQuote.quote_number+' approved by client'})});
-  currentQuote.status='approved';
-  const idx=leads.findIndex(function(l){return l.id===currentLead.id;});
-  if(idx>-1){leads[idx].quote_status='approved';}
-  currentLead.quote_status='approved';
-  renderBoard();
-  renderQuoteReview(document.getElementById('dtab-quote'));
-  toast('Quote marked as approved &#10003;');
-}
-
-async function renderQuoteTab(){
-  const el=document.getElementById('dtab-quote');
-  if(!el) return;
-  el.innerHTML='<div class="empty-state"><i class="ti ti-loader"></i> Loading...</div>';
-  try{
-    await loadCurrentQuote();
-    if(!currentQuote){renderDocumentScan(el);return;}
-    if(currentQuote.status==='sent'||currentQuote.status==='approved'||currentQuote.status==='invoiced'){renderQuoteReview(el);return;}
-    if(currentQuote&&currentQuote.status==='draft'&&currentLineItems.length>0){renderPricingStep(el);return;}
-    renderDocumentScan(el);
-  }catch(e){el.innerHTML='<div style="padding:20px;font-size:13px;color:var(--danger)">Error loading quote tab: '+e.message+'</div>';}
-}
-
-function renderDocumentScan(el){
-  el.innerHTML=`
-    <div style="text-align:center;padding:24px 16px">
-      <i class="ti ti-file-plus" style="font-size:40px;color:var(--purple);margin-bottom:12px;display:block"></i>
-      <div style="font-size:14px;font-weight:600;margin-bottom:6px">Start a Quote</div>
-      <div style="font-size:12px;color:var(--text-secondary);margin-bottom:16px">Create a new quote for this lead</div>
-      <button class="btn btn-primary" onclick="createNewQuote()"><i class="ti ti-plus"></i> New Quote</button>
-    </div>`;
-}
-
-async function createNewQuote(){
-  if(!currentLead) return;
-  const d=new Date();
-  const qNum='TIE-'+String(d.getFullYear()).slice(2)+String(d.getMonth()+1).padStart(2,'0')+'-'+String(Math.floor(Math.random()*9000)+1000);
-  const res=await sb('quotes',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,quote_number:qNum,status:'draft',client_name:currentLead.company||currentLead.name,client_address:'',subtotal:0,gst_total:0,total:0}),headers:{...sbH(authToken),'Prefer':'return=representation'}});
-  const rows=await res.json();
-  currentQuote=rows[0];
-  currentLineItems=[];
-  renderPricingStep(document.getElementById('dtab-quote'));
-}
-
-function renderPricingStep(el){
-  if(!currentQuote) return;
-  var itemRows=currentLineItems.map(function(item,i){
-    return '<tr>'
-      +'<td><input class="form-input" style="font-size:12px" value="'+escHtml(item.item_name||'')+'" oninput="currentLineItems['+i+'].item_name=this.value"></td>'
-      +'<td><input class="form-input" style="font-size:12px" value="'+escHtml(item.description||'')+'" oninput="currentLineItems['+i+'].description=this.value"></td>'
-      +'<td><input class="form-input" style="font-size:12px;width:60px;text-align:right" type="number" value="'+(item.quantity||1)+'" oninput="currentLineItems['+i+'].quantity=parseFloat(this.value)||1;recalcQuote()"></td>'
-      +'<td><input class="form-input" style="font-size:12px;width:80px;text-align:right" type="number" step="0.01" value="'+(item.rate||0)+'" oninput="currentLineItems['+i+'].rate=parseFloat(this.value)||0;recalcQuote()"></td>'
-      +'<td style="text-align:right;padding:6px 8px">A$'+(((item.quantity||1)*(item.rate||0))).toFixed(2)+'</td>'
-      +'<td><input type="checkbox" '+(item.gst_applicable?'checked':'')+' onchange="currentLineItems['+i+'].gst_applicable=this.checked;recalcQuote()"></td>'
-      +'<td><button class="btn btn-danger btn-sm" onclick="removeLineItem('+i+')"><i class="ti ti-trash"></i></button></td>'
-      +'</tr>';
-  }).join('');
-  var sub=currentLineItems.reduce(function(s,i){return s+(i.quantity||1)*(i.rate||0);},0);
-  var gst=currentLineItems.reduce(function(s,i){return s+(i.gst_applicable?(i.quantity||1)*(i.rate||0)*0.1:0);},0);
-  var total=sub+gst;
-  el.innerHTML=`
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-      <div style="font-size:14px;font-weight:600">${currentQuote.quote_number}</div>
-      <button class="btn btn-primary btn-sm" onclick="sendQuoteToClient()"><i class="ti ti-send"></i> Preview & Send</button>
-    </div>
-    <div style="margin-bottom:8px">
-      <input class="form-input" id="eq-client-name" placeholder="Client name" value="${escHtml(currentQuote.client_name||'')}">
-    </div>
-    <div style="margin-bottom:12px">
-      <input class="form-input" id="eq-client-addr" placeholder="Client address" value="${escHtml(currentQuote.client_address||'')}">
-    </div>
-    <div style="margin-bottom:12px">
-      <label class="form-label">Expiry date</label>
-      <input class="form-input" id="eq-expiry" type="date" value="${currentQuote.expiry_date||''}">
-    </div>
-    <table class="line-items-table" style="margin-bottom:8px">
-      <thead><tr><th>Item</th><th>Description</th><th style="text-align:right">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th><th style="text-align:center">GST</th><th></th></tr></thead>
-      <tbody id="liTbody">${itemRows}</tbody>
-    </table>
-    <button class="btn btn-sm" style="margin-bottom:12px" onclick="addLineItem()"><i class="ti ti-plus"></i> Add item</button>
-    <div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:10px 14px">
-      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>Subtotal</span><span>A$${sub.toFixed(2)}</span></div>
-      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>GST</span><span>A$${gst.toFixed(2)}</span></div>
-      <div style="display:flex;justify-content:space-between;font-weight:700;font-size:15px;border-top:0.5px solid var(--border-t);padding-top:8px;margin-top:6px"><span>Total</span><span style="color:var(--accent)">A$${total.toFixed(2)}</span></div>
-    </div>`;
-}
-
-function recalcQuote(){renderPricingStep(document.getElementById('dtab-quote'));}
-function addLineItem(){currentLineItems.push({item_name:'',description:'',quantity:1,rate:0,gst_applicable:false,amount:0});renderPricingStep(document.getElementById('dtab-quote'));}
-function removeLineItem(i){currentLineItems.splice(i,1);renderPricingStep(document.getElementById('dtab-quote'));}
-
-async function sendQuoteToClient(){
-  if(!currentLead?.contact){toast('No client email on this lead &mdash; add one in Details first','error');return;}
-  const btn=document.getElementById('previewSendBtn')||{innerHTML:'',disabled:false};
-  const origHtml=btn.innerHTML;
-  btn.innerHTML='<i class="ti ti-loader"></i> Saving...';btn.disabled=true;
-  currentQuote.client_name=document.getElementById('eq-client-name')?.value||currentQuote.client_name;
-  currentQuote.client_address=document.getElementById('eq-client-addr')?.value||currentQuote.client_address;
-  currentQuote.expiry_date=document.getElementById('eq-expiry')?.value||currentQuote.expiry_date;
-  let sub=0,gst=0;
-  currentLineItems.forEach(function(item){const a=(item.quantity||1)*(item.rate||0);item.amount=a;sub+=a;if(item.gst_applicable)gst+=a*0.1;});
-  currentQuote.subtotal=sub;currentQuote.gst_total=gst;currentQuote.total=sub+gst;
-  await sb('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({client_name:currentQuote.client_name,client_address:currentQuote.client_address,expiry_date:currentQuote.expiry_date||null,subtotal:sub,gst_total:gst,total:sub+gst,status:'sent',updated_at:new Date().toISOString()})});
-  await sb('quote_line_items?quote_id=eq.'+currentQuote.id,{method:'DELETE'});
-  if(currentLineItems.length>0){
-    const toInsert=currentLineItems.map(function(item,i){return {quote_id:currentQuote.id,item_name:item.item_name,description:item.description,quantity:item.quantity,rate:item.rate,gst_applicable:item.gst_applicable,amount:item.amount,sort_order:i};});
-    await sb('quote_line_items',{method:'POST',body:JSON.stringify(toInsert)});
-  }
-  const subject='Quote '+currentQuote.quote_number+' &mdash; Traverse Imports & Exports';
-  const fn=(currentLead.name||'').split(' ')[0];
-  const body='Hi '+fn+',\\n\\nPlease find your quote '+currentQuote.quote_number+' attached.\\n\\nTotal: A$'+(currentQuote.total||0).toFixed(2)+'\\n\\nPlease review and let us know if you\'d like to proceed.\\n\\nKind regards,\\nTraverse Exports\\nsales@traverse-exports.com.au';
-  try{
-    const res=await fetch(EMAIL_FN,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify({to:currentLead.contact,subject,body})});
-    const data=await res.json();
-    if(!res.ok) throw new Error(data.error||'Send failed');
-    await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({quote_status:'sent',emails_sent:(currentLead.emails_sent||0)+1,updated_at:new Date().toISOString()})});
-    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Quote sent',detail:currentQuote.quote_number+' sent to '+currentLead.contact})});
-    currentQuote.status='sent';currentLead.quote_status='sent';
-    const idx=leads.findIndex(function(l){return l.id===currentLead.id;});
-    if(idx>-1){leads[idx].quote_status='sent';leads[idx].emails_sent=(leads[idx].emails_sent||0)+1;}
-    renderBoard();
-    renderQuoteReview(document.getElementById('dtab-quote'));
-    toast('Quote sent to '+currentLead.contact+' &#10003;');
-  }catch(e){toast('Send failed: '+e.message,'error');btn.innerHTML=origHtml;btn.disabled=false;}
-}
-
-function renderQuoteReview(el){
-  const q=currentQuote;
-  if(!q){el.innerHTML='<div class="empty-state">No quote found</div>';return;}
-  const statusColors={sent:'#633806',approved:'var(--green)',invoiced:'var(--accent)',draft:'var(--text-secondary)'};
-  const statusBg={sent:'#FAEEDA',approved:'#EAF3DE',invoiced:'#E6F1FB',draft:'#f3f2f0'};
-  el.innerHTML=`
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px">
-      <div>
-        <div style="font-size:14px;font-weight:600">${q.quote_number}</div>
-        <span style="font-size:11px;padding:3px 9px;border-radius:99px;font-weight:600;background:${statusBg[q.status]||'#f3f2f0'};color:${statusColors[q.status]||'var(--text-secondary)'};text-transform:capitalize;display:inline-block;margin-top:4px">${q.status}</span>
-      </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn btn-sm" onclick="showEditableQuote()"><i class="ti ti-pencil"></i> Edit & preview</button>
-        ${q.status==='sent'||q.status==='draft'?`<button class="btn btn-amber btn-sm" onclick="reviseQuote()"><i class="ti ti-refresh"></i> Revise quote</button>`:''}
-        ${q.status==='sent'?`<button class="btn btn-green btn-sm" onclick="markQuoteApproved()"><i class="ti ti-check"></i> Client approved</button>`:''}
-      </div>
-    </div>
-    <div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:12px 16px;margin-bottom:14px">
-      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-secondary)">Client</span><span>${q.client_name||'&#8212;'}</span></div>
-      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-secondary)">Expiry</span><span>${q.expiry_date?new Date(q.expiry_date).toLocaleDateString('en-AU'):'&#8212;'}</span></div>
-      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-secondary)">Subtotal</span><span>A$${(q.subtotal||0).toFixed(2)}</span></div>
-      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-secondary)">GST</span><span>A$${(q.gst_total||0).toFixed(2)}</span></div>
-      <div style="display:flex;justify-content:space-between;font-weight:700;font-size:15px;border-top:0.5px solid var(--border-t);padding-top:8px;margin-top:6px"><span>Total</span><span style="color:var(--accent)">A$${(q.total||0).toFixed(2)}</span></div>
-    </div>
-    <table class="line-items-table">
-      <thead><tr><th>Item</th><th>Description</th><th style="text-align:right">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th><th style="text-align:center">GST</th></tr></thead>
-      <tbody>${currentLineItems.map(function(item){return '<tr><td>'+escHtml(item.item_name||'')+'</td><td style="color:var(--text-secondary)">'+escHtml(item.description||'')+'</td><td style="text-align:right">'+(item.quantity||1).toFixed(0)+'</td><td style="text-align:right;color:var(--green);font-weight:600">A$'+(item.rate||0).toFixed(2)+'</td><td style="text-align:right;font-weight:500">A$'+(item.amount||0).toFixed(2)+'</td><td style="text-align:center;font-size:12px">'+(item.gst_applicable?'&#10003;':'&#8212;')+'</td></tr>';}).join('')}</tbody>
-    </table>`;
-}
-
-async function reviseQuote(){
-  await sb('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({status:'draft',updated_at:new Date().toISOString()})});
-  currentQuote.status='draft';
-  const idx=leads.findIndex(function(l){return l.id===currentLead.id;});
-  if(idx>-1) leads[idx].quote_status='draft';
-  currentLead.quote_status='draft';
-  toast('Quote reopened for revision');
-  renderPricingStep(document.getElementById('dtab-quote'));
-}
-
-function showEditableQuote(){
-  renderPricingStep(document.getElementById('dtab-quote'));
-}
-
-function closeModal(id){document.getElementById(id).classList.remove('open');}
-
-try {
-  setStatus('driveDot','driveLabel',true,'Drive &#10003;');
-  setStatus('emailDot','emailLabel',true,'Email &#10003;');
-  checkSession();
-} catch(e) {
-  console.error('CRM init error:', e);
-  document.getElementById('loginBtn').disabled = false;
-  document.getElementById('loginBtn').innerHTML = '<i class="ti ti-login"></i> Sign in';
 }
 </script>
 </body>

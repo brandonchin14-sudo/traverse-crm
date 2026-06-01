@@ -341,12 +341,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <div class="detail-tab" onclick="switchDetailTab('emails',this)"><i class="ti ti-send" style="font-size:12px;color:var(--purple)"></i> Email</div>
       <div class="detail-tab" onclick="switchDetailTab('files',this)"><i class="ti ti-brand-google-drive" style="font-size:12px;color:var(--amber)"></i> Drive</div>
       <div class="detail-tab" onclick="switchDetailTab('activity',this)">Activity</div>
+      <div class="detail-tab" onclick="switchDetailTab('freight',this)"><i class="ti ti-ship" style="font-size:12px;color:#0369a1"></i> Freight</div>
     </div>
     <div class="detail-section active" id="dtab-info"></div>
     <div class="detail-section" id="dtab-quote"></div>
     <div class="detail-section" id="dtab-emails"></div>
     <div class="detail-section" id="dtab-files"></div>
     <div class="detail-section" id="dtab-activity"></div>
+    <div class="detail-section" id="dtab-freight"></div>
   </div>
 </div>
 
@@ -1938,6 +1940,90 @@ function switchDetailTab(tab,el){
   if(tab==='activity') renderDetailActivity();
   if(tab==='files') renderDetailFiles();
   if(tab==='quote') renderQuoteTab().catch(function(e){console.error('Quote tab error:',e);});
+  if(tab==='freight') renderDetailFreight();
+}
+
+function renderDetailFreight(){
+  var l=currentLead;
+  if(!l) return;
+  var el=document.getElementById('dtab-freight');
+  if(!el) return;
+
+  // Freight type cards
+  var seaSel=l.freight_type==='sea';
+  var airSel=l.freight_type==='air';
+  var seaBorder=seaSel?'#0369a1':'var(--border-t)';
+  var airBorder=airSel?'#7c3aed':'var(--border-t)';
+  var seaBg=seaSel?'rgba(3,105,161,0.06)':'var(--bg-secondary)';
+  var airBg=airSel?'rgba(124,58,237,0.06)':'var(--bg-secondary)';
+
+  var html='<div style="padding:4px 0">'
+    +'<div style="font-size:13px;font-weight:700;margin-bottom:14px"><i class="ti ti-ship"></i> Freight Settings</div>'
+    +'<label class="form-label">Freight Type</label>'
+    +'<div style="display:flex;gap:10px;margin-bottom:4px">';
+
+  // Sea card
+  html+='<div style="flex:1;display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:var(--radius-md);border:2px solid '+seaBorder+';cursor:pointer;background:'+seaBg+'" onclick="setFreightType(String.fromCharCode(115,101,97))">'
+    +'<i class="ti ti-ship" style="font-size:18px;color:#0369a1"></i>'
+    +'<div><div style="font-size:13px;font-weight:600;color:#0369a1">Sea Freight</div>'
+    +'<div style="font-size:11px;color:var(--text-secondary)">Kalgin, PAC, Vanguard</div></div>'
+    +(seaSel?'<i class="ti ti-check" style="margin-left:auto;color:#0369a1"></i>':'')
+    +'</div>';
+
+  // Air card
+  html+='<div style="flex:1;display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:var(--radius-md);border:2px solid '+airBorder+';cursor:pointer;background:'+airBg+'" onclick="setFreightType(String.fromCharCode(97,105,114))">'
+    +'<i class="ti ti-plane" style="font-size:18px;color:#7c3aed"></i>'
+    +'<div><div style="font-size:13px;font-weight:600;color:#7c3aed">Air Freight</div>'
+    +'<div style="font-size:11px;color:var(--text-secondary)">Airways</div></div>'
+    +(airSel?'<i class="ti ti-check" style="margin-left:auto;color:#7c3aed"></i>':'')
+    +'</div>';
+
+  html+='</div>';
+
+  // Carrier dropdown
+  if(l.freight_type){
+    var carriers=FREIGHT_CARRIERS[l.freight_type]||[];
+    if(carriers.length){
+      var opts=carriers.map(function(c){return '<option value="'+c.id+'"'+(l.freight_carrier===c.id?' selected':'')+'>'+c.name+'</option>';}).join('');
+      html+='<div style="margin-top:12px">'
+        +'<label class="form-label">Freight Carrier</label>'
+        +'<select class="form-input" id="ft-carrier-sel" onchange="saveFreightCarrier(this.value)">'
+        +'<option value="">-- Select carrier --</option>'+opts
+        +'</select></div>';
+    }
+  } else {
+    html+='<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">Select a freight type above to choose a carrier</div>';
+  }
+
+  // Generate docs button
+  if(l.freight_carrier){
+    var carrierName=l.freight_carrier;
+    Object.values(FREIGHT_CARRIERS).forEach(function(arr){arr.forEach(function(c){if(c.id===l.freight_carrier)carrierName=c.name;});});
+    html+='<div style="margin-top:16px;padding:14px;background:var(--bg-secondary);border-radius:var(--radius-md);border:1px solid var(--border-t)">'
+      +'<div style="font-size:12px;font-weight:700;margin-bottom:8px"><i class="ti ti-file-export"></i> Generate Freight Documents</div>'
+      +'<div style="font-size:11px;color:var(--text-secondary);margin-bottom:10px">Carrier: <strong>'+carrierName+'</strong> &mdash; '+(l.freight_type==='sea'?'Sea':'Air')+' Freight</div>'
+      +'<button class="btn btn-primary" onclick="generateFreightDocs()" style="width:100%;justify-content:center"><i class="ti ti-download"></i> Generate &amp; Download Documents</button>'
+      +'<div style="font-size:11px;color:var(--text-secondary);text-align:center;margin-top:6px">Generates Customs Invoice &amp; SLI PDF &mdash; auto-saved to Drive</div>'
+      +'</div>';
+  } else if(l.freight_type){
+    html+='<div style="font-size:12px;color:var(--text-secondary);text-align:center;margin-top:8px">Select a carrier above to generate documents</div>';
+  }
+
+  html+='</div>';
+  el.innerHTML=html;
+}
+
+async function setFreightType(type){
+  if(!currentLead) return;
+  // If same type clicked, deselect
+  var newType = currentLead.freight_type===type ? null : type;
+  await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({freight_type:newType,freight_carrier:null,updated_at:new Date().toISOString()})});
+  currentLead.freight_type=newType;
+  currentLead.freight_carrier=null;
+  var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
+  if(idx>-1){leads[idx].freight_type=newType;leads[idx].freight_carrier=null;}
+  renderDetailFreight();
+  toast('Freight type saved: '+(newType||'cleared'));
 }
 
 async function markQuoteApproved(){

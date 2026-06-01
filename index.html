@@ -242,7 +242,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="login-logo"><i class="ti ti-briefcase"></i><div><div class="login-logo-text">Traverse CRM</div><div class="login-logo-sub">Sign in to continue</div></div></div>
     <div class="login-error" id="loginError"></div>
     <div class="form-group"><label class="form-label">Email</label><input class="form-input" type="email" id="loginEmail" placeholder="you@traverse-exports.com.au" onkeydown="if(event.key==='Enter')doLogin()"></div>
-    <div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" id="loginPassword" placeholder="••••••••" onkeydown="if(event.key==='Enter')doLogin()"></div>
+    <div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" id="loginPassword" placeholder="&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;" onkeydown="if(event.key==='Enter')doLogin()"></div>
     <button class="btn btn-primary btn-full" id="loginBtn" onclick="doLogin()"><i class="ti ti-login"></i> Sign in</button>
     <div style="margin-top:14px;font-size:12px;color:var(--text-tertiary);text-align:center">Access by invitation only. Contact your administrator.</div>
   </div>
@@ -325,10 +325,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <div><div class="modal-title" id="detailName"></div><div class="modal-sub" id="detailSub"></div></div>
       <div style="display:flex;gap:8px;align-items:center">
         <select class="form-input" style="width:auto;font-size:12px" id="detailPhaseSelect" onchange="updatePhase()">
-          <option value="0">Phase 1 &#8212; Quote Request</option>
-          <option value="1">Phase 2 &#8212; Enquire Suppliers</option>
-          <option value="2">Phase 3 &#8212; Client Approval</option>
-          <option value="3">Phase 4 &#8212; Freighting</option>
+          <option value="0">New Lead</option>
+          <option value="1">Quoted</option>
+          <option value="2">Client Approved</option>
+          <option value="3">Freighting</option>
+          <option value="4">Completed</option>
+          <option value="5">Completed</option>
         </select>
         <button class="close-btn" onclick="closeModal('detailOverlay')"><i class="ti ti-x"></i></button>
       </div>
@@ -643,19 +645,26 @@ function renderBoard(){
 
 /* &#9472;&#9472; DETAIL &#9472;&#9472; */
 async function openDetail(id){
-  currentLead=leads.find(l=>l.id===id);
-  if(!currentLead) return;
-  document.getElementById('detailName').textContent=currentLead.name;
-  document.getElementById('detailSub').textContent=(currentLead.company||'')+(currentLead.project?' • '+currentLead.project:'');
-  document.getElementById('detailPhaseSelect').value=currentLead.phase;
-  document.querySelectorAll('.detail-tab').forEach((t,i)=>t.classList.toggle('active',i===0));
-  document.querySelectorAll('.detail-section').forEach((s,i)=>s.classList.toggle('active',i===0));
-  await loadCurrentQuote();
-  await renderDetailInfo();renderDetailEmails();
-  document.getElementById('dtab-files').innerHTML='';
-  document.getElementById('dtab-quote').innerHTML='';
-  await renderDetailActivity();
-  document.getElementById('detailOverlay').classList.add('open');
+  try{
+    currentLead=leads.find(l=>l.id===id);
+    if(!currentLead){console.error('Lead not found:',id);return;}
+    document.getElementById('detailName').textContent=currentLead.name||'';
+    document.getElementById('detailSub').textContent=(currentLead.company||'')+(currentLead.project?' &#8226; '+currentLead.project:'');
+    var ps=document.getElementById('detailPhaseSelect');
+    if(ps) ps.value=Math.min(currentLead.phase||0,5);
+    document.querySelectorAll('.detail-tab').forEach((t,i)=>t.classList.toggle('active',i===0));
+    document.querySelectorAll('.detail-section').forEach((s,i)=>s.classList.toggle('active',i===0));
+    await loadCurrentQuote();
+    await renderDetailInfo();
+    renderDetailEmails();
+    document.getElementById('dtab-files').innerHTML='';
+    document.getElementById('dtab-quote').innerHTML='';
+    await renderDetailActivity();
+    document.getElementById('detailOverlay').classList.add('open');
+  }catch(e){
+    console.error('openDetail error:',e);
+    toast('Error opening lead: '+e.message,'error');
+  }
 }
 
 async function loadCurrentQuote(){
@@ -1565,6 +1574,522 @@ function switchView(view,el){
   if(view==='reports') renderReports();
   if(view==='drive') renderDriveView();
 }
+function escHtml(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+async function renderDetailInfo(){
+  const l=currentLead;
+  document.getElementById('dtab-info').innerHTML=`
+    <div class="info-grid">
+      <div class="info-item"><label>Email</label><p>${l.contact||'&#8212;'}</p></div>
+      <div class="info-item"><label>Mobile</label><p>${l.mobile||'&#8212;'}</p></div>
+      <div class="info-item"><label>Project ref</label><p>${l.project||'&#8212;'}</p></div>
+      <div class="info-item"><label>Quote status</label><p>${quoteStatusBadge(l.quote_status)||'&#8212;'}</p></div>
+      <div class="info-item"><label>Lead type</label><p><span style="font-size:12px;padding:3px 9px;border-radius:99px;font-weight:600;background:${l.lead_type==='project'?'var(--purple-light)':'var(--amber-light)'};color:${l.lead_type==='project'?'var(--purple)':'#633806'}">${l.lead_type==='project'?'Project':'Wholesale'}</span></p></div>
+      <div class="info-item"><label>Emails sent</label><p>${l.emails_sent||0}</p></div>
+      ${l.freight_type?`<div class="info-item"><label>Freight type</label><p><span style="font-size:12px;padding:3px 9px;border-radius:99px;font-weight:600;background:${l.freight_type==='sea'?'rgba(3,105,161,0.1)':'rgba(124,58,237,0.1)'};color:${l.freight_type==='sea'?'#0369a1':'#7c3aed'}"><i class="ti ti-${l.freight_type==='sea'?'ship':'plane'}"></i> ${l.freight_type==='sea'?'Sea Freight':'Air Freight'}</span></p></div>`:''}
+      ${l.freight_carrier?(function(){var name=l.freight_carrier;Object.values(FREIGHT_CARRIERS).forEach(function(arr){arr.forEach(function(c){if(c.id===l.freight_carrier)name=c.name;});});return '<div class="info-item"><label>Freight carrier</label><p><span style="font-size:12px;padding:3px 9px;border-radius:99px;font-weight:600;background:rgba(15,118,110,0.1);color:#0f766e">'+name+'</span></p></div>';})():''}
+    </div>
+    <div class="section-divider">Edit</div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Name</label><input class="form-input" id="di-name" value="${escHtml(l.name||'')}"></div>
+      <div class="form-group"><label class="form-label">Company</label><input class="form-input" id="di-company" value="${escHtml(l.company||'')}"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="di-contact" value="${escHtml(l.contact||'')}"></div>
+      <div class="form-group"><label class="form-label">Mobile</label><input class="form-input" id="di-mobile" value="${escHtml(l.mobile||'')}"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Project ref</label><input class="form-input" id="di-project" value="${escHtml(l.project||'')}"></div>
+      <div class="form-group"><label class="form-label">Client</label><input class="form-input" id="di-client" value="${escHtml(l.client||'')}"></div>
+    </div>
+    <div class="form-group"><label class="form-label">Notes</label><textarea class="form-input" id="di-notes" rows="3">${escHtml(l.notes||'')}</textarea></div>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="btn btn-primary" onclick="saveDetailEdits()"><i class="ti ti-device-floppy"></i> Save changes</button>
+    </div>
+    ${(function(){
+      var html='';
+      if((l.phase||0)===0){
+        html+='<div style="margin-top:16px;padding:14px;background:var(--bg-secondary);border-radius:var(--radius-md);border:1px solid var(--border-t)">'
+          +'<button class="btn btn-primary" onclick="moveToQuoted()" style="width:100%;justify-content:center"><i class="ti ti-arrow-right"></i> Move to Quoted</button>'
+          +'<div style="font-size:11px;color:var(--text-secondary);text-align:center;margin-top:6px">Move this lead to the Quoted pipeline once supplier data is ready</div>'
+          +'</div>';
+      }
+      if((l.phase||0)===1){
+        html+='<div style="margin-top:16px;padding:14px;background:var(--bg-secondary);border-radius:var(--radius-md);border:1px solid var(--border-t)">'
+          +'<div style="font-size:12px;font-weight:700;margin-bottom:8px"><i class="ti ti-truck"></i> Freight Type</div>'
+          +'<select class="form-input" id="freight-type-sel" style="margin-bottom:8px" onchange="saveFreightType(this.value);renderCarrierDropdown(this.value)">'
+          +'<option value="">-- Select freight type --</option>'
+          +'<option value="sea"'+(l.freight_type==='sea'?' selected':'')+'>Sea Freight</option>'
+          +'<option value="air"'+(l.freight_type==='air'?' selected':'')+'>Air Freight</option>'
+          +'</select>'
+          +'<div id="carrier-dd-wrap">'+(l.freight_type?renderCarrierDropdownHTML(l.freight_type,l.freight_carrier||''):'')+'</div>'
+          +'<button class="btn btn-primary" onclick="moveToClientApproved()" style="width:100%;justify-content:center;margin-top:8px"><i class="ti ti-check"></i> Move to Client Approved</button>'
+          +'<div style="font-size:11px;color:var(--text-secondary);text-align:center;margin-top:6px">Move once quote has been sent and approved by client</div>'
+          +'</div>';
+      }
+      if((l.phase||0)===2){
+        html+='<div style="margin-top:16px;padding:14px;background:var(--bg-secondary);border-radius:var(--radius-md);border:1px solid var(--border-t)">'
+          +'<button class="btn btn-primary" onclick="moveToFreighting()" style="width:100%;justify-content:center;background:var(--green);border-color:var(--green)">'
+          +'<i class="ti ti-ship"></i> Ready to Freight</button>'
+          +'<div style="font-size:11px;color:var(--text-secondary);text-align:center;margin-top:6px">Move this lead to Freighting to generate freight documents</div>'
+          +'</div>';
+      }
+      if((l.phase||0)===3){
+        var carrierName='';
+        if(FREIGHT_CARRIERS[l.freight_type||'']){FREIGHT_CARRIERS[l.freight_type].forEach(function(c){if(c.id===l.freight_carrier)carrierName=c.name;});}
+        html+='<div style="margin-top:16px;padding:14px;background:var(--bg-secondary);border-radius:var(--radius-md);border:1px solid var(--border-t)">'
+          +'<div style="font-size:12px;font-weight:700;margin-bottom:10px"><i class="ti ti-file-export"></i> Generate Freight Documents</div>'
+          +(carrierName?'<div style="font-size:11px;color:var(--text-secondary);margin-bottom:10px">Carrier: <strong>'+carrierName+'</strong> &mdash; '+(l.freight_type==='sea'?'Sea':'Air')+' Freight</div>':'')
+          +'<button class="btn btn-primary" onclick="generateFreightDocs()" style="width:100%;justify-content:center">'
+          +'<i class="ti ti-download"></i> Generate &amp; Download Documents</button>'
+          +'<div style="font-size:11px;color:var(--text-secondary);text-align:center;margin-top:6px">Generates Customs Invoice &amp; SLI PDF &mdash; auto-saved to Drive</div>'
+          +'</div>';
+      }
+      return html;
+    })()}
+    <div id="detail-quote-summary"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+      ${!l.drive_folder_id?`<button class="btn btn-green" onclick="createFolderFromDetail()"><i class="ti ti-brand-google-drive"></i> Create Drive folder</button>`:''}
+      <button class="btn btn-danger" style="margin-left:auto" onclick="deleteLead('${l.id}')"><i class="ti ti-trash"></i> Delete lead</button>
+    </div>`;
+  try {
+    var qr = await sb('quotes?lead_id=eq.'+l.id+'&order=created_at.desc&limit=1');
+    var quotes = await qr.json();
+    var summaryEl = document.getElementById('detail-quote-summary');
+    if(summaryEl && quotes && quotes.length){
+      var q = quotes[0];
+      var liRes = await sb('quote_line_items?quote_id=eq.'+q.id+'&order=sort_order.asc');
+      var items = await liRes.json();
+      var itemsHtml = '';
+      if(items && items.length){
+        itemsHtml = '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:8px">'
+          +'<thead><tr style="background:var(--bg-primary)">'
+          +'<th style="padding:6px 8px;text-align:left;font-weight:700;border-bottom:1px solid var(--border-t)">Item</th>'
+          +'<th style="padding:6px 8px;text-align:center;font-weight:700;border-bottom:1px solid var(--border-t)">Qty</th>'
+          +'<th style="padding:6px 8px;text-align:right;font-weight:700;border-bottom:1px solid var(--border-t)">Rate</th>'
+          +'<th style="padding:6px 8px;text-align:right;font-weight:700;border-bottom:1px solid var(--border-t)">Amount</th>'
+          +'</tr></thead><tbody>';
+        items.forEach(function(item){
+          itemsHtml += '<tr style="border-bottom:1px solid var(--border-t)">'
+            +'<td style="padding:6px 8px">'
+            +(item.item_name?'<div style="font-weight:600">'+escHtml(item.item_name)+'</div>':'')
+            +(item.description?'<div style="color:var(--text-secondary);font-size:11px">'+escHtml(item.description)+'</div>':'')
+            +'</td>'
+            +'<td style="padding:6px 8px;text-align:center">'+Number(item.quantity||1)+'</td>'
+            +'<td style="padding:6px 8px;text-align:right">A$'+Number(item.rate||0).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})+'</td>'
+            +'<td style="padding:6px 8px;text-align:right;font-weight:600">A$'+Number(item.amount||0).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})+'</td>'
+            +'</tr>';
+        });
+        itemsHtml += '</tbody></table>';
+      }
+      summaryEl.innerHTML = '<div style="margin:16px 0;padding:14px;background:var(--bg-secondary);border-radius:var(--radius-md);border:1px solid var(--border-t)">'
+        +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'
+        +'<div style="font-size:13px;font-weight:700"><i class="ti ti-file-invoice"></i> Quote '+escHtml(q.quote_number)+'</div>'
+        +'<span style="font-size:11px;padding:2px 8px;border-radius:99px;font-weight:600;background:'+(q.status==='sent'?'rgba(34,197,94,0.12)':'rgba(245,158,11,0.12)')+';color:'+(q.status==='sent'?'var(--green)':'#b45309')+'">'+q.status+'</span>'
+        +'</div>'
+        + itemsHtml
+        +'<div style="display:flex;justify-content:flex-end;gap:16px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border-t)">'
+        +(q.gst_total>0?'<div style="font-size:12px;color:var(--text-secondary)">GST: A$'+Number(q.gst_total||0).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})+'</div>':'')
+        +'<div style="font-size:14px;font-weight:700">Total: A$'+Number(q.total||0).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})+'</div>'
+        +'</div>'
+        +'</div>';
+    } else if(summaryEl){summaryEl.innerHTML='';}
+  } catch(e){console.warn('Quote summary:',e);}
+}
+
+async function saveDetailEdits(){
+  if(!currentLead) return;
+  var patch={
+    name:document.getElementById('di-name').value,
+    company:document.getElementById('di-company').value,
+    contact:document.getElementById('di-contact').value,
+    mobile:document.getElementById('di-mobile').value,
+    project:document.getElementById('di-project').value,
+    client:document.getElementById('di-client').value,
+    notes:document.getElementById('di-notes').value,
+    updated_at:new Date().toISOString()
+  };
+  await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify(patch)});
+  Object.assign(currentLead,patch);
+  var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
+  if(idx>-1) Object.assign(leads[idx],patch);
+  document.getElementById('detailName').textContent=currentLead.name;
+  document.getElementById('detailSub').textContent=(currentLead.company||'')+(currentLead.project?' &#8226; '+currentLead.project:'');
+  renderBoard();
+  toast('Changes saved &#10003;');
+}
+
+function renderDetailEmails(){
+  const l=currentLead;
+  const fn=(l.name||'').split(' ')[0];
+  const to=l.contact||'';
+  const fromInfo=to?' &rarr; to <strong>'+to+'</strong>':'<span style="color:var(--danger)"> &mdash; add client email in Details first</span>';
+  const templates=[
+    {phase:'New Lead',name:'Quote acknowledgement',subj:l.name+' Quote Enquiry',body:'Hi '+fn+',\n\nThank you for submitting a quote request with us!\n\nWe are currently checking with our suppliers and will keep you updated as soon as we receive a response.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au'},
+    {phase:'Quoted',name:'Supplier enquiry',subj:'Quote Request for '+(l.company||''),body:'Hi '+fn+',\n\nI hope this email finds you well.\n\nWe have received a request from our client and would like to enquire about availability and pricing for '+(l.company||'your company')+'.\n\nCould you please provide a quote with lead times?\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au'},
+    {phase:'Client Approved',name:'Client approval & PO',subj:'Purchase Order - '+(l.company||''),body:'Hi '+fn+',\n\nThank you for your patience.\n\nThe quote has been approved and we would like to proceed with the attached purchase order.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au'},
+    {phase:'Freighting',name:'Freight documentation',subj:'Freight Documentation - '+(l.company||'')+' cargo',body:'Hi '+fn+',\n\nPlease see attached documentation for the cargo we will be dropping off.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au'},
+  ];
+  var header='<div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:9px 13px;margin-bottom:14px;font-size:12px;display:flex;align-items:center;gap:8px;border:0.5px solid var(--border-t)"><i class="ti ti-send" style="color:var(--purple)"></i> From <strong>sales@traverse-exports.com.au</strong>'+fromInfo+'</div>';
+  var rows=templates.map(function(t,i){
+    return '<div class="email-template">'
+      +'<div class="email-phase">'+t.phase+'</div>'
+      +'<div class="email-subject-line">'+escHtml(t.subj)+'</div>'
+      +'<div class="email-body" id="ebody-'+i+'" contenteditable="true">'+t.body+'</div>'
+      +'<div class="email-actions">'
+      +'<button class="btn btn-sm" onclick="copyEmailBody('+i+')"><i class="ti ti-copy"></i> Copy</button>'
+      +'<button class="btn btn-send btn-sm" id="sendBtn-'+i+'" onclick="sendFromTemplate('+i+',this.dataset.subj,this.dataset.name)" data-subj="'+t.subj.replace(/"/g,'&quot;')+'" data-name="'+t.name+'"><i class="ti ti-send"></i> Send</button>'
+      +'<span class="send-status" id="sendStatus-'+i+'"></span>'
+      +'</div></div>';
+  }).join('');
+  document.getElementById('dtab-emails').innerHTML=header+rows;
+}
+
+async function sendEmailViaFunction(to,subject,body,templateName,leadId){
+  const lid=leadId||currentLead?.id;
+  if(!to){toast('No client email on this lead','error');return false;}
+  toast('Sending...','sending');
+  try{
+    const res=await fetch(EMAIL_FN,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify({to,subject,body})});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error||'Send failed');
+    if(lid) await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:lid,action:'Email sent',detail:templateName+' &#8594; '+to})});
+    if(currentLead&&lid===currentLead.id){
+      const emailsSent=(currentLead.emails_sent||0)+1;
+      await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({emails_sent:emailsSent,updated_at:new Date().toISOString()})});
+      currentLead.emails_sent=emailsSent;
+      const idx=leads.findIndex(function(l){return l.id===currentLead.id;});
+      if(idx>-1) leads[idx].emails_sent=emailsSent;
+    }
+    setStatus('emailDot','emailLabel',true,'Email &#10003;');
+    document.getElementById('toast').classList.remove('show');
+    toast('Email sent to '+to+' &#10003;');
+    renderBoard();
+    if(lid===currentLead?.id) await renderDetailActivity();
+    return true;
+  }catch(e){
+    setStatus('emailDot','emailLabel',false,'Email error');
+    document.getElementById('toast').classList.remove('show');
+    toast('Send failed: '+e.message,'error');
+    return false;
+  }
+}
+
+async function sendFromTemplate(i,subjectArg,nameArg){
+  var btn=document.getElementById('sendBtn-'+i);
+  var subject=subjectArg||btn.dataset.subj||'';
+  var name=nameArg||btn.dataset.name||'';
+  var body=document.getElementById('ebody-'+i).innerText;
+  var status=document.getElementById('sendStatus-'+i);
+  btn.disabled=true;btn.innerHTML='<i class="ti ti-loader"></i> Sending...';
+  var ok=await sendEmailViaFunction(currentLead?currentLead.contact:null,subject,body,name);
+  if(ok){
+    btn.innerHTML='<i class="ti ti-check"></i> Sent';
+    status.textContent='Sent '+new Date().toLocaleTimeString();
+    setTimeout(function(){btn.innerHTML='<i class="ti ti-send"></i> Send';btn.disabled=false;status.textContent='';},4000);
+  } else {
+    btn.innerHTML='<i class="ti ti-send"></i> Send';btn.disabled=false;
+  }
+}
+function copyEmailBody(i){navigator.clipboard?.writeText(document.getElementById('ebody-'+i).innerText);toast('Copied &#10003;');}
+
+async function createDriveFolderForLead(lead){
+  toast('Creating Drive folder...','info');
+  try{
+    var folderName=(lead.doc_code||lead.name)+' - '+(lead.company||'');
+    folderName=folderName.trim();
+    var data=await callDriveAPI('create_folder',{folderName:folderName,leadId:lead.id});
+    if(!data.success) throw new Error(data.error||'Folder creation failed');
+    var folderId=data.folderId||'created';
+    var idx=leads.findIndex(function(l){return l.id===lead.id;});
+    if(idx>-1) leads[idx].drive_folder_id=folderId;
+    if(currentLead&&currentLead.id===lead.id) currentLead.drive_folder_id=folderId;
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:lead.id,action:'Drive folder created',detail:folderName})});
+    setStatus('driveDot','driveLabel',true,'Drive &#10003;');
+    toast('Drive folder created &#10003;');
+    renderBoard();
+    return folderId;
+  }catch(e){
+    setStatus('driveDot','driveLabel',false,'Drive error');
+    toast('Drive error: '+e.message,'error');
+    return null;
+  }
+}
+
+async function createFolderFromDetail(){
+  if(!currentLead) return;
+  await createDriveFolderForLead(currentLead);await renderDetailInfo();
+}
+
+async function renderDriveView(){
+  const el=document.getElementById('driveView');
+  el.innerHTML='<div class="empty-state"><i class="ti ti-loader"></i> Loading...</div>';
+  const withDrive=leads.filter(function(l){return l.drive_folder_id;});
+  const withoutDrive=leads.filter(function(l){return !l.drive_folder_id;});
+  let html='';
+  if(withDrive.length>0){
+    html+='<div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:8px">Linked folders ('+withDrive.length+')</div>';
+    html+=withDrive.map(function(l){return '<div class="drive-lead-card" style="cursor:pointer" onclick="openDetail(\''+l.id+'\')"><i class="ti ti-folder" style="font-size:22px;color:var(--amber)"></i><div style="flex:1"><div style="font-size:13px;font-weight:600">'+(l.doc_code||l.name)+'</div><div style="font-size:12px;color:var(--text-secondary)">'+(l.company||'')+' &middot; '+(l.project||'')+'</div></div><span style="font-size:11px;color:var(--green)"><i class="ti ti-check"></i> Linked</span></div>';}).join('');
+  }
+  if(withoutDrive.length>0){
+    html+='<div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin:16px 0 8px">No folder yet ('+withoutDrive.length+')</div>';
+    html+=withoutDrive.map(function(l){return '<div class="drive-lead-card"><i class="ti ti-folder" style="font-size:22px;color:var(--text-tertiary)"></i><div style="flex:1"><div style="font-size:13px;font-weight:600">'+l.name+'</div><div style="font-size:12px;color:var(--text-secondary)">'+(l.company||'')+'</div></div><button class="btn btn-green btn-sm" onclick="event.stopPropagation();quickCreateFolder(\''+l.id+'\')"><i class="ti ti-brand-google-drive"></i> Create</button></div>';}).join('');
+  }
+  if(leads.length===0) html='<div class="empty-state">No leads yet.</div>';
+  el.innerHTML=html;
+}
+
+async function quickCreateFolder(id){var lead=leads.find(function(l){return l.id===id;});if(lead){await createDriveFolderForLead(lead);renderDriveView();}}
+
+function renderDetailFiles(){
+  const l=currentLead;
+  document.getElementById('dtab-files').innerHTML=`
+    <div style="background:var(--bg-secondary);border:0.5px solid var(--border-t);border-radius:var(--radius-md);padding:12px 14px;margin-bottom:12px;display:flex;align-items:center;gap:12px">
+      <i class="ti ti-folder" style="font-size:28px;color:var(--amber)"></i>
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:600;margin-bottom:2px">${l.doc_code||l.name}</div>
+        <div style="font-size:11px;font-family:monospace;color:var(--text-secondary)">/Traverse CRM / ${l.client||l.company||'Client'} / ${l.project||'Project'} /</div>
+        <div style="font-size:11px;color:var(--text-tertiary);margin-top:3px">Quotes &middot; Invoices &middot; Purchase Orders &middot; Freight Docs &middot; Receipts</div>
+      </div>
+      ${l.drive_folder_id?'<span style="font-size:12px;color:var(--green)"><i class="ti ti-check"></i> Linked</span>':''}
+    </div>
+    ${!l.drive_folder_id
+      ?'<div style="text-align:center;padding:20px"><button class="btn btn-green" onclick="createFolderFromDetail()"><i class="ti ti-brand-google-drive"></i> Create Drive folder now</button></div>'
+      :'<a href="https://drive.google.com" target="_blank" class="btn btn-green btn-sm"><i class="ti ti-brand-google-drive"></i> Open Google Drive</a>'}`;
+}
+
+async function renderDetailActivity(){
+  document.getElementById('dtab-activity').innerHTML='<div class="empty-state">Loading...</div>';
+  try{
+    const res=await sb('activity_log?lead_id=eq.'+currentLead.id+'&order=created_at.desc&select=*');
+    const rows=await res.json();
+    const cfg={
+      'Lead created':{cls:'',icon:'ti-plus'},
+      'Email sent':{cls:'email-i',icon:'ti-mail'},
+      'Phase changed':{cls:'',icon:'ti-arrows-exchange'},
+      'Drive folder created':{cls:'drive-i',icon:'ti-brand-google-drive'},
+      'Quote sent':{cls:'quote-i',icon:'ti-file-invoice'},
+      'Quote approved':{cls:'drive-i',icon:'ti-check'},
+      'Moved to Quoted':{cls:'',icon:'ti-arrow-right'},
+      'Moved to Client Approved':{cls:'',icon:'ti-check'},
+      'Moved to Freighting':{cls:'',icon:'ti-ship'},
+      'Freight documents generated':{cls:'',icon:'ti-file-export'},
+    };
+    document.getElementById('dtab-activity').innerHTML=rows.length===0
+      ?'<div class="empty-state">No activity yet</div>'
+      :rows.map(function(r){var c=cfg[r.action]||{cls:'',icon:'ti-point'};return '<div class="activity-item"><div class="act-icon '+c.cls+'"><i class="ti '+c.icon+'"></i></div><div style="flex:1"><div style="font-size:13px">'+r.action+(r.detail?' &mdash; '+r.detail:'')+'</div><div style="font-size:11px;color:var(--text-tertiary)">'+(r.created_at||'').slice(0,16).replace('T',' ')+' UTC</div></div></div>';}).join('');
+  }catch(e){document.getElementById('dtab-activity').innerHTML='<div class="empty-state" style="color:var(--danger)">Could not load activity</div>';}
+}
+
+async function updatePhase(){
+  if(!currentLead) return;
+  const newPhase=parseInt(document.getElementById('detailPhaseSelect').value);
+  if(newPhase===currentLead.phase) return;
+  const old=currentLead.phase;
+  try{
+    await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({phase:newPhase,updated_at:new Date().toISOString()})});
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Phase changed',detail:'Phase '+(old+1)+' to Phase '+(newPhase+1)})});
+    currentLead.phase=newPhase;
+    const idx=leads.findIndex(function(l){return l.id===currentLead.id;});
+    if(idx>-1) leads[idx].phase=newPhase;
+    renderBoard();toast('Phase updated &#10003;');
+  }catch(e){toast('Update failed','error');}
+}
+
+async function deleteLead(id){
+  if(!confirm('Delete this lead? This cannot be undone.')) return;
+  try{await sb('leads?id=eq.'+id,{method:'DELETE'});closeModal('detailOverlay');await loadLeads();toast('Lead deleted');}
+  catch(e){toast('Delete failed','error');}
+}
+
+function switchDetailTab(tab,el){
+  document.querySelectorAll('.detail-tab').forEach(function(t){t.classList.remove('active');});
+  document.querySelectorAll('.detail-section').forEach(function(s){s.classList.remove('active');});
+  el.classList.add('active');
+  document.getElementById('dtab-'+tab).classList.add('active');
+  if(tab==='activity') renderDetailActivity();
+  if(tab==='files') renderDetailFiles();
+  if(tab==='quote') renderQuoteTab().catch(function(e){console.error('Quote tab error:',e);});
+}
+
+async function markQuoteApproved(){
+  if(!currentQuote) return;
+  await sb('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({status:'approved',updated_at:new Date().toISOString()})});
+  await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Quote approved',detail:currentQuote.quote_number+' approved by client'})});
+  currentQuote.status='approved';
+  const idx=leads.findIndex(function(l){return l.id===currentLead.id;});
+  if(idx>-1){leads[idx].quote_status='approved';}
+  currentLead.quote_status='approved';
+  renderBoard();
+  renderQuoteReview(document.getElementById('dtab-quote'));
+  toast('Quote marked as approved &#10003;');
+}
+
+async function renderQuoteTab(){
+  const el=document.getElementById('dtab-quote');
+  if(!el) return;
+  el.innerHTML='<div class="empty-state"><i class="ti ti-loader"></i> Loading...</div>';
+  try{
+    await loadCurrentQuote();
+    if(!currentQuote){renderDocumentScan(el);return;}
+    if(currentQuote.status==='sent'||currentQuote.status==='approved'||currentQuote.status==='invoiced'){renderQuoteReview(el);return;}
+    if(currentQuote&&currentQuote.status==='draft'&&currentLineItems.length>0){renderPricingStep(el);return;}
+    renderDocumentScan(el);
+  }catch(e){el.innerHTML='<div style="padding:20px;font-size:13px;color:var(--danger)">Error loading quote tab: '+e.message+'</div>';}
+}
+
+function renderDocumentScan(el){
+  el.innerHTML=`
+    <div style="text-align:center;padding:24px 16px">
+      <i class="ti ti-file-plus" style="font-size:40px;color:var(--purple);margin-bottom:12px;display:block"></i>
+      <div style="font-size:14px;font-weight:600;margin-bottom:6px">Start a Quote</div>
+      <div style="font-size:12px;color:var(--text-secondary);margin-bottom:16px">Create a new quote for this lead</div>
+      <button class="btn btn-primary" onclick="createNewQuote()"><i class="ti ti-plus"></i> New Quote</button>
+    </div>`;
+}
+
+async function createNewQuote(){
+  if(!currentLead) return;
+  const d=new Date();
+  const qNum='TIE-'+String(d.getFullYear()).slice(2)+String(d.getMonth()+1).padStart(2,'0')+'-'+String(Math.floor(Math.random()*9000)+1000);
+  const res=await sb('quotes',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,quote_number:qNum,status:'draft',client_name:currentLead.company||currentLead.name,client_address:'',subtotal:0,gst_total:0,total:0}),headers:{...sbH(authToken),'Prefer':'return=representation'}});
+  const rows=await res.json();
+  currentQuote=rows[0];
+  currentLineItems=[];
+  renderPricingStep(document.getElementById('dtab-quote'));
+}
+
+function renderPricingStep(el){
+  if(!currentQuote) return;
+  var itemRows=currentLineItems.map(function(item,i){
+    return '<tr>'
+      +'<td><input class="form-input" style="font-size:12px" value="'+escHtml(item.item_name||'')+'" oninput="currentLineItems['+i+'].item_name=this.value"></td>'
+      +'<td><input class="form-input" style="font-size:12px" value="'+escHtml(item.description||'')+'" oninput="currentLineItems['+i+'].description=this.value"></td>'
+      +'<td><input class="form-input" style="font-size:12px;width:60px;text-align:right" type="number" value="'+(item.quantity||1)+'" oninput="currentLineItems['+i+'].quantity=parseFloat(this.value)||1;recalcQuote()"></td>'
+      +'<td><input class="form-input" style="font-size:12px;width:80px;text-align:right" type="number" step="0.01" value="'+(item.rate||0)+'" oninput="currentLineItems['+i+'].rate=parseFloat(this.value)||0;recalcQuote()"></td>'
+      +'<td style="text-align:right;padding:6px 8px">A$'+(((item.quantity||1)*(item.rate||0))).toFixed(2)+'</td>'
+      +'<td><input type="checkbox" '+(item.gst_applicable?'checked':'')+' onchange="currentLineItems['+i+'].gst_applicable=this.checked;recalcQuote()"></td>'
+      +'<td><button class="btn btn-danger btn-sm" onclick="removeLineItem('+i+')"><i class="ti ti-trash"></i></button></td>'
+      +'</tr>';
+  }).join('');
+  var sub=currentLineItems.reduce(function(s,i){return s+(i.quantity||1)*(i.rate||0);},0);
+  var gst=currentLineItems.reduce(function(s,i){return s+(i.gst_applicable?(i.quantity||1)*(i.rate||0)*0.1:0);},0);
+  var total=sub+gst;
+  el.innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div style="font-size:14px;font-weight:600">${currentQuote.quote_number}</div>
+      <button class="btn btn-primary btn-sm" onclick="sendQuoteToClient()"><i class="ti ti-send"></i> Preview & Send</button>
+    </div>
+    <div style="margin-bottom:8px">
+      <input class="form-input" id="eq-client-name" placeholder="Client name" value="${escHtml(currentQuote.client_name||'')}">
+    </div>
+    <div style="margin-bottom:12px">
+      <input class="form-input" id="eq-client-addr" placeholder="Client address" value="${escHtml(currentQuote.client_address||'')}">
+    </div>
+    <div style="margin-bottom:12px">
+      <label class="form-label">Expiry date</label>
+      <input class="form-input" id="eq-expiry" type="date" value="${currentQuote.expiry_date||''}">
+    </div>
+    <table class="line-items-table" style="margin-bottom:8px">
+      <thead><tr><th>Item</th><th>Description</th><th style="text-align:right">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th><th style="text-align:center">GST</th><th></th></tr></thead>
+      <tbody id="liTbody">${itemRows}</tbody>
+    </table>
+    <button class="btn btn-sm" style="margin-bottom:12px" onclick="addLineItem()"><i class="ti ti-plus"></i> Add item</button>
+    <div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:10px 14px">
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>Subtotal</span><span>A$${sub.toFixed(2)}</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>GST</span><span>A$${gst.toFixed(2)}</span></div>
+      <div style="display:flex;justify-content:space-between;font-weight:700;font-size:15px;border-top:0.5px solid var(--border-t);padding-top:8px;margin-top:6px"><span>Total</span><span style="color:var(--accent)">A$${total.toFixed(2)}</span></div>
+    </div>`;
+}
+
+function recalcQuote(){renderPricingStep(document.getElementById('dtab-quote'));}
+function addLineItem(){currentLineItems.push({item_name:'',description:'',quantity:1,rate:0,gst_applicable:false,amount:0});renderPricingStep(document.getElementById('dtab-quote'));}
+function removeLineItem(i){currentLineItems.splice(i,1);renderPricingStep(document.getElementById('dtab-quote'));}
+
+async function sendQuoteToClient(){
+  if(!currentLead?.contact){toast('No client email on this lead &mdash; add one in Details first','error');return;}
+  const btn=document.getElementById('previewSendBtn')||{innerHTML:'',disabled:false};
+  const origHtml=btn.innerHTML;
+  btn.innerHTML='<i class="ti ti-loader"></i> Saving...';btn.disabled=true;
+  currentQuote.client_name=document.getElementById('eq-client-name')?.value||currentQuote.client_name;
+  currentQuote.client_address=document.getElementById('eq-client-addr')?.value||currentQuote.client_address;
+  currentQuote.expiry_date=document.getElementById('eq-expiry')?.value||currentQuote.expiry_date;
+  let sub=0,gst=0;
+  currentLineItems.forEach(function(item){const a=(item.quantity||1)*(item.rate||0);item.amount=a;sub+=a;if(item.gst_applicable)gst+=a*0.1;});
+  currentQuote.subtotal=sub;currentQuote.gst_total=gst;currentQuote.total=sub+gst;
+  await sb('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({client_name:currentQuote.client_name,client_address:currentQuote.client_address,expiry_date:currentQuote.expiry_date||null,subtotal:sub,gst_total:gst,total:sub+gst,status:'sent',updated_at:new Date().toISOString()})});
+  await sb('quote_line_items?quote_id=eq.'+currentQuote.id,{method:'DELETE'});
+  if(currentLineItems.length>0){
+    const toInsert=currentLineItems.map(function(item,i){return {quote_id:currentQuote.id,item_name:item.item_name,description:item.description,quantity:item.quantity,rate:item.rate,gst_applicable:item.gst_applicable,amount:item.amount,sort_order:i};});
+    await sb('quote_line_items',{method:'POST',body:JSON.stringify(toInsert)});
+  }
+  const subject='Quote '+currentQuote.quote_number+' &mdash; Traverse Imports & Exports';
+  const fn=(currentLead.name||'').split(' ')[0];
+  const body='Hi '+fn+',\\n\\nPlease find your quote '+currentQuote.quote_number+' attached.\\n\\nTotal: A$'+(currentQuote.total||0).toFixed(2)+'\\n\\nPlease review and let us know if you\'d like to proceed.\\n\\nKind regards,\\nTraverse Exports\\nsales@traverse-exports.com.au';
+  try{
+    const res=await fetch(EMAIL_FN,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify({to:currentLead.contact,subject,body})});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error||'Send failed');
+    await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({quote_status:'sent',emails_sent:(currentLead.emails_sent||0)+1,updated_at:new Date().toISOString()})});
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Quote sent',detail:currentQuote.quote_number+' sent to '+currentLead.contact})});
+    currentQuote.status='sent';currentLead.quote_status='sent';
+    const idx=leads.findIndex(function(l){return l.id===currentLead.id;});
+    if(idx>-1){leads[idx].quote_status='sent';leads[idx].emails_sent=(leads[idx].emails_sent||0)+1;}
+    renderBoard();
+    renderQuoteReview(document.getElementById('dtab-quote'));
+    toast('Quote sent to '+currentLead.contact+' &#10003;');
+  }catch(e){toast('Send failed: '+e.message,'error');btn.innerHTML=origHtml;btn.disabled=false;}
+}
+
+function renderQuoteReview(el){
+  const q=currentQuote;
+  if(!q){el.innerHTML='<div class="empty-state">No quote found</div>';return;}
+  const statusColors={sent:'#633806',approved:'var(--green)',invoiced:'var(--accent)',draft:'var(--text-secondary)'};
+  const statusBg={sent:'#FAEEDA',approved:'#EAF3DE',invoiced:'#E6F1FB',draft:'#f3f2f0'};
+  el.innerHTML=`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px">
+      <div>
+        <div style="font-size:14px;font-weight:600">${q.quote_number}</div>
+        <span style="font-size:11px;padding:3px 9px;border-radius:99px;font-weight:600;background:${statusBg[q.status]||'#f3f2f0'};color:${statusColors[q.status]||'var(--text-secondary)'};text-transform:capitalize;display:inline-block;margin-top:4px">${q.status}</span>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-sm" onclick="showEditableQuote()"><i class="ti ti-pencil"></i> Edit & preview</button>
+        ${q.status==='sent'||q.status==='draft'?`<button class="btn btn-amber btn-sm" onclick="reviseQuote()"><i class="ti ti-refresh"></i> Revise quote</button>`:''}
+        ${q.status==='sent'?`<button class="btn btn-green btn-sm" onclick="markQuoteApproved()"><i class="ti ti-check"></i> Client approved</button>`:''}
+      </div>
+    </div>
+    <div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:12px 16px;margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-secondary)">Client</span><span>${q.client_name||'&#8212;'}</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-secondary)">Expiry</span><span>${q.expiry_date?new Date(q.expiry_date).toLocaleDateString('en-AU'):'&#8212;'}</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-secondary)">Subtotal</span><span>A$${(q.subtotal||0).toFixed(2)}</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-secondary)">GST</span><span>A$${(q.gst_total||0).toFixed(2)}</span></div>
+      <div style="display:flex;justify-content:space-between;font-weight:700;font-size:15px;border-top:0.5px solid var(--border-t);padding-top:8px;margin-top:6px"><span>Total</span><span style="color:var(--accent)">A$${(q.total||0).toFixed(2)}</span></div>
+    </div>
+    <table class="line-items-table">
+      <thead><tr><th>Item</th><th>Description</th><th style="text-align:right">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th><th style="text-align:center">GST</th></tr></thead>
+      <tbody>${currentLineItems.map(function(item){return '<tr><td>'+escHtml(item.item_name||'')+'</td><td style="color:var(--text-secondary)">'+escHtml(item.description||'')+'</td><td style="text-align:right">'+(item.quantity||1).toFixed(0)+'</td><td style="text-align:right;color:var(--green);font-weight:600">A$'+(item.rate||0).toFixed(2)+'</td><td style="text-align:right;font-weight:500">A$'+(item.amount||0).toFixed(2)+'</td><td style="text-align:center;font-size:12px">'+(item.gst_applicable?'&#10003;':'&#8212;')+'</td></tr>';}).join('')}</tbody>
+    </table>`;
+}
+
+async function reviseQuote(){
+  await sb('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({status:'draft',updated_at:new Date().toISOString()})});
+  currentQuote.status='draft';
+  const idx=leads.findIndex(function(l){return l.id===currentLead.id;});
+  if(idx>-1) leads[idx].quote_status='draft';
+  currentLead.quote_status='draft';
+  toast('Quote reopened for revision');
+  renderPricingStep(document.getElementById('dtab-quote'));
+}
+
+function showEditableQuote(){
+  renderPricingStep(document.getElementById('dtab-quote'));
+}
+
+async function generateQBInvoice(){
+  toast('QuickBooks integration coming soon','info');
+}
+
+
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 
 try {

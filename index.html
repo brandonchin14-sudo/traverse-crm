@@ -7,6 +7,71 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css" onerror="this.onerror=null;this.href='https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/tabler-icons.min.css'">
+  <!-- Freight Documents Preview Modal -->
+  <div class="overlay" id="freightPreviewOverlay">
+    <div class="modal modal-xl">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title">Freight Documents &mdash; Review &amp; Edit</div>
+          <div class="modal-sub" id="freightPreviewSub"></div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn btn-primary" id="freightDownloadBtn" onclick="downloadFreightDocs()"><i class="ti ti-download"></i> Download Both PDFs</button>
+          <button class="close-btn" onclick="closeModal('freightPreviewOverlay')"><i class="ti ti-x"></i></button>
+        </div>
+      </div>
+      <!-- Tabs -->
+      <div class="detail-tabs">
+        <div class="detail-tab active" id="ftab-btn-invoice" onclick="switchFreightTab('invoice',this)"><i class="ti ti-file-invoice" style="font-size:12px"></i> Customs Invoice</div>
+        <div class="detail-tab" id="ftab-btn-sli" onclick="switchFreightTab('sli',this)"><i class="ti ti-file-description" style="font-size:12px"></i> SLI Document</div>
+      </div>
+      <div style="overflow-y:auto;max-height:65vh;padding:20px">
+        <!-- Customs Invoice Editor -->
+        <div id="ftab-invoice" style="display:block">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+            <div>
+              <div style="font-size:12px;font-weight:700;margin-bottom:10px;color:var(--text-secondary)">INVOICE DETAILS</div>
+              <div class="form-group"><label class="form-label">Invoice / Quote Number</label><input class="form-input" id="fi-number" placeholder="TIE-0001"></div>
+              <div class="form-group"><label class="form-label">Invoice Date</label><input class="form-input" id="fi-date" type="date"></div>
+            </div>
+            <div>
+              <div style="font-size:12px;font-weight:700;margin-bottom:10px;color:var(--text-secondary)">BILL TO</div>
+              <div class="form-group"><label class="form-label">Client Name / Company</label><input class="form-input" id="fi-client"></div>
+              <div class="form-group"><label class="form-label">Address Line 1</label><input class="form-input" id="fi-addr1"></div>
+              <div class="form-group"><label class="form-label">Address Line 2</label><input class="form-input" id="fi-addr2"></div>
+            </div>
+          </div>
+          <div style="font-size:12px;font-weight:700;margin-bottom:10px;color:var(--text-secondary)">LINE ITEMS</div>
+          <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:8px">
+            <thead>
+              <tr style="background:var(--bg-secondary)">
+                <th style="padding:8px;text-align:left;font-weight:700;border:1px solid var(--border-t)">#</th>
+                <th style="padding:8px;text-align:left;font-weight:700;border:1px solid var(--border-t)">Description</th>
+                <th style="padding:8px;text-align:right;font-weight:700;border:1px solid var(--border-t)">Qty</th>
+                <th style="padding:8px;text-align:right;font-weight:700;border:1px solid var(--border-t)">Unit Price</th>
+                <th style="padding:8px;text-align:right;font-weight:700;border:1px solid var(--border-t)">Total</th>
+                <th style="padding:8px;border:1px solid var(--border-t)"></th>
+              </tr>
+            </thead>
+            <tbody id="fi-items"></tbody>
+          </table>
+          <button class="btn btn-sm" onclick="addFreightInvoiceItem()"><i class="ti ti-plus"></i> Add item</button>
+          <div style="display:flex;justify-content:flex-end;margin-top:12px">
+            <div style="background:var(--bg-secondary);padding:12px 16px;border-radius:var(--radius-md);min-width:200px">
+              <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>Subtotal</span><span id="fi-subtotal">A$0.00</span></div>
+              <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>GST</span><span>A$0.00</span></div>
+              <div style="display:flex;justify-content:space-between;font-weight:700;font-size:14px;border-top:1px solid var(--border-t);padding-top:8px;margin-top:4px"><span>Total Payable</span><span id="fi-total" style="color:var(--accent)">A$0.00</span></div>
+            </div>
+          </div>
+        </div>
+        <!-- SLI Editor -->
+        <div id="ftab-sli" style="display:none">
+          <div id="sli-editor-content"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
 <script>
 // Ensure icons load &#8212; fallback to text if CDN fails
 window.addEventListener('load', function() {
@@ -851,11 +916,18 @@ function downloadBlob(buffer,filename,mimeType){
 }
 
 function generateCustomsInvoicePDF(d){
-  // Use jsPDF to generate the customs invoice
   var {jsPDF}=window.jspdf;
   var doc=new jsPDF('p','mm','a4');
   var pw=210,ph=297,ml=15,mt=15,mr=15;
   var cw=pw-ml-mr;
+  // Use override data from preview form if available
+  var ov=d._invoiceOverride||{};
+  var invoiceNum=ov.number||d.quote?.quote_number||'';
+  var invoiceDate=ov.date?new Date(ov.date).toLocaleDateString('en-AU'):d.invoice_date;
+  var clientName=ov.client||d.quote?.client_name||d.lead.company||d.lead.name||'';
+  var addr1=ov.addr1||(d.quote?.client_address||'').split(',')[0]||'';
+  var addr2=ov.addr2||(d.quote?.client_address||'').split(',').slice(1).join(',').trim()||'';
+  var lineItems=ov.items&&ov.items.length?ov.items.map(function(i){return {item_name:'',description:i.description,quantity:i.qty,rate:i.rate,amount:(i.qty||1)*(i.rate||0)};}):(d.line_items||[]);
   // Header
   doc.setFontSize(18);doc.setFont('helvetica','bold');
   doc.text('CUSTOMS INVOICE',pw/2,mt+8,{align:'center'});
@@ -869,18 +941,17 @@ function generateCustomsInvoicePDF(d){
   doc.text('INVOICE:',pw-mr-50,mt+16);
   doc.text('DATE:',pw-mr-50,mt+21);
   doc.setFont('helvetica','normal');
-  doc.text(d.quote?.quote_number||'',pw-mr-30,mt+16);
-  doc.text(d.invoice_date,pw-mr-30,mt+21);
+  doc.text(invoiceNum,pw-mr-30,mt+16);
+  doc.text(invoiceDate,pw-mr-30,mt+21);
   // Divider
   doc.setDrawColor(200,200,200);doc.line(ml,mt+34,pw-mr,mt+34);
   // Bill to
   var y=mt+40;
   doc.setFont('helvetica','bold');doc.text('INVOICE TO:',ml,y);
   doc.setFont('helvetica','normal');
-  var clientName=d.quote?.client_name||d.lead.company||d.lead.name||'';
-  var clientAddr=d.quote?.client_address||'';
   doc.text(clientName,ml,y+6);
-  if(clientAddr){doc.text(clientAddr,ml,y+11);}
+  if(addr1){doc.text(addr1,ml,y+11);}
+  if(addr2){doc.text(addr2,ml,y+16);}
   doc.setFont('helvetica','bold');doc.text('DELIVERY TO:',pw/2,y);
   doc.setFont('helvetica','normal');
   doc.text('As per freight booking',pw/2,y+6);
@@ -895,18 +966,19 @@ function generateCustomsInvoicePDF(d){
   doc.text('Line Total AUD$',ml+cw-15,y+5,{align:'right'});
   // Line items
   doc.setFont('helvetica','normal');
-  var items=d.line_items||[];
+  var items=lineItems;
   var subtotal=0;
   items.forEach(function(item,i){
     y+=8;
     if(i%2===1){doc.setFillColor(248,248,248);doc.rect(ml,y-4,cw,8,'F');}
     doc.text(String(i+1),ml+2,y+1);
-    doc.text(String(item.quantity||''),ml+12,y+1);
+    doc.text(String(item.quantity||item.qty||''),ml+12,y+1);
     var desc=(item.item_name||'')+(item.description?' - '+item.description:'');
+    if(!item.item_name) desc=item.description||'';
     if(desc.length>55) desc=desc.substring(0,52)+'...';
     doc.text(desc,ml+25,y+1);
     doc.text('$'+Number(item.rate||0).toFixed(2),ml+cw-35,y+1);
-    var lineTotal=Number(item.amount||0);
+    var lineTotal=Number(item.amount||((item.qty||item.quantity||1)*(item.rate||0)));
     subtotal+=lineTotal;
     doc.text('$'+lineTotal.toFixed(2),ml+cw-1,y+1,{align:'right'});
   });
@@ -2066,21 +2138,215 @@ function renderDetailFreight(){
 }
 
 async function generateFreightDocsFromForm(){
-  // Read values from form
-  window._freightGoods = document.getElementById('sli-goods')?.value||'';
-  window._freightPieces = document.getElementById('sli-pieces')?.value||'';
-  window._freightWeight = document.getElementById('sli-weight')?.value||'';
-  window._freightDims = document.getElementById('sli-dims')?.value||'';
-  window._freightMarks = document.getElementById('sli-marks')?.value||'';
-  // Pass to generateFreightDocs with override
-  window._freightFormData = {
-    goods_description: window._freightGoods,
-    pieces: window._freightPieces,
-    weight: window._freightWeight,
-    dimensions: window._freightDims,
-    marks: window._freightMarks
-  };
-  await generateFreightDocs();
+  if(!currentLead){toast('No lead selected','error');return;}
+  if(!currentLead.freight_carrier){toast('Please select a carrier first','error');return;}
+
+  var btn=event.target.closest('button');
+  if(btn){btn.disabled=true;btn.innerHTML='<i class="ti ti-loader"></i> Loading...';}
+
+  try{
+    // Read SLI form values
+    var fd={
+      goods_description:document.getElementById('sli-goods')?.value||'',
+      pieces:document.getElementById('sli-pieces')?.value||'',
+      weight:document.getElementById('sli-weight')?.value||'',
+      dimensions:document.getElementById('sli-dims')?.value||'',
+      marks:document.getElementById('sli-marks')?.value||''
+    };
+
+    // Fetch data from edge function
+    var res=await fetch(FREIGHT_DOCS_URL,{
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},
+      body:JSON.stringify({lead_id:currentLead.id})
+    });
+    var result=await res.json();
+    if(!result.success) throw new Error(result.error||'Failed to fetch data');
+    var d=result.data;
+
+    // Merge form data into d
+    if(fd.goods_description) d.goods_description=fd.goods_description;
+    d.pieces=fd.pieces;
+    d.weight=fd.weight;
+    d.dimensions=fd.dimensions;
+    d.marks=fd.marks;
+
+    // Store data globally for preview
+    window._freightPreviewData=d;
+
+    // Open preview modal and populate
+    openFreightPreview(d);
+  }catch(e){
+    toast('Error: '+e.message,'error');
+  }finally{
+    if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-eye"></i> Preview &amp; Edit Documents';}
+  }
+}
+
+function openFreightPreview(d){
+  var carrierName=d.lead.freight_carrier||'';
+  Object.values(FREIGHT_CARRIERS).forEach(function(arr){arr.forEach(function(c){if(c.id===d.lead.freight_carrier)carrierName=c.name;});});
+  document.getElementById('freightPreviewSub').textContent=carrierName+' &#8212; '+(d.lead.freight_type==='sea'?'Sea':'Air')+' Freight';
+
+  // Populate Customs Invoice fields
+  document.getElementById('fi-number').value=d.quote?.quote_number||'';
+  document.getElementById('fi-date').value=new Date().toISOString().slice(0,10);
+  var clientName=d.quote?.client_name||d.lead.company||d.lead.name||'';
+  var clientAddr=d.quote?.client_address||'';
+  document.getElementById('fi-client').value=clientName;
+  var addrParts=clientAddr.split(',');
+  document.getElementById('fi-addr1').value=(addrParts[0]||'').trim();
+  document.getElementById('fi-addr2').value=(addrParts.slice(1).join(',').trim());
+
+  // Populate line items
+  window._freightInvoiceItems=(d.line_items||[]).map(function(i){
+    return {description:(i.item_name||'')+(i.description?' - '+i.description:''),qty:i.quantity||1,rate:i.rate||0,amount:i.amount||0};
+  });
+  if(!window._freightInvoiceItems.length){
+    window._freightInvoiceItems=[{description:'',qty:1,rate:0,amount:0}];
+  }
+  renderFreightInvoiceItems();
+
+  // Populate SLI editor
+  renderSLIEditor(d, carrierName);
+
+  // Show modal
+  switchFreightTab('invoice',document.getElementById('ftab-btn-invoice'));
+  document.getElementById('freightPreviewOverlay').classList.add('open');
+}
+
+function switchFreightTab(tab,el){
+  document.getElementById('ftab-invoice').style.display=tab==='invoice'?'block':'none';
+  document.getElementById('ftab-sli').style.display=tab==='sli'?'block':'none';
+  document.querySelectorAll('#freightPreviewOverlay .detail-tab').forEach(function(t){t.classList.remove('active');});
+  if(el) el.classList.add('active');
+}
+
+function renderFreightInvoiceItems(){
+  var items=window._freightInvoiceItems||[];
+  var tbody=document.getElementById('fi-items');
+  if(!tbody) return;
+  var subtotal=0;
+  tbody.innerHTML=items.map(function(item,i){
+    var amt=(item.qty||1)*(item.rate||0);
+    subtotal+=amt;
+    return '<tr>'
+      +'<td style="padding:4px 6px;border:1px solid var(--border-t);text-align:center;color:var(--text-secondary)">'+(i+1)+'</td>'
+      +'<td style="padding:4px 6px;border:1px solid var(--border-t)"><input class="form-input" style="font-size:12px;border:0;padding:2px 4px" value="'+escHtml(item.description||'')+'" oninput="window._freightInvoiceItems['+i+'].description=this.value"></td>'
+      +'<td style="padding:4px 6px;border:1px solid var(--border-t)"><input class="form-input" style="font-size:12px;border:0;padding:2px 4px;width:60px;text-align:right" type="number" value="'+(item.qty||1)+'" oninput="window._freightInvoiceItems['+i+'].qty=parseFloat(this.value)||1;renderFreightInvoiceItems()"></td>'
+      +'<td style="padding:4px 6px;border:1px solid var(--border-t)"><input class="form-input" style="font-size:12px;border:0;padding:2px 4px;width:90px;text-align:right" type="number" step="0.01" value="'+(item.rate||0)+'" oninput="window._freightInvoiceItems['+i+'].rate=parseFloat(this.value)||0;renderFreightInvoiceItems()"></td>'
+      +'<td style="padding:4px 6px;border:1px solid var(--border-t);text-align:right;font-weight:600">A$'+amt.toFixed(2)+'</td>'
+      +'<td style="padding:4px 6px;border:1px solid var(--border-t);text-align:center"><button class="btn btn-danger btn-sm" style="padding:2px 6px" onclick="window._freightInvoiceItems.splice('+i+',1);renderFreightInvoiceItems()"><i class="ti ti-trash"></i></button></td>'
+      +'</tr>';
+  }).join('');
+  document.getElementById('fi-subtotal').textContent='A$'+subtotal.toFixed(2);
+  document.getElementById('fi-total').textContent='A$'+subtotal.toFixed(2);
+}
+
+function addFreightInvoiceItem(){
+  window._freightInvoiceItems=window._freightInvoiceItems||[];
+  window._freightInvoiceItems.push({description:'',qty:1,rate:0,amount:0});
+  renderFreightInvoiceItems();
+}
+
+function renderSLIEditor(d, carrierName){
+  var el=document.getElementById('sli-editor-content');
+  if(!el) return;
+  var clientName=d.quote?.client_name||d.lead.company||d.lead.name||'';
+  var clientAddr=d.quote?.client_address||'PO Box 521, Honiara, Solomon Islands';
+  var fobVal='AUD $'+Number(d.quote&&d.quote.total?d.quote.total:0).toFixed(2);
+  el.innerHTML='<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">'
+    +'<div>'
+    +'<div style="font-size:12px;font-weight:700;margin-bottom:10px;color:var(--text-secondary)">SHIPPER (pre-filled)</div>'
+    +'<div class="form-group"><label class="form-label">Company</label><input class="form-input" id="sli-shipper-company" value="Traverse Imports and Exports"></div>'
+    +'<div class="form-group"><label class="form-label">Address</label><input class="form-input" id="sli-shipper-addr" value="15 Riviera Road Miami QLD 4220"></div>'
+    +'<div class="form-group"><label class="form-label">Contact Name</label><input class="form-input" id="sli-shipper-contact" value="Brandon Chin"></div>'
+    +'<div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="sli-shipper-phone" value="0480 239 515"></div>'
+    +'<div class="form-group"><label class="form-label">Email</label><input class="form-input" id="sli-shipper-email" value="sales@traverse-exports.com.au"></div>'
+    +'</div>'
+    +'<div>'
+    +'<div style="font-size:12px;font-weight:700;margin-bottom:10px;color:var(--text-secondary)">CONSIGNEE / RECEIVER</div>'
+    +'<div class="form-group"><label class="form-label">Name / Company</label><input class="form-input" id="sli-consignee-name" value="'+escHtml(clientName)+'"></div>'
+    +'<div class="form-group"><label class="form-label">Address</label><input class="form-input" id="sli-consignee-addr" value="'+escHtml(clientAddr)+'"></div>'
+    +'<div class="form-group"><label class="form-label">Email</label><input class="form-input" id="sli-consignee-email" value="'+escHtml(d.lead.contact||'')+'"></div>'
+    +'<div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="sli-consignee-phone" value=""></div>'
+    +'</div>'
+    +'</div>'
+    +'<div style="border-top:1px solid var(--border-t);padding-top:16px;margin-bottom:16px">'
+    +'<div style="font-size:12px;font-weight:700;margin-bottom:10px;color:var(--text-secondary)">CARGO DETAILS</div>'
+    +'<div class="form-group"><label class="form-label">Description of Goods</label>'
+    +'<textarea class="form-input" id="sli-edit-goods" rows="3">'+escHtml(d.goods_description||'')+'</textarea></div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px">'
+    +'<div class="form-group"><label class="form-label">No. of Pieces</label><input class="form-input" id="sli-edit-pieces" value="'+escHtml(d.pieces||'')+'"></div>'
+    +'<div class="form-group"><label class="form-label">Gross Weight (KG)</label><input class="form-input" id="sli-edit-weight" value="'+escHtml(d.weight||'')+'"></div>'
+    +'<div class="form-group"><label class="form-label">Measurements (CBM)</label><input class="form-input" id="sli-edit-dims" value="'+escHtml(d.dimensions||'')+'"></div>'
+    +'<div class="form-group"><label class="form-label">Marks &amp; Numbers</label><input class="form-input" id="sli-edit-marks" value="'+escHtml(d.marks||'')+'"></div>'
+    +'</div>'
+    +'</div>'
+    +'<div style="border-top:1px solid var(--border-t);padding-top:16px">'
+    +'<div style="font-size:12px;font-weight:700;margin-bottom:10px;color:var(--text-secondary)">SHIPMENT</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">'
+    +'<div class="form-group"><label class="form-label">Mode of Transport</label><input class="form-input" id="sli-transport" value="'+(d.lead.freight_type==='sea'?'SEA FREIGHT':'AIR FREIGHT')+'"></div>'
+    +'<div class="form-group"><label class="form-label">Final Destination</label><input class="form-input" id="sli-destination" value="Honiara, Solomon Islands"></div>'
+    +'<div class="form-group"><label class="form-label">FOB / Customs Value</label><input class="form-input" id="sli-fob" value="'+escHtml(fobVal)+'"></div>'
+    +'</div>'
+    +'<div class="form-group"><label class="form-label">Special Instructions</label><textarea class="form-input" id="sli-special" rows="2"></textarea></div>'
+    +'</div>';
+}
+
+async function downloadFreightDocs(){
+  var btn=document.getElementById('freightDownloadBtn');
+  if(btn){btn.disabled=true;btn.innerHTML='<i class="ti ti-loader"></i> Generating...';}
+  try{
+    var d=window._freightPreviewData;
+    if(!d) throw new Error('No data');
+
+    // Build updated data from form
+    d.goods_description=document.getElementById('sli-edit-goods')?.value||d.goods_description;
+    d.pieces=document.getElementById('sli-edit-pieces')?.value||d.pieces;
+    d.weight=document.getElementById('sli-edit-weight')?.value||d.weight;
+    d.dimensions=document.getElementById('sli-edit-dims')?.value||d.dimensions;
+    d.marks=document.getElementById('sli-edit-marks')?.value||d.marks;
+
+    // Update consignee from SLI form
+    if(d.quote){
+      d.quote.client_name=document.getElementById('sli-consignee-name')?.value||d.quote.client_name;
+      d.quote.client_address=document.getElementById('sli-consignee-addr')?.value||d.quote.client_address;
+    }
+
+    // Update invoice from customs form
+    d._invoiceOverride={
+      number:document.getElementById('fi-number')?.value||'',
+      date:document.getElementById('fi-date')?.value||'',
+      client:document.getElementById('fi-client')?.value||'',
+      addr1:document.getElementById('fi-addr1')?.value||'',
+      addr2:document.getElementById('fi-addr2')?.value||'',
+      items:window._freightInvoiceItems||[]
+    };
+
+    // Generate both PDFs
+    var invoicePdf=generateCustomsInvoicePDF(d);
+    var sliPdf=generateSLIPDF(d);
+
+    var qNum=d.quote?.quote_number||d.lead.name||'';
+    downloadBlob(invoicePdf,'Customs_Invoice_'+qNum+'.pdf','application/pdf');
+    downloadBlob(sliPdf,'SLI_'+(d.lead.freight_carrier||'').toUpperCase()+'_'+qNum+'.pdf','application/pdf');
+
+    // Save to Drive
+    if(currentLead.drive_folder_id){
+      var invoiceB64=arrayBufferToBase64(invoicePdf);
+      var sliB64=arrayBufferToBase64(sliPdf);
+      await callDriveAPI('save_file',{folderId:currentLead.drive_folder_id,fileName:'Customs_Invoice_'+qNum+'.pdf',fileBase64:invoiceB64,mimeType:'application/pdf',subfolder:'Freight Docs'});
+      await callDriveAPI('save_file',{folderId:currentLead.drive_folder_id,fileName:'SLI_'+(d.lead.freight_carrier||'').toUpperCase()+'_'+qNum+'.pdf',fileBase64:sliB64,mimeType:'application/pdf',subfolder:'Freight Docs'});
+    }
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Freight documents generated',detail:'Customs Invoice and SLI for '+(d.lead.freight_carrier||'')})});
+    toast('Documents downloaded &#10003;');
+    closeModal('freightPreviewOverlay');
+  }catch(e){
+    toast('Error: '+e.message,'error');
+  }finally{
+    if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-download"></i> Download Both PDFs';}
+  }
 }
 
 

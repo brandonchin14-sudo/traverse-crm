@@ -480,7 +480,17 @@ async function saveFreightCarrier(val){
 }
 var QB_API_URL='https://dwmpunbcwrprhhzwduyx.supabase.co/functions/v1/quickbooks-api';
 var qbCustomers=[];
-function connectQB(){window.open('https://dwmpunbcwrprhhzwduyx.supabase.co/functions/v1/quickbooks-auth?action=connect','_blank','width=600,height=700');}
+function connectQB(){
+  var win=window.open('https://dwmpunbcwrprhhzwduyx.supabase.co/functions/v1/quickbooks-auth?action=connect','_blank','width=600,height=700');
+  // Poll until the popup closes, then check connection
+  var poll=setInterval(function(){
+    if(!win||win.closed){
+      clearInterval(poll);
+      toast('Checking QuickBooks connection...');
+      setTimeout(function(){checkQBConnection();},1500);
+    }
+  },800);
+}
 function connectDrive(){window.open(GOOGLE_AUTH_URL+'?action=connect','_blank','width=600,height=700');}
 
 async function callQB(action,extra){

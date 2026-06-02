@@ -566,10 +566,25 @@ async function loadQBCustomers(){
 }
 async function generateQBInvoice(){
   if(!currentLead||!currentQuote) return;
-  if(!currentQuote.qb_customer_id){toast('Select a QuickBooks customer in the Quote tab first','error');return;}
   toast('Creating QB invoice...','info');
+  // Use stored customer ID or fall back to client name from quote
+  var clientId=currentQuote.qb_customer_id||null;
+  if(!clientId){
+    // Try to find matching customer by name
+    try{
+      var cData=await callQB('get_customers',{query:(currentQuote.client_name||currentLead.company||currentLead.name||'').split(' ')[0]});
+      if(cData.success&&cData.customers&&cData.customers.length){
+        clientId=cData.customers[0].id;
+        toast('Matched QB customer: '+cData.customers[0].name,'info');
+      }
+    }catch(e){console.warn('Customer lookup failed:',e);}
+  }
+  if(!clientId){
+    toast('Could not find a matching QuickBooks customer. Check QB is connected and the customer exists.','error');
+    return;
+  }
   try{
-    var data=await callQB('create_invoice',{quote:currentQuote,lineItems:currentLineItems,clientId:currentQuote.qb_customer_id});
+        var data=await callQB('create_invoice',{quote:currentQuote,lineItems:currentLineItems,clientId:clientId});
     if(!data.success) throw new Error(data.error||'Failed');
     await sb('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({status:'invoiced',qb_invoice_id:data.invoice_id,updated_at:new Date().toISOString()})});
     await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({quote_status:'invoiced',updated_at:new Date().toISOString()})});
@@ -1632,6 +1647,7 @@ function renderQuoteReview(el){
     +'<button class="btn btn-sm" onclick="showEditableQuote()"><i class="ti ti-pencil"></i> Edit &amp; preview</button>'
     +(q.status==='sent'||q.status==='draft'?'<button class="btn btn-amber btn-sm" onclick="reviseQuote()"><i class="ti ti-refresh"></i> Revise quote</button>':'')
     +(q.status==='sent'?'<button class="btn btn-green btn-sm" onclick="markQuoteApproved()"><i class="ti ti-check"></i> Client approved</button>':'')
+    +(q.status==='approved'?'<button class="btn btn-primary btn-sm" onclick="generateQBInvoice()"><i class="ti ti-file-invoice"></i> Generate QB Invoice</button>':'')
     +'</div></div>'
     +'<div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:12px 16px;margin-bottom:14px">'
     +'<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-secondary)">Client</span><span>'+(q.client_name||'&#8212;')+'</span></div>'
@@ -1649,7 +1665,8 @@ function renderQuoteReview(el){
         +'<td style="text-align:center;font-size:12px">'+(item.gst_applicable?'&#10003;':'&#8212;')+'</td></tr>';
     }).join('')+'</tbody></table>'
     +(q.status==='sent'?'<div style="background:#FAEEDA;border:0.5px solid #633806;border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:#633806"><i class="ti ti-clock"></i> <strong>Awaiting client approval.</strong> Click Revise quote if changes needed, or Client approved once confirmed.</div>':'')
-    +(q.status==='approved'?'<div style="background:var(--green-light);border:0.5px solid var(--green);border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:var(--green)"><i class="ti ti-check"></i> <strong>Client approved.</strong></div>':'');
+    +(q.status==='approved'?'<div style="background:var(--green-light);border:0.5px solid var(--green);border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:var(--green)"><i class="ti ti-check"></i> <strong>Client approved.</strong> Click Generate QB Invoice above to create the invoice.</div>':'')
+    +(q.status==='invoiced'?'<div style="background:var(--accent-light);border:0.5px solid var(--accent);border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:var(--accent-dark)"><i class="ti ti-check"></i> <strong>Invoiced.</strong> QB Invoice: '+(q.qb_invoice_id||'Pending')+'</div>':'');
 }
 
 async function reviseQuote(){

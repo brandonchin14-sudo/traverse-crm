@@ -484,8 +484,19 @@ function connectQB(){window.open('https://dwmpunbcwrprhhzwduyx.supabase.co/funct
 function connectDrive(){window.open(GOOGLE_AUTH_URL+'?action=connect','_blank','width=600,height=700');}
 
 async function callQB(action,extra){
-  var res=await fetch(QB_API_URL,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify(Object.assign({action:action},extra||{}))});
-  return res.json();
+  try{
+    var body=Object.assign({action:action},extra||{});
+    var res=await fetch(QB_API_URL,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify(body)});
+    if(!res.ok){
+      var err=await res.json().catch(function(){return {};});
+      console.warn('QB API error ('+res.status+'):', JSON.stringify(err).substring(0,120));
+      return {success:false,error:err.error||'QB unavailable ('+res.status+')'};
+    }
+    return res.json();
+  }catch(e){
+    console.warn('QB call failed:',e.message);
+    return {success:false,error:e.message};
+  }
 }
 async function callDriveAPI(action, params) {
   var payload = Object.assign({action:action}, params||{});
@@ -542,9 +553,17 @@ async function checkDriveConnection(){
 async function checkQBConnection(){
   try{
     var data=await callQB('check_connection');
-    if(data.success){setStatus('qbDot','qbLabel',true,'QB &#10003;');document.getElementById('qbPill').title='QuickBooks: '+(data.company||'Connected');}
-    else setStatus('qbDot','qbLabel',false,'QB - click to connect');
-  }catch(e){setStatus('qbDot','qbLabel',false,'QB');}
+    if(data&&data.success){
+      setStatus('qbDot','qbLabel',true,'QB &#10003;'+(data.company?' ('+data.company+')':''));
+      qbConnected=true;
+    } else {
+      setStatus('qbDot','qbLabel',false,'QB &#215;');
+      qbConnected=false;
+    }
+  }catch(e){
+    setStatus('qbDot','qbLabel',false,'QB &#215;');
+    qbConnected=false;
+  }
 }
 async function loadQBCustomers(){
   try{
@@ -566,6 +585,12 @@ async function loadQBCustomers(){
 }
 async function generateQBInvoice(){
   if(!currentLead||!currentQuote) return;
+  // Check QB is connected before trying
+  var connCheck=await callQB('check_connection');
+  if(!connCheck||!connCheck.success){
+    toast('QuickBooks not connected. Click the QB button in the header to reconnect.','error');
+    return;
+  }
   toast('Creating QB invoice...','info');
   // Use stored customer ID or fall back to client name from quote
   var clientId=currentQuote.qb_customer_id||null;
@@ -649,9 +674,8 @@ function showApp(){
 setStatus('driveDot','driveLabel',true,'Drive &#10003;');
   setStatus('emailDot','emailLabel',true,'Email &#10003;');
   loadLeads();
-  checkQBConnection();
-  loadQBCustomers();
   checkDriveConnection();
+  // QB checked lazily - only when user opens invoice/QB flow
 }
 function doLogout(){
   if(!confirm('Sign out?'))return;

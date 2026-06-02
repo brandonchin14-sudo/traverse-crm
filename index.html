@@ -2733,6 +2733,165 @@ function switchView(view,el){
   if(view==='drive') renderDriveView();
 }
 
+
+function quoteStatusBadge(s){
+  var colors={sent:'#b45309',approved:'var(--green)',invoiced:'var(--accent)',draft:'var(--text-secondary)',none:'var(--text-secondary)'};
+  var bgs={sent:'#FAEEDA',approved:'#EAF3DE',invoiced:'#E6F1FB',draft:'#f3f2f0',none:'#f3f2f0'};
+  var st=s||'none';
+  return '<span style="font-size:11px;padding:2px 8px;border-radius:99px;font-weight:600;background:'+(bgs[st]||'#f3f2f0')+';color:'+(colors[st]||'var(--text-secondary)')+'">'+st+'</span>';
+}
+
+function renderQuoteReview(el){
+  var q=currentQuote;
+  if(!q){el.innerHTML='<div class="empty-state">No quote found</div>';return;}
+  var statusColors={sent:'#633806',approved:'var(--green)',invoiced:'var(--accent)',draft:'var(--text-secondary)'};
+  var statusBg={sent:'#FAEEDA',approved:'#EAF3DE',invoiced:'#E6F1FB',draft:'#f3f2f0'};
+  el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px">'
+    +'<div>'
+    +'<div style="font-size:14px;font-weight:600">'+escHtml(q.quote_number||'')+'</div>'
+    +'<span style="font-size:11px;padding:3px 9px;border-radius:99px;font-weight:600;background:'+(statusBg[q.status]||'#f3f2f0')+';color:'+(statusColors[q.status]||'var(--text-secondary)')+';text-transform:capitalize;display:inline-block;margin-top:4px">'+(q.status||'draft')+'</span>'
+    +'</div>'
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap">'
+    +'<button class="btn btn-sm" onclick="showEditableQuote()"><i class="ti ti-pencil"></i> Edit &amp; preview</button>'
+    +(q.status==='sent'||q.status==='draft'?'<button class="btn btn-amber btn-sm" onclick="reviseQuote()"><i class="ti ti-refresh"></i> Revise quote</button>':'')
+    +(q.status==='sent'?'<button class="btn btn-green btn-sm" onclick="markQuoteApproved()"><i class="ti ti-check"></i> Client approved</button>':'')
+    +'</div>'
+    +'</div>'
+    +'<div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:12px 16px;margin-bottom:14px">'
+    +'<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-secondary)">Client</span><span>'+(q.client_name||'&#8212;')+'</span></div>'
+    +'<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-secondary)">Expiry</span><span>'+(q.expiry_date?new Date(q.expiry_date).toLocaleDateString('en-AU'):'&#8212;')+'</span></div>'
+    +'<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-secondary)">Subtotal</span><span>A$'+(q.subtotal||0).toFixed(2)+'</span></div>'
+    +'<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-secondary)">GST</span><span>A$'+(q.gst_total||0).toFixed(2)+'</span></div>'
+    +'<div style="display:flex;justify-content:space-between;font-weight:700;font-size:15px;border-top:0.5px solid var(--border-t);padding-top:8px;margin-top:6px"><span>Total</span><span style="color:var(--accent)">A$'+(q.total||0).toFixed(2)+'</span></div>'
+    +'</div>'
+    +'<table class="line-items-table">'
+    +'<thead><tr><th>Item</th><th>Description</th><th style="text-align:right">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th><th style="text-align:center">GST</th></tr></thead>'
+    +'<tbody>'+(currentLineItems||[]).map(function(item){
+      return '<tr><td>'+escHtml(item.item_name||'')+'</td><td style="color:var(--text-secondary)">'+escHtml(item.description||'')+'</td>'
+        +'<td style="text-align:right">'+(item.quantity||1)+'</td>'
+        +'<td style="text-align:right;color:var(--green);font-weight:600">A$'+(item.rate||0).toFixed(2)+'</td>'
+        +'<td style="text-align:right;font-weight:500">A$'+(item.amount||0).toFixed(2)+'</td>'
+        +'<td style="text-align:center;font-size:12px">'+(item.gst_applicable?'&#10003;':'&#8212;')+'</td></tr>';
+    }).join('')+'</tbody>'
+    +'</table>';
+}
+
+async function reviseQuote(){
+  if(!currentQuote) return;
+  await sb('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({status:'draft',updated_at:new Date().toISOString()})});
+  currentQuote.status='draft';
+  var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
+  if(idx>-1) leads[idx].quote_status='draft';
+  currentLead.quote_status='draft';
+  toast('Quote reopened for revision');
+  renderPricingStep(document.getElementById('dtab-quote'));
+}
+
+function showEditableQuote(){
+  renderPricingStep(document.getElementById('dtab-quote'));
+}
+
+async function markQuoteApproved(){
+  if(!currentQuote) return;
+  await sb('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({status:'approved',updated_at:new Date().toISOString()})});
+  await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Quote approved',detail:currentQuote.quote_number+' approved by client'})});
+  currentQuote.status='approved';
+  var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
+  if(idx>-1) leads[idx].quote_status='approved';
+  currentLead.quote_status='approved';
+  renderBoard();
+  renderQuoteReview(document.getElementById('dtab-quote'));
+  toast('Quote marked as approved &#10003;');
+}
+
+async function sendQuoteToClient(){
+  if(!currentLead||!currentLead.contact){toast('No client email on this lead — add one in Details first','error');return;}
+  var origHtml='<i class="ti ti-send"></i> Preview &amp; Send';
+  currentQuote.client_name=document.getElementById('eq-client-name')?.value||currentQuote.client_name;
+  currentQuote.client_address=document.getElementById('eq-client-addr')?.value||currentQuote.client_address;
+  currentQuote.expiry_date=document.getElementById('eq-expiry')?.value||currentQuote.expiry_date;
+  var sub=0,gst=0;
+  currentLineItems.forEach(function(item){var a=(item.quantity||1)*(item.rate||0);item.amount=a;sub+=a;if(item.gst_applicable)gst+=a*0.1;});
+  currentQuote.subtotal=sub;currentQuote.gst_total=gst;currentQuote.total=sub+gst;
+  try{
+    await sb('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({client_name:currentQuote.client_name,client_address:currentQuote.client_address,expiry_date:currentQuote.expiry_date||null,subtotal:sub,gst_total:gst,total:sub+gst,status:'sent',updated_at:new Date().toISOString()})});
+    await sb('quote_line_items?quote_id=eq.'+currentQuote.id,{method:'DELETE'});
+    if(currentLineItems.length>0){
+      var toInsert=currentLineItems.map(function(item,i){return {quote_id:currentQuote.id,item_name:item.item_name,description:item.description,quantity:item.quantity,rate:item.rate,gst_applicable:item.gst_applicable,amount:item.amount,sort_order:i};});
+      await sb('quote_line_items',{method:'POST',body:JSON.stringify(toInsert)});
+    }
+    var subject='Quote '+currentQuote.quote_number+' - Traverse Imports & Exports';
+    var fn=(currentLead.name||'').split(' ')[0];
+    var body='Hi '+fn+',\n\nPlease find your quote '+currentQuote.quote_number+' attached.\n\nTotal: A$'+(currentQuote.total||0).toFixed(2)+'\n\nPlease review and let us know if you would like to proceed.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au';
+    var res=await fetch(EMAIL_FN,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify({to:currentLead.contact,subject:subject,body:body})});
+    var data=await res.json();
+    if(!res.ok) throw new Error(data.error||'Send failed');
+    await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({quote_status:'sent',emails_sent:(currentLead.emails_sent||0)+1,updated_at:new Date().toISOString()})});
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Quote sent',detail:currentQuote.quote_number+' sent to '+currentLead.contact})});
+    currentQuote.status='sent';currentLead.quote_status='sent';
+    var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
+    if(idx>-1){leads[idx].quote_status='sent';leads[idx].emails_sent=(leads[idx].emails_sent||0)+1;}
+    renderBoard();
+    renderQuoteReview(document.getElementById('dtab-quote'));
+    toast('Quote sent to '+currentLead.contact+' &#10003;');
+  }catch(e){toast('Send failed: '+e.message,'error');}
+}
+
+function renderReportTable(){
+  function invDate(l){return l.invoice_date?new Date(l.invoice_date):new Date(l.created_at);}
+  function fmtMoney(n){return 'A$'+Number(n||0).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2});}
+  var clientF=(document.getElementById('rpt-client')?.value||'').toLowerCase();
+  var projectF=(document.getElementById('rpt-project')?.value||'').toLowerCase();
+  var typeF=document.getElementById('rpt-type')?.value||'';
+  var fromF=document.getElementById('rpt-from')?.value||'';
+  var toF=document.getElementById('rpt-to')?.value||'';
+  var paidF=document.getElementById('rpt-paid')?.value||'';
+  var rows=leads.filter(function(l){
+    if(l.invoice_total<=0&&l.phase!==5) return false;
+    if(clientF&&!(l.name||'').toLowerCase().includes(clientF)&&!(l.company||'').toLowerCase().includes(clientF)) return false;
+    if(projectF&&!(l.project||'').toLowerCase().includes(projectF)) return false;
+    if(typeF&&(l.lead_type||'wholesale')!==typeF) return false;
+    var d=invDate(l);
+    if(fromF&&d<new Date(fromF)) return false;
+    if(toF&&d>new Date(toF)) return false;
+    if(paidF==='paid'&&l.invoice_paid===false) return false;
+    if(paidF==='pending'&&l.invoice_paid!==false) return false;
+    return true;
+  }).sort(function(a,b){return invDate(b)-invDate(a);});
+  var total=rows.reduce(function(s,l){return s+(l.invoice_total||0);},0);
+  var summaryEl=document.getElementById('rpt-summary');
+  if(summaryEl){
+    summaryEl.innerHTML='<div style="font-size:12px;color:var(--text-secondary);padding:6px 10px;background:var(--bg-secondary);border-radius:6px;border:1px solid var(--border-t)">'
+      +rows.length+' result(s) &nbsp;|&nbsp; Total: <strong>'+fmtMoney(total)+'</strong></div>';
+  }
+  var tbody=document.getElementById('rpt-tbody');
+  if(!tbody) return;
+  tbody.innerHTML=rows.map(function(l){
+    var d=invDate(l).toLocaleDateString('en-AU');
+    var type=l.lead_type==='project'?'<span style="font-size:11px;padding:1px 6px;border-radius:4px;background:rgba(124,58,237,0.1);color:var(--purple)">Project</span>':'<span style="font-size:11px;padding:1px 6px;border-radius:4px;background:rgba(180,83,9,0.1);color:#b45309">Wholesale</span>';
+    var status=l.invoice_paid===false?'<span style="font-size:11px;padding:1px 6px;border-radius:4px;background:#FAEEDA;color:#b45309">Pending</span>':'<span style="font-size:11px;padding:1px 6px;border-radius:4px;background:#EAF3DE;color:var(--green)">Paid</span>';
+    return '<tr style="border-bottom:1px solid var(--border-t);cursor:pointer" onclick="openDetail(this.dataset.id)" data-id="'+l.id+'">' 
+      +'<td style="padding:8px 12px;white-space:nowrap">'+d+'</td>'
+      +'<td style="padding:8px 12px;font-weight:600">'+escHtml(l.name||'')+'</td>'
+      +'<td style="padding:8px 12px;color:var(--text-secondary)">'+escHtml(l.project||'')+'</td>'
+      +'<td style="padding:8px 12px">'+type+'</td>'
+      +'<td style="padding:8px 12px;text-align:right;font-weight:600">'+fmtMoney(l.invoice_total||0)+'</td>'
+      +'<td style="padding:8px 12px;text-align:center">'+status+'</td>'
+      +'</tr>';
+  }).join('')+(rows.length===0?'<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--text-secondary)">No results</td></tr>':'');
+}
+
+function exportReportCSV(){
+  function invDate(l){return l.invoice_date?new Date(l.invoice_date):new Date(l.created_at);}
+  var rows=[['Date','Client','Company','Project','Type','Amount','Status']];
+  leads.filter(function(l){return l.invoice_total>0||l.phase===5;}).sort(function(a,b){return invDate(b)-invDate(a);}).forEach(function(l){
+    rows.push([invDate(l).toLocaleDateString('en-AU'),l.name||'',l.company||'',l.project||'',l.lead_type||'wholesale','A$'+(l.invoice_total||0).toFixed(2),l.invoice_paid===false?'Pending':'Paid']);
+  });
+  var csv=rows.map(function(r){return r.map(function(c){return '"'+String(c).replace(/"/g,'""')+'"';}).join(',');}).join('\n');
+  var blob=new Blob([csv],{type:'text/csv'});
+  var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='traverse_report.csv';a.click();
+}
+
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 
 try {
@@ -2743,7 +2902,6 @@ try {
   console.error('CRM init error:', e);
   document.getElementById('loginBtn').disabled = false;
   document.getElementById('loginBtn').innerHTML = '<i class="ti ti-login"></i> Sign in';
-}
-</script>
+}</script>
 </body>
 </html>

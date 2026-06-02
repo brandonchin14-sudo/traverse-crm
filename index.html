@@ -2208,7 +2208,7 @@ async function generateFreightDocsFromForm(){
 function openFreightPreview(d){
   var carrierName=d.lead.freight_carrier||'';
   Object.values(FREIGHT_CARRIERS).forEach(function(arr){arr.forEach(function(c){if(c.id===d.lead.freight_carrier)carrierName=c.name;});});
-  document.getElementById('freightPreviewSub').textContent=carrierName+' — '+(d.lead.freight_type==='sea'?'Sea':'Air')+' Freight';
+  document.getElementById('freightPreviewSub').textContent=carrierName+' &#8212; '+(d.lead.freight_type==='sea'?'Sea':'Air')+' Freight';
 
   var clientName=d.quote&&d.quote.client_name?d.quote.client_name:(d.lead.company||d.lead.name||'');
   var clientAddr=d.quote&&d.quote.client_address?d.quote.client_address:'';
@@ -2589,7 +2589,7 @@ function renderPricingStep(el){
   }).join('');
   el.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">'
     +'<div style="font-size:14px;font-weight:600">'+escHtml(currentQuote.quote_number)+'</div>'
-    +'<button class="btn btn-primary btn-sm" onclick="sendQuoteToClient()"><i class="ti ti-send"></i> Preview &amp; Send</button>'
+    +'<button class="btn btn-primary btn-sm" onclick="openQuotePreview()"><i class="ti ti-eye"></i> Preview &amp; Send</button>'
     +'</div>'
     +'<div style="margin-bottom:8px"><input class="form-input" id="eq-client-name" placeholder="Client name" value="'+escHtml(currentQuote.client_name||'')+'"></div>'
     +'<div style="margin-bottom:12px"><input class="form-input" id="eq-client-addr" placeholder="Client address" value="'+escHtml(currentQuote.client_address||'')+'"></div>'
@@ -2804,17 +2804,106 @@ async function markQuoteApproved(){
   toast('Quote marked as approved &#10003;');
 }
 
-async function sendQuoteToClient(){
-  if(!currentLead||!currentLead.contact){toast('No client email on this lead — add one in Details first','error');return;}
-  var origHtml='<i class="ti ti-send"></i> Preview &amp; Send';
-  currentQuote.client_name=document.getElementById('eq-client-name')?.value||currentQuote.client_name;
-  currentQuote.client_address=document.getElementById('eq-client-addr')?.value||currentQuote.client_address;
-  currentQuote.expiry_date=document.getElementById('eq-expiry')?.value||currentQuote.expiry_date;
+function openQuotePreview(){
+  if(!currentQuote) return;
+  // Save form values before preview
+  var cnEl=document.getElementById('eq-client-name');
+  var caEl=document.getElementById('eq-client-addr');
+  var exEl=document.getElementById('eq-expiry');
+  if(cnEl) currentQuote.client_name=cnEl.value||currentQuote.client_name;
+  if(caEl) currentQuote.client_address=caEl.value||currentQuote.client_address;
+  if(exEl) currentQuote.expiry_date=exEl.value||currentQuote.expiry_date;
   var sub=0,gst=0;
   currentLineItems.forEach(function(item){var a=(item.quantity||1)*(item.rate||0);item.amount=a;sub+=a;if(item.gst_applicable)gst+=a*0.1;});
   currentQuote.subtotal=sub;currentQuote.gst_total=gst;currentQuote.total=sub+gst;
+
+  // Populate preview modal
+  document.getElementById('previewQuoteNum').textContent=currentQuote.quote_number||'';
+
+  var clientName=currentQuote.client_name||currentLead.company||currentLead.name||'';
+  var clientAddr=currentQuote.client_address||'';
+  var today=new Date().toLocaleDateString('en-AU');
+  var expiry=currentQuote.expiry_date?new Date(currentQuote.expiry_date).toLocaleDateString('en-AU'):'-';
+
+  var itemRows=currentLineItems.map(function(item,i){
+    var amt=(item.quantity||1)*(item.rate||0);
+    return '<tr style="border-bottom:1px solid #f0f0f0;background:'+(i%2?'#fafafa':'#fff')+'">'
+      +'<td style="padding:8px 12px;color:#888">'+(i+1)+'</td>'
+      +'<td style="padding:8px 12px" contenteditable="true">'+escHtml(item.item_name||'')+'</td>'
+      +'<td style="padding:8px 12px" contenteditable="true" style="color:#666">'+escHtml(item.description||'')+'</td>'
+      +'<td style="padding:8px 12px;text-align:right" contenteditable="true">'+Number(item.quantity||1)+'</td>'
+      +'<td style="padding:8px 12px;text-align:right" contenteditable="true">'+Number(item.rate||0).toFixed(2)+'</td>'
+      +'<td style="padding:8px 12px;text-align:right;font-weight:600">'+amt.toFixed(2)+'</td>'
+      +'<td style="padding:8px 12px;text-align:center;font-size:12px">'+(item.gst_applicable?'&#10003;':'&#8212;')+'</td>'
+      +'</tr>';
+  }).join('');
+
+  var html='<div style="font-size:11px;color:var(--text-secondary);margin:0 24px 12px;padding:8px 12px;background:rgba(99,56,6,0.06);border-radius:6px;border-left:3px solid #b45309"><i class="ti ti-pencil"></i> Click any highlighted field to edit directly on the document before sending.</div>'
+    +'<div style="max-width:760px;margin:0 auto 24px;font-family:helvetica,sans-serif;font-size:13px;background:#fff;border:1px solid #e0e0e0;border-radius:8px;overflow:hidden">'
+    // Dark header
+    +'<div style="background:#1a1a1a;color:#fff;padding:18px 24px;display:flex;justify-content:space-between;align-items:flex-start">'
+    +'<div><div style="font-size:15px;font-weight:700">Traverse Imports &amp; Exports P/L</div>'
+    +'<div style="font-size:11px;opacity:0.7;margin-top:3px">15 Riviera Road, Miami QLD 4220</div>'
+    +'<div style="font-size:11px;opacity:0.7">+61 402 393 464 &nbsp;|&nbsp; accounts@traverse-exports.com.au &nbsp;|&nbsp; ABN 27 058 599 795</div></div>'
+    +'<div style="text-align:right"><div style="font-size:26px;font-weight:700;letter-spacing:1px">QUOTE</div>'
+    +'<div style="font-size:13px;opacity:0.85;margin-top:2px">'+escHtml(currentQuote.quote_number||'')+'</div></div>'
+    +'</div>'
+    // Client + dates row
+    +'<div style="display:grid;grid-template-columns:1fr auto;border-bottom:1px solid #e8e8e8">'
+    +'<div style="padding:16px 24px">'
+    +'<div style="font-size:10px;font-weight:700;color:#888;letter-spacing:1px;margin-bottom:6px">ADDRESS</div>'
+    +'<div style="font-size:14px;font-weight:600;outline:none;border-bottom:1px dashed #ccc;padding-bottom:2px;margin-bottom:4px;min-width:200px" contenteditable="true" id="pv-client">'+escHtml(clientName)+'</div>'
+    +'<div style="font-size:12px;color:#555;outline:none;border-bottom:1px dashed #ccc;padding-bottom:2px;min-width:200px" contenteditable="true" id="pv-addr">'+escHtml(clientAddr)+'</div>'
+    +'</div>'
+    +'<div style="padding:16px 24px;text-align:right;min-width:160px">'
+    +'<div style="font-size:10px;font-weight:700;color:#888;letter-spacing:1px;margin-bottom:4px">DATE</div>'
+    +'<div style="font-size:12px;margin-bottom:10px">'+today+'</div>'
+    +'<div style="font-size:10px;font-weight:700;color:#888;letter-spacing:1px;margin-bottom:4px">EXPIRATION DATE</div>'
+    +'<div style="font-size:12px;outline:none;border-bottom:1px dashed #ccc;padding-bottom:2px" contenteditable="true" id="pv-expiry">'+expiry+'</div>'
+    +'</div>'
+    +'</div>'
+    // Line items table
+    +'<table style="width:100%;border-collapse:collapse;font-size:12px">'
+    +'<thead><tr style="background:#1a1a1a;color:#fff">'
+    +'<th style="padding:8px 12px;text-align:left;font-weight:600;width:4%">#</th>'
+    +'<th style="padding:8px 12px;text-align:left;font-weight:600;width:18%">Activity</th>'
+    +'<th style="padding:8px 12px;text-align:left;font-weight:600">Description</th>'
+    +'<th style="padding:8px 12px;text-align:right;font-weight:600;width:7%">Qty</th>'
+    +'<th style="padding:8px 12px;text-align:right;font-weight:600;width:11%">Rate</th>'
+    +'<th style="padding:8px 12px;text-align:right;font-weight:600;width:11%">Amount AUD$</th>'
+    +'<th style="padding:8px 12px;text-align:center;font-weight:600;width:6%">GST</th>'
+    +'</tr></thead>'
+    +'<tbody id="pv-items">'+itemRows+'</tbody>'
+    +'</table>'
+    // Totals
+    +'<div style="display:flex;justify-content:flex-end;padding:16px 24px;border-top:1px solid #e8e8e8">'
+    +'<div style="min-width:220px">'
+    +'<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px;color:#555;border-bottom:1px solid #f0f0f0"><span>Subtotal</span><span>A$'+sub.toFixed(2)+'</span></div>'
+    +'<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px;color:#555;border-bottom:1px solid #f0f0f0"><span>GST (10%)</span><span>A$'+gst.toFixed(2)+'</span></div>'
+    +'<div style="display:flex;justify-content:space-between;padding:8px 0 0;font-size:16px;font-weight:700"><span>TOTAL AUD</span><span>$'+currentQuote.total.toFixed(2)+'</span></div>'
+    +'</div></div>'
+    // Bank details
+    +'<div style="background:#f5f5f5;padding:12px 24px;font-size:11px;color:#555;border-top:1px solid #e8e8e8">'
+    +'<strong>Bank Details &#8212; Westpac Bank</strong> &nbsp;|&nbsp; Branch: Pacific Fair Shopping Centre, Broadbeach QLD 4218 &nbsp;|&nbsp; Swift: WPACAU2SXXX &nbsp;|&nbsp; BSB: 034-637 &nbsp;|&nbsp; Account: 21-1660'
+    +'</div>'
+    +'<div style="text-align:center;padding:14px;font-weight:700;font-size:13px;color:#1a1a1a;letter-spacing:0.5px">THANK YOU FOR YOUR BUSINESS!</div>'
+    +'</div>';
+
+  document.getElementById('quotePreviewContent').innerHTML=html;
+  document.getElementById('previewOverlay').classList.add('open');
+}
+
+async function sendQuoteToClient(){
+  // Read any edits made in the preview
+  var pvClient=document.getElementById('pv-client');
+  var pvAddr=document.getElementById('pv-addr');
+  if(pvClient) currentQuote.client_name=pvClient.innerText.trim()||currentQuote.client_name;
+  if(pvAddr) currentQuote.client_address=pvAddr.innerText.trim()||currentQuote.client_address;
+
+  var btn=document.getElementById('previewSendBtn');
+  if(btn){btn.disabled=true;btn.innerHTML='<i class="ti ti-loader"></i> Sending...';}
   try{
-    await sb('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({client_name:currentQuote.client_name,client_address:currentQuote.client_address,expiry_date:currentQuote.expiry_date||null,subtotal:sub,gst_total:gst,total:sub+gst,status:'sent',updated_at:new Date().toISOString()})});
+    await sb('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({client_name:currentQuote.client_name,client_address:currentQuote.client_address,expiry_date:currentQuote.expiry_date||null,subtotal:currentQuote.subtotal,gst_total:currentQuote.gst_total,total:currentQuote.total,status:'sent',updated_at:new Date().toISOString()})});
     await sb('quote_line_items?quote_id=eq.'+currentQuote.id,{method:'DELETE'});
     if(currentLineItems.length>0){
       var toInsert=currentLineItems.map(function(item,i){return {quote_id:currentQuote.id,item_name:item.item_name,description:item.description,quantity:item.quantity,rate:item.rate,gst_applicable:item.gst_applicable,amount:item.amount,sort_order:i};});
@@ -2822,7 +2911,7 @@ async function sendQuoteToClient(){
     }
     var subject='Quote '+currentQuote.quote_number+' - Traverse Imports & Exports';
     var fn=(currentLead.name||'').split(' ')[0];
-    var body='Hi '+fn+',\n\nPlease find your quote '+currentQuote.quote_number+' attached.\n\nTotal: A$'+(currentQuote.total||0).toFixed(2)+'\n\nPlease review and let us know if you would like to proceed.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au';
+    var body='Hi '+fn+',\n\nPlease find your quote '+currentQuote.quote_number+' attached.\n\nTotal: A$'+currentQuote.total.toFixed(2)+'\n\nPlease review and let us know if you would like to proceed.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au';
     var res=await fetch(EMAIL_FN,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify({to:currentLead.contact,subject:subject,body:body})});
     var data=await res.json();
     if(!res.ok) throw new Error(data.error||'Send failed');
@@ -2831,10 +2920,14 @@ async function sendQuoteToClient(){
     currentQuote.status='sent';currentLead.quote_status='sent';
     var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
     if(idx>-1){leads[idx].quote_status='sent';leads[idx].emails_sent=(leads[idx].emails_sent||0)+1;}
+    closeModal('previewOverlay');
     renderBoard();
     renderQuoteReview(document.getElementById('dtab-quote'));
     toast('Quote sent to '+currentLead.contact+' &#10003;');
-  }catch(e){toast('Send failed: '+e.message,'error');}
+  }catch(e){
+    toast('Send failed: '+e.message,'error');
+    if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-send"></i> Save &amp; send to client';}
+  }
 }
 
 function renderReportTable(){

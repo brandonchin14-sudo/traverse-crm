@@ -619,8 +619,8 @@ const DOTS=['dot-blue','dot-amber','dot-green','dot-teal'];
 let leads=[],currentLead=null,currentQuote=null,currentLineItems=[],authToken=null,currentUser=null;
 
 /* &#9472;&#9472; AUTH &#9472;&#9472; */
-function sbH(token){return{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+(token||SB_KEY)};}
-function sb(path,opts={}){return fetch(SB_URL+'/rest/v1/'+path,{headers:sbH(authToken),...opts});}
+function sbH(token,extra){return Object.assign({'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+(token||SB_KEY)},extra||{});}
+function sb(path,opts){opts=opts||{};var prefer=opts.prefer;var o=Object.assign({},opts);delete o.prefer;return fetch(SB_URL+'/rest/v1/'+path,{headers:sbH(authToken,prefer?{'Prefer':prefer}:null),method:o.method||'GET',body:o.body});}
 function sbRpc(fn,params={}){return fetch(SB_URL+'/rest/v1/rpc/'+fn,{method:'POST',headers:sbH(authToken),body:JSON.stringify(params)});}
 
 async function doLogin(){
@@ -1405,7 +1405,7 @@ async function handleScanFile(file){
       var qNum='TIE-'+String(d.getFullYear()).slice(2)+String(d.getMonth()+1).padStart(2,'0')+'-'+String(Math.floor(Math.random()*9000)+1000);
       var cn=data.client_name||currentLead.company||currentLead.name||'';
       var ca=data.client_address||'';
-      var res=await sb('quotes',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,quote_number:qNum,status:'draft',client_name:cn,client_address:ca,subtotal:0,gst_total:0,total:0}),headers:{...sbH(authToken),'Prefer':'return=representation'}});
+      var res=await sb('quotes',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,quote_number:qNum,status:'draft',client_name:cn,client_address:ca,subtotal:0,gst_total:0,total:0}),prefer:'return=representation'});
       var rows=await res.json();
       currentQuote=rows[0];
     }
@@ -1417,7 +1417,7 @@ async function handleScanFile(file){
     toast('Scanned '+currentLineItems.length+' items &#10003; &mdash; add pricing below');
     renderPricingStep(el);
   }catch(e){
-    el.innerHTML='<div style="padding:20px;font-size:13px;color:var(--danger)"><i class="ti ti-alert-circle"></i> Scan failed: '+e.message+'</div>';
+    el.innerHTML='<div style="padding:20px;font-size:13px;color:var(--danger);text-align:center"><i class="ti ti-alert-circle" style="font-size:24px;display:block;margin-bottom:8px"></i><strong>Scan failed:</strong> '+e.message+'<br><br><button class="btn" onclick="renderDocumentScan(document.getElementById(String.fromCharCode(100,116,97,98,45,113,117,111,116,101)))">Try again</button></div>';
     toast('Scan failed: '+e.message,'error');
   }
 }
@@ -1440,7 +1440,7 @@ async function scanDocument(file){
   var res=await fetch(SB_URL+'/functions/v1/scan-document',{
     method:'POST',
     headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},
-    body:JSON.stringify({base64:b64,mediaType:file.type,isPdf:isPdf})
+    body:JSON.stringify({action:'scan',base64:b64,mediaType:file.type,isPdf:isPdf})
   });
   var result=await res.json();
   if(!res.ok||!result.success) throw new Error(result.error||'Scan failed');

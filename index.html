@@ -1458,7 +1458,14 @@ function renderPricingStep(el){
       +'<td><button class="btn btn-danger btn-sm" onclick="removeLineItem('+i+')"><i class="ti ti-trash"></i></button></td>'
       +'</tr>';
   }).join('');
-  el.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">'
+  el.innerHTML='<div style="border:1px dashed var(--border-t);border-radius:var(--radius-md);padding:10px 14px;margin-bottom:14px;background:var(--bg-secondary);display:flex;align-items:center;gap:10px;cursor:pointer" id="scan-dropzone-pricing">'
+    +'<i class="ti ti-scan" style="font-size:20px;color:var(--purple);flex-shrink:0"></i>'
+    +'<div style="flex:1"><div style="font-size:12px;font-weight:600">Upload supplier quote to auto-fill items</div>'
+    +'<div style="font-size:11px;color:var(--text-secondary)">Drop a PDF or image here &mdash; AI extracts line items</div></div>'
+    +'<input type="file" id="scan-file-input-pricing" accept=".pdf,.jpg,.jpeg,.png" style="display:none">'
+    +'<i class="ti ti-upload" style="font-size:16px;color:var(--purple)"></i>'
+    +'</div>'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">'
     +'<div style="font-size:14px;font-weight:600">'+escHtml(currentQuote.quote_number)+'</div>'
     +'<button class="btn btn-primary btn-sm" onclick="openQuotePreview()"><i class="ti ti-eye"></i> Preview &amp; Send</button>'
     +'</div>'
@@ -1474,6 +1481,16 @@ function renderPricingStep(el){
     +'<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>GST</span><span>A$'+gst.toFixed(2)+'</span></div>'
     +'<div style="display:flex;justify-content:space-between;font-weight:700;font-size:15px;border-top:0.5px solid var(--border-t);padding-top:8px;margin-top:6px"><span>Total</span><span style="color:var(--accent)">A$'+total.toFixed(2)+'</span></div>'
     +'</div>';
+  // Wire scan-while-editing upload zone
+  var sdz=document.getElementById('scan-dropzone-pricing');
+  var sfi=document.getElementById('scan-file-input-pricing');
+  if(sdz&&sfi){
+    sdz.addEventListener('click',function(e){if(e.target!==sfi)sfi.click();});
+    sdz.addEventListener('dragover',function(e){e.preventDefault();sdz.style.borderColor='var(--purple)';sdz.style.background='rgba(124,58,237,0.05)';});
+    sdz.addEventListener('dragleave',function(){sdz.style.borderColor='var(--border-t)';sdz.style.background='var(--bg-secondary)';});
+    sdz.addEventListener('drop',function(e){e.preventDefault();sdz.style.borderColor='var(--border-t)';sdz.style.background='var(--bg-secondary)';if(e.dataTransfer.files[0])handleScanFile(e.dataTransfer.files[0]);});
+    sfi.addEventListener('change',function(){if(sfi.files[0])handleScanFile(sfi.files[0]);});
+  }
 }
 
 function recalcQuote(){renderPricingStep(document.getElementById('dtab-quote'));}

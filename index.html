@@ -1737,6 +1737,9 @@ function showEditableQuote(){
 }
 
 async function sendQuoteToClient(){
+  if(!currentQuote||!currentQuote.id){toast('No quote loaded. Please reopen the quote and try again.','error');return;}
+  if(!currentLead){toast('No lead selected.','error');return;}
+  if(!currentLead.contact){toast('This lead has no email address. Add one in the Details tab before sending.','error');return;}
   var pvClient=document.getElementById('pv-client');
   var pvAddr=document.getElementById('pv-addr');
   if(pvClient) currentQuote.client_name=pvClient.innerText.trim()||currentQuote.client_name;
@@ -1747,11 +1750,11 @@ async function sendQuoteToClient(){
     var pdfB64=null;
     try{if(typeof window.jspdf!=='undefined') pdfB64=generateQuotePDF(currentQuote,currentLineItems);}catch(pe){console.warn('PDF:',pe);}
     if(btn) btn.innerHTML='<i class="ti ti-loader"></i> Saving...';
-    await sb('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({client_name:currentQuote.client_name,client_address:currentQuote.client_address,expiry_date:currentQuote.expiry_date||null,subtotal:currentQuote.subtotal,gst_total:currentQuote.gst_total,total:currentQuote.total,status:'sent',updated_at:new Date().toISOString()})});
-    await sb('quote_line_items?quote_id=eq.'+currentQuote.id,{method:'DELETE'});
+    await sbWrite('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({client_name:currentQuote.client_name,client_address:currentQuote.client_address,expiry_date:currentQuote.expiry_date||null,subtotal:currentQuote.subtotal,gst_total:currentQuote.gst_total,total:currentQuote.total,status:'sent',updated_at:new Date().toISOString()})});
+    await sbWrite('quote_line_items?quote_id=eq.'+currentQuote.id,{method:'DELETE'});
     if(currentLineItems.length>0){
-      var ins=currentLineItems.map(function(item,i){return {quote_id:currentQuote.id,item_name:item.item_name,description:item.description,quantity:item.quantity,rate:item.rate,gst_applicable:item.gst_applicable,amount:item.amount,sort_order:i};});
-      await sb('quote_line_items',{method:'POST',body:JSON.stringify(ins)});
+      var ins=currentLineItems.map(function(item,i){return {quote_id:currentQuote.id,item_name:item.item_name||'',description:item.description||'',quantity:Number(item.quantity)||1,rate:Number(item.rate)||0,gst_applicable:item.gst_applicable!==false,amount:Number(item.amount)||0,sort_order:i};});
+      await sbWrite('quote_line_items',{method:'POST',body:JSON.stringify(ins)});
     }
     if(btn) btn.innerHTML='<i class="ti ti-loader"></i> Sending...';
     var subject='Quote '+currentQuote.quote_number+' - Traverse Imports & Exports';

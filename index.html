@@ -1478,7 +1478,7 @@ async function renderQuoteTab(){
     await loadCurrentQuote();
     if(!currentQuote){renderDocumentScan(el);return;}
     if(currentQuote.status==='sent'||currentQuote.status==='approved'||currentQuote.status==='invoiced'){renderQuoteReview(el);return;}
-    if(currentQuote&&currentQuote.status==='draft'&&currentLineItems.length>0){renderPricingStep(el);return;}
+    if(currentQuote&&currentQuote.status==='draft'){renderPricingStep(el);return;}
     renderDocumentScan(el);
   }catch(e){el.innerHTML='<div style="padding:20px;font-size:13px;color:var(--danger)">Error loading quote: '+e.message+'</div>';}
 }
@@ -1534,7 +1534,9 @@ async function handleScanFile(file){
     }
     // Populate line items from scan
     currentLineItems=(data.line_items||[]).map(function(item,i){
-      return {item_name:item.item_name||item.name||'',description:item.description||'',quantity:item.quantity||1,rate:0,gst_applicable:item.gst_applicable!==false,amount:0,sort_order:i};
+      var cost=parseFloat(item.unit_cost||item.cost||0)||0;
+      var qty=parseFloat(item.quantity)||1;
+      return {item_name:item.item_name||item.name||'',description:item.description||'',quantity:qty,cost:cost,rate:cost,gst_applicable:false,manual:false,amount:cost*qty,sort_order:i};
     });
     await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Document scanned',detail:'Extracted '+currentLineItems.length+' line items'})});
     toast('Scanned '+currentLineItems.length+' items &#10003; &mdash; add pricing below');
@@ -1585,24 +1587,27 @@ async function createNewQuote(){
 
 function renderPricingStep(el){
   if(!currentQuote||!el) return;
+  var markup=(typeof currentQuote.markup_pct==='number')?currentQuote.markup_pct:(parseFloat(currentQuote.markup_pct)||0);
   var sub=currentLineItems.reduce(function(s,i){return s+(i.quantity||1)*(i.rate||0);},0);
   var gst=currentLineItems.reduce(function(s,i){return s+(i.gst_applicable?(i.quantity||1)*(i.rate||0)*0.1:0);},0);
   var total=sub+gst;
   var itemRows=currentLineItems.map(function(item,i){
+    var locked=item.manual===true;
     return '<tr>'
       +'<td><input class="form-input" style="font-size:12px" value="'+escHtml(item.item_name||'')+'" oninput="currentLineItems['+i+'].item_name=this.value"></td>'
       +'<td><input class="form-input" style="font-size:12px" value="'+escHtml(item.description||'')+'" oninput="currentLineItems['+i+'].description=this.value"></td>'
-      +'<td><input class="form-input" style="font-size:12px;width:60px;text-align:right" type="number" value="'+(item.quantity||1)+'" oninput="updateLineField('+i+',String.fromCharCode(113,116,121),this.value)"></td>'
-      +'<td><input class="form-input" style="font-size:12px;width:80px;text-align:right" type="number" step="0.01" value="'+(item.rate||0)+'" oninput="updateLineField('+i+',String.fromCharCode(114,97,116,101),this.value)"></td>'
+      +'<td><input class="form-input" style="font-size:12px;width:55px;text-align:right" type="number" value="'+(item.quantity||1)+'" oninput="updateLineField('+i+',String.fromCharCode(113,116,121),this.value)"></td>'
+      +'<td><input class="form-input" style="font-size:12px;width:75px;text-align:right;color:var(--text-secondary)" type="number" step="0.01" value="'+(Number(item.cost)||0)+'" oninput="updateLineField('+i+',String.fromCharCode(99,111,115,116),this.value)" title="Supplier cost (ex GST)"></td>'
+      +'<td><input class="form-input" id="rate-'+i+'" style="font-size:12px;width:80px;text-align:right;font-weight:600'+(locked?';border-color:var(--amber)':'')+'" type="number" step="0.01" value="'+(Number(item.rate)||0).toFixed(2)+'" oninput="updateLineField('+i+',String.fromCharCode(114,97,116,101),this.value)" title="'+(locked?'Manually set - excluded from markup':'Sell rate')+'"></td>'
       +'<td style="text-align:right;padding:6px 8px" id="lineamt-'+i+'">A$'+(((item.quantity||1)*(item.rate||0))).toFixed(2)+'</td>'
-      +'<td><input type="checkbox" '+(item.gst_applicable?'checked':'')+' onchange="updateLineField('+i+',String.fromCharCode(103,115,116),this.checked)"></td>'
+      +'<td style="text-align:center">'+(locked?'<i class="ti ti-lock" style="color:var(--amber);font-size:13px" title="Manual rate"></i> <button class="btn btn-sm" style="padding:1px 5px;font-size:10px" onclick="unlockLine('+i+')">unlock</button>':'<span style="color:var(--text-tertiary);font-size:11px">auto</span>')+'</td>'
       +'<td><button class="btn btn-danger btn-sm" onclick="removeLineItem('+i+')"><i class="ti ti-trash"></i></button></td>'
       +'</tr>';
   }).join('');
   el.innerHTML='<div style="border:1px dashed var(--border-t);border-radius:var(--radius-md);padding:10px 14px;margin-bottom:14px;background:var(--bg-secondary);display:flex;align-items:center;gap:10px;cursor:pointer" id="scan-dropzone-pricing">'
     +'<i class="ti ti-scan" style="font-size:20px;color:var(--purple);flex-shrink:0"></i>'
     +'<div style="flex:1"><div style="font-size:12px;font-weight:600">Upload supplier quote to auto-fill items</div>'
-    +'<div style="font-size:11px;color:var(--text-secondary)">Drop a PDF or image here &mdash; AI extracts line items</div></div>'
+    +'<div style="font-size:11px;color:var(--text-secondary)">Drop a PDF or image here &mdash; AI extracts items &amp; costs</div></div>'
     +'<input type="file" id="scan-file-input-pricing" accept=".pdf,.jpg,.jpeg,.png" style="display:none">'
     +'<i class="ti ti-upload" style="font-size:16px;color:var(--purple)"></i>'
     +'</div>'
@@ -1614,15 +1619,25 @@ function renderPricingStep(el){
     +'<div style="margin-bottom:12px"><input class="form-input" id="eq-client-addr" placeholder="Client address" value="'+escHtml(currentQuote.client_address||'')+'"></div>'
     +'<div style="margin-bottom:12px"><label class="form-label">Expiry date</label><input class="form-input" id="eq-expiry" type="date" value="'+(currentQuote.expiry_date||'')+'"></div>'
     +'<table class="line-items-table" style="margin-bottom:8px"><thead><tr>'
-    +'<th>Item</th><th>Description</th><th style="text-align:right">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th><th style="text-align:center">GST</th><th></th>'
+    +'<th>Item</th><th>Description</th><th style="text-align:right">Qty</th><th style="text-align:right">Cost</th><th style="text-align:right">Rate (sell)</th><th style="text-align:right">Amount</th><th style="text-align:center">Status</th><th></th>'
     +'</tr></thead><tbody id="liTbody">'+itemRows+'</tbody></table>'
     +'<button class="btn btn-sm" style="margin-bottom:12px" onclick="addLineItem()"><i class="ti ti-plus"></i> Add item</button>'
+    // Markup box
+    +'<div style="background:rgba(124,58,237,0.06);border:1px solid rgba(124,58,237,0.2);border-radius:var(--radius-md);padding:12px 14px;margin-bottom:12px">'
+    +'<div style="font-size:12px;font-weight:700;color:var(--purple);margin-bottom:6px"><i class="ti ti-percentage"></i> Pricing Formula</div>'
+    +'<div style="font-size:11px;color:var(--text-secondary);margin-bottom:8px">Each rate = Cost + 10% GST + your markup %. Manually edited rates (locked) are not changed.</div>'
+    +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+    +'<span style="font-size:13px">Markup %</span>'
+    +'<input class="form-input" id="markup-pct" type="number" step="0.1" style="width:90px;text-align:right" value="'+(markup||'')+'" placeholder="e.g. 15">'
+    +'<button class="btn btn-primary btn-sm" onclick="applyMarkup()"><i class="ti ti-check"></i> Apply to all</button>'
+    +'<span style="font-size:11px;color:var(--text-tertiary)">(Cost &times; 1.10 &times; (1 + markup%))</span>'
+    +'</div>'
+    +'</div>'
     +'<div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:10px 14px">'
-    +'<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>Subtotal</span><span id="ps-subtotal">A$'+sub.toFixed(2)+'</span></div>'
-    +'<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>GST</span><span id="ps-gst">A$'+gst.toFixed(2)+'</span></div>'
-    +'<div style="display:flex;justify-content:space-between;font-weight:700;font-size:15px;border-top:0.5px solid var(--border-t);padding-top:8px;margin-top:6px"><span>Total</span><span id="ps-total" style="color:var(--accent)">A$'+total.toFixed(2)+'</span></div>'
+    +'<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>Subtotal (GST incl.)</span><span id="ps-subtotal">A$'+sub.toFixed(2)+'</span></div>'
+    +'<div style="display:flex;justify-content:space-between;font-weight:700;font-size:15px;border-top:0.5px solid var(--border-t);padding-top:8px;margin-top:6px"><span>Total</span><span id="ps-total" style="color:var(--accent)">A$'+sub.toFixed(2)+'</span></div>'
     +'</div>';
-  // Wire scan-while-editing upload zone
+  // hidden gst total ref for compatibility
   var sdz=document.getElementById('scan-dropzone-pricing');
   var sfi=document.getElementById('scan-file-input-pricing');
   if(sdz&&sfi){
@@ -1639,20 +1654,55 @@ function recalcQuote(){renderPricingStep(document.getElementById('dtab-quote'));
 function updateLineField(i,field,val){
   if(!currentLineItems[i]) return;
   if(field==='qty') currentLineItems[i].quantity=parseFloat(val)||0;
-  else if(field==='rate') currentLineItems[i].rate=parseFloat(val)||0;
+  else if(field==='cost') currentLineItems[i].cost=parseFloat(val)||0;
+  else if(field==='rate'){currentLineItems[i].rate=parseFloat(val)||0;currentLineItems[i].manual=true;markLineLocked(i);}
   else if(field==='gst') currentLineItems[i].gst_applicable=val;
-  // Update only the affected line amount + totals, WITHOUT re-rendering inputs
-  var it=currentLineItems[i];
-  var lineAmt=(it.quantity||0)*(it.rate||0);
-  var amtEl=document.getElementById('lineamt-'+i);
-  if(amtEl) amtEl.textContent='A$'+lineAmt.toFixed(2);
-  var sub=currentLineItems.reduce(function(s,x){return s+(x.quantity||0)*(x.rate||0);},0);
-  var gst=currentLineItems.reduce(function(s,x){return s+(x.gst_applicable?(x.quantity||0)*(x.rate||0)*0.1:0);},0);
-  var subEl=document.getElementById('ps-subtotal');if(subEl)subEl.textContent='A$'+sub.toFixed(2);
-  var gstEl=document.getElementById('ps-gst');if(gstEl)gstEl.textContent='A$'+gst.toFixed(2);
-  var totEl=document.getElementById('ps-total');if(totEl)totEl.textContent='A$'+(sub+gst).toFixed(2);
+  recalcTotalsInPlace(i);
 }
-function addLineItem(){currentLineItems.push({item_name:'',description:'',quantity:1,rate:0,gst_applicable:false,amount:0});renderPricingStep(document.getElementById('dtab-quote'));}
+
+function recalcTotalsInPlace(i){
+  if(typeof i==='number'&&currentLineItems[i]){
+    var it=currentLineItems[i];
+    var amtEl=document.getElementById('lineamt-'+i);
+    if(amtEl) amtEl.textContent='A$'+((it.quantity||0)*(it.rate||0)).toFixed(2);
+  }
+  var sub=currentLineItems.reduce(function(s,x){return s+(x.quantity||0)*(x.rate||0);},0);
+  var subEl=document.getElementById('ps-subtotal');if(subEl)subEl.textContent='A$'+sub.toFixed(2);
+  var totEl=document.getElementById('ps-total');if(totEl)totEl.textContent='A$'+sub.toFixed(2);
+}
+
+function markLineLocked(i){
+  var rateEl=document.getElementById('rate-'+i);
+  if(rateEl) rateEl.style.borderColor='var(--amber)';
+}
+
+function applyMarkup(){
+  var mEl=document.getElementById('markup-pct');
+  var markup=parseFloat(mEl&&mEl.value)||0;
+  currentQuote.markup_pct=markup;
+  var factor=1.10*(1+markup/100); // GST 10% then markup
+  var changed=0;
+  currentLineItems.forEach(function(it){
+    if(it.manual===true) return; // keep manual overrides
+    var cost=Number(it.cost)||0;
+    it.rate=Math.round(cost*factor*100)/100;
+    it.gst_applicable=false; // GST baked into price
+    changed++;
+  });
+  renderPricingStep(document.getElementById('dtab-quote'));
+  toast('Markup applied to '+changed+' item(s) ('+markup+'%)');
+}
+
+function unlockLine(i){
+  if(!currentLineItems[i]) return;
+  currentLineItems[i].manual=false;
+  // recompute this line from cost using current markup
+  var markup=parseFloat(currentQuote.markup_pct)||0;
+  var cost=Number(currentLineItems[i].cost)||0;
+  currentLineItems[i].rate=Math.round(cost*1.10*(1+markup/100)*100)/100;
+  renderPricingStep(document.getElementById('dtab-quote'));
+}
+function addLineItem(){currentLineItems.push({item_name:'',description:'',quantity:1,cost:0,rate:0,gst_applicable:false,manual:false,amount:0});renderPricingStep(document.getElementById('dtab-quote'));}
 function removeLineItem(i){currentLineItems.splice(i,1);renderPricingStep(document.getElementById('dtab-quote'));}
 
 
@@ -1750,10 +1800,10 @@ async function sendQuoteToClient(){
     var pdfB64=null;
     try{if(typeof window.jspdf!=='undefined') pdfB64=generateQuotePDF(currentQuote,currentLineItems);}catch(pe){console.warn('PDF:',pe);}
     if(btn) btn.innerHTML='<i class="ti ti-loader"></i> Saving...';
-    await sbWrite('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({client_name:currentQuote.client_name,client_address:currentQuote.client_address,expiry_date:currentQuote.expiry_date||null,subtotal:currentQuote.subtotal,gst_total:currentQuote.gst_total,total:currentQuote.total,status:'sent',updated_at:new Date().toISOString()})});
+    await sbWrite('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({client_name:currentQuote.client_name,client_address:currentQuote.client_address,expiry_date:currentQuote.expiry_date||null,subtotal:currentQuote.subtotal,gst_total:currentQuote.gst_total,total:currentQuote.total,markup_pct:Number(currentQuote.markup_pct)||0,status:'sent',updated_at:new Date().toISOString()})});
     await sbWrite('quote_line_items?quote_id=eq.'+currentQuote.id,{method:'DELETE'});
     if(currentLineItems.length>0){
-      var ins=currentLineItems.map(function(item,i){return {quote_id:currentQuote.id,item_name:item.item_name||'',description:item.description||'',quantity:Number(item.quantity)||1,rate:Number(item.rate)||0,gst_applicable:item.gst_applicable!==false,amount:Number(item.amount)||0,sort_order:i};});
+      var ins=currentLineItems.map(function(item,i){return {quote_id:currentQuote.id,item_name:item.item_name||'',description:item.description||'',quantity:Number(item.quantity)||1,cost:Number(item.cost)||0,rate:Number(item.rate)||0,gst_applicable:item.gst_applicable===true,manual:item.manual===true,amount:(Number(item.quantity)||1)*(Number(item.rate)||0),sort_order:i};});
       await sbWrite('quote_line_items',{method:'POST',body:JSON.stringify(ins)});
     }
     if(btn) btn.innerHTML='<i class="ti ti-loader"></i> Sending...';
@@ -1880,7 +1930,6 @@ function renderWvsPCard(title,wVal,pVal){
 function renderWholesaleCard(title,filterFn,invoiced,fmtMoney){
   var shops=[
     {l:'Pt Cruz',fn:function(l){return l.lead_type!=='project'&&l.invoice_total>0&&(l.name||'').toLowerCase().includes('point cruz');},c:'#0369a1'},
-    {l:'Henderson',fn:function(l){return l.lead_type!=='project'&&l.invoice_total>0&&(l.name||'').toLowerCase().includes('henderson');},c:'#0f766e'},
     {l:'Ranadi',fn:function(l){return l.lead_type!=='project'&&l.invoice_total>0&&(l.name||'').toLowerCase().includes('ranadi');},c:'#7c3aed'}
   ];
   var totals=shops.map(function(s){return {l:s.l,c:s.c,v:invoiced.filter(function(l){return s.fn(l)&&filterFn(l);}).reduce(function(sum,l){return sum+(l.invoice_total||0);},0)};});

@@ -8,28 +8,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css" onerror="this.onerror=null;this.href='https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/tabler-icons.min.css'">
   <!-- Freight Documents Preview Modal -->
-  <div class="overlay" id="freightPreviewOverlay">
-    <div class="modal modal-xl">
-      <div class="modal-header">
-        <div>
-          <div class="modal-title">Freight Documents &mdash; Review &amp; Edit</div>
-          <div class="modal-sub" id="freightPreviewSub"></div>
-        </div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <button class="btn btn-primary" id="freightDownloadBtn" onclick="downloadFreightDocs()"><i class="ti ti-download"></i> Download Both PDFs</button>
-          <button class="close-btn" onclick="closeModal('freightPreviewOverlay')"><i class="ti ti-x"></i></button>
-        </div>
-      </div>
-      <div class="detail-tabs">
-        <div class="detail-tab active" id="ftab-btn-invoice" onclick="switchFreightTab('invoice',this)"><i class="ti ti-file-invoice" style="font-size:12px"></i> Customs Invoice</div>
-        <div class="detail-tab" id="ftab-btn-sli" onclick="switchFreightTab('sli',this)"><i class="ti ti-file-description" style="font-size:12px"></i> SLI Document</div>
-      </div>
-      <div style="overflow-y:auto;max-height:68vh;padding:0">
-        <div id="ftab-invoice" style="display:block;padding:24px"></div>
-        <div id="ftab-sli" style="display:none;padding:24px"></div>
-      </div>
-    </div>
-  </div>
+  
 
 <script>
 // Ensure icons load &#8212; fallback to text if CDN fails
@@ -421,14 +400,16 @@ function renderCarrierDropdown(freightType){
 }
 async function moveToQuoted(){
   if(!currentLead) return;
-  await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({phase:1,updated_at:new Date().toISOString()})});
-  await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Moved to Quoted',detail:'Lead moved from New Lead to Quoted pipeline'})});
-  toast('Moved to Quoted &#10003;');
-  currentLead.phase=1;
-  var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
-  if(idx>-1) leads[idx].phase=1;
-  await renderDetailInfo();
-  await loadLeads();
+  try{
+    await sbWrite('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({phase:1,updated_at:new Date().toISOString()})});
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Moved to Quoted',detail:'Lead moved from New Lead to Quoted pipeline'})});
+    currentLead.phase=1;
+    var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
+    if(idx>-1) leads[idx].phase=1;
+    await renderDetailInfo();
+    await loadLeads();
+    toast('Moved to Quoted &#10003;');
+  }catch(e){toast('Could not move lead: '+e.message,'error');}
 }
 
 async function moveToClientApproved(){
@@ -436,58 +417,69 @@ async function moveToClientApproved(){
   var sel=document.getElementById('freight-type-sel');
   var ft=(sel&&sel.value)?sel.value:(currentLead.freight_type||'');
   if(!ft){toast('Please select a freight type first','error');return;}
-  await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({phase:2,freight_type:ft,updated_at:new Date().toISOString()})});
-  await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Moved to Client Approved',detail:'Quote approved by client. Freight: '+(ft==='sea'?'Sea Freight':'Air Freight')})});
-  toast('Moved to Client Approved &#10003;');
-  currentLead.phase=2;
-  currentLead.freight_type=ft;
-  var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
-  if(idx>-1){leads[idx].phase=2;leads[idx].freight_type=ft;}
-  await renderDetailInfo();
-  await loadLeads();
+  try{
+    await sbWrite('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({phase:2,freight_type:ft,updated_at:new Date().toISOString()})});
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Moved to Client Approved',detail:'Quote approved by client. Freight: '+(ft==='sea'?'Sea Freight':'Air Freight')})});
+    currentLead.phase=2;currentLead.freight_type=ft;
+    var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
+    if(idx>-1){leads[idx].phase=2;leads[idx].freight_type=ft;}
+    await renderDetailInfo();
+    await loadLeads();
+    toast('Moved to Client Approved &#10003;');
+  }catch(e){toast('Could not move lead: '+e.message,'error');}
 }
 
 async function moveToFreighting(){
   if(!currentLead) return;
-  await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({phase:3,updated_at:new Date().toISOString()})});
-  await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Moved to Freighting',detail:'Lead ready to freight - moved to Freighting pipeline'})});
-  toast('Moved to Freighting &#10003;');
-  currentLead.phase=3;
-  var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
-  if(idx>-1) leads[idx].phase=3;
-  await renderDetailInfo();
-  await loadLeads();
+  try{
+    await sbWrite('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({phase:3,updated_at:new Date().toISOString()})});
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Moved to Freighting',detail:'Lead ready to freight - moved to Freighting pipeline'})});
+    currentLead.phase=3;
+    var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
+    if(idx>-1) leads[idx].phase=3;
+    await renderDetailInfo();
+    await loadLeads();
+    toast('Moved to Freighting &#10003;');
+  }catch(e){toast('Could not move lead: '+e.message,'error');}
 }
 
 async function saveFreightType(val){
   if(!currentLead||!val) return;
-  await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({freight_type:val,updated_at:new Date().toISOString()})});
-  currentLead.freight_type=val;
-  var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
-  if(idx>-1) leads[idx].freight_type=val;
-  toast('Freight type saved: '+(val==='sea'?'Sea Freight':'Air Freight'));
-  var wrap=document.getElementById('carrier-dd-wrap');
-  if(wrap) wrap.innerHTML=renderCarrierDropdownHTML(val,'');
+  try{
+    await sbWrite('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({freight_type:val,updated_at:new Date().toISOString()})});
+    currentLead.freight_type=val;
+    var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
+    if(idx>-1) leads[idx].freight_type=val;
+    var wrap=document.getElementById('carrier-dd-wrap');
+    if(wrap) wrap.innerHTML=renderCarrierDropdownHTML(val,'');
+    toast('Freight type saved: '+(val==='sea'?'Sea Freight':'Air Freight'));
+  }catch(e){toast('Could not save freight type: '+e.message,'error');}
 }
 
 async function saveFreightCarrier(val){
   if(!currentLead||!val) return;
-  await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({freight_carrier:val,updated_at:new Date().toISOString()})});
-  currentLead.freight_carrier=val;
-  var name='';
-  Object.values(FREIGHT_CARRIERS).forEach(function(arr){arr.forEach(function(c){if(c.id===val)name=c.name;});});
-  toast('Carrier saved: '+name);
+  try{
+    await sbWrite('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({freight_carrier:val,updated_at:new Date().toISOString()})});
+    currentLead.freight_carrier=val;
+    var name='';
+    Object.values(FREIGHT_CARRIERS).forEach(function(arr){arr.forEach(function(c){if(c.id===val)name=c.name;});});
+    toast('Carrier saved: '+name);
+  }catch(e){toast('Could not save carrier: '+e.message,'error');}
 }
 var QB_API_URL='https://dwmpunbcwrprhhzwduyx.supabase.co/functions/v1/quickbooks-api';
 var qbCustomers=[];
 function connectQB(){
   var win=window.open('https://dwmpunbcwrprhhzwduyx.supabase.co/functions/v1/quickbooks-auth?action=connect','_blank','width=600,height=700');
-  // Poll until the popup closes, then check connection
+  // Poll until the popup closes (max ~5 min), then check connection
+  var attempts=0,maxAttempts=375; // 375 * 800ms = 5 minutes
   var poll=setInterval(function(){
+    attempts++;
     if(!win||win.closed){
       clearInterval(poll);
       toast('Checking QuickBooks connection...');
       setTimeout(function(){checkQBConnection();},1500);
+    }else if(attempts>=maxAttempts){
+      clearInterval(poll);
     }
   },800);
 }
@@ -628,7 +620,7 @@ async function generateQBInvoice(){
     currentLead.quote_status='invoiced';
     leads.forEach(function(l,i){if(l.id===currentLead.id)leads[i].quote_status='invoiced';});
     renderBoard();renderQuoteReview(document.getElementById('dtab-quote'));
-    toast('Invoice '+data.invoice_number+' created in QuickBooks &#10003;');
+    toast('Invoice '+data.invoice_number+' created in QuickBooks &#10003;'+(data.item_used?' (line item: '+data.item_used+')':''));
     // Auto-save invoice PDF to Drive
     var invFolderId=currentLead.drive_folder_id;
     if(!invFolderId||invFolderId==='created') invFolderId=await createDriveFolderForLead(currentLead);
@@ -652,11 +644,25 @@ const PHASES=[
 ];
 const DOTS=['dot-blue','dot-amber','dot-green','dot-teal'];
 let leads=[],currentLead=null,currentQuote=null,currentLineItems=[],authToken=null,currentUser=null;
+  let refreshToken=null,tokenExpiresAt=0,tokenRefreshTimer=null;
 
 /* &#9472;&#9472; AUTH &#9472;&#9472; */
 function sbH(token,extra){return Object.assign({'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+(token||SB_KEY)},extra||{});}
-function sb(path,opts){opts=opts||{};var prefer=opts.prefer;var o=Object.assign({},opts);delete o.prefer;return fetch(SB_URL+'/rest/v1/'+path,{headers:sbH(authToken,prefer?{'Prefer':prefer}:null),method:o.method||'GET',body:o.body});}
+async function sb(path,opts){opts=opts||{};await ensureValidToken();var prefer=opts.prefer;var o=Object.assign({},opts);delete o.prefer;return fetch(SB_URL+'/rest/v1/'+path,{headers:sbH(authToken,prefer?{'Prefer':prefer}:null),method:o.method||'GET',body:o.body});}
 function sbRpc(fn,params={}){return fetch(SB_URL+'/rest/v1/rpc/'+fn,{method:'POST',headers:sbH(authToken),body:JSON.stringify(params)});}
+
+/* sbWrite: a write (PATCH/POST/DELETE) that THROWS on real failure so callers
+   can rely on try/catch. Returns parsed body when representation requested. */
+async function sbWrite(path,opts){
+  opts=opts||{};
+  var res=await sb(path,opts);
+  if(!res.ok){
+    var detail='';
+    try{var j=await res.json();detail=j.message||j.error||j.hint||JSON.stringify(j);}catch(_){detail='HTTP '+res.status;}
+    throw new Error(detail||('Request failed ('+res.status+')'));
+  }
+  return res;
+}
 
 async function doLogin(){
   const email=document.getElementById('loginEmail').value.trim();
@@ -671,8 +677,13 @@ async function doLogin(){
     const d=await r.json();
     if(!r.ok) throw new Error(d.error_description||d.msg||'Invalid email or password');
     authToken=d.access_token;currentUser=d.user;
+    refreshToken=d.refresh_token;
+    tokenExpiresAt=Date.now()+((d.expires_in||3600)*1000);
     localStorage.setItem('traverse_token',authToken);
+    localStorage.setItem('traverse_refresh',refreshToken||'');
+    localStorage.setItem('traverse_expires',String(tokenExpiresAt));
     localStorage.setItem('traverse_user',JSON.stringify(currentUser));
+    startTokenRefreshTimer();
     showApp();
   }catch(e){showLoginErr(e.message);btn.innerHTML='<i class="ti ti-login"></i> Sign in';btn.disabled=false;}
 }
@@ -689,17 +700,79 @@ setStatus('driveDot','driveLabel',true,'Drive &#10003;');
 }
 function doLogout(){
   if(!confirm('Sign out?'))return;
-  authToken=null;currentUser=null;
+  authToken=null;currentUser=null;refreshToken=null;tokenExpiresAt=0;
+  if(tokenRefreshTimer) clearInterval(tokenRefreshTimer);
   localStorage.removeItem('traverse_token');localStorage.removeItem('traverse_user');
+  localStorage.removeItem('traverse_refresh');localStorage.removeItem('traverse_expires');
   document.getElementById('appScreen').style.display='none';
   document.getElementById('loginScreen').style.display='flex';
   document.getElementById('loginBtn').innerHTML='<i class="ti ti-login"></i> Sign in';
   document.getElementById('loginBtn').disabled=false;
 }
-function checkSession(){
+async function checkSession(){
   const t=localStorage.getItem('traverse_token');
   const u=localStorage.getItem('traverse_user');
-  if(t&&u){authToken=t;try{currentUser=JSON.parse(u);}catch(_){currentUser={};}showApp();}
+  const rt=localStorage.getItem('traverse_refresh');
+  const exp=parseInt(localStorage.getItem('traverse_expires')||'0',10);
+  if(!t||!u) return;
+  authToken=t;refreshToken=rt;tokenExpiresAt=exp;
+  try{currentUser=JSON.parse(u);}catch(_){currentUser={};}
+  // If token is expired or expires within 5 min, refresh before showing app
+  if(!exp||Date.now()>exp-300000){
+    const ok=await refreshSession();
+    if(!ok){forceReLogin();return;}
+  }
+  startTokenRefreshTimer();
+  showApp();
+}
+
+async function refreshSession(){
+  const rt=refreshToken||localStorage.getItem('traverse_refresh');
+  if(!rt) return false;
+  try{
+    const r=await fetch(SB_URL+'/auth/v1/token?grant_type=refresh_token',{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY},body:JSON.stringify({refresh_token:rt})});
+    const d=await r.json();
+    if(!r.ok||!d.access_token) return false;
+    authToken=d.access_token;refreshToken=d.refresh_token||rt;
+    tokenExpiresAt=Date.now()+((d.expires_in||3600)*1000);
+    if(d.user) currentUser=d.user;
+    localStorage.setItem('traverse_token',authToken);
+    localStorage.setItem('traverse_refresh',refreshToken);
+    localStorage.setItem('traverse_expires',String(tokenExpiresAt));
+    if(d.user) localStorage.setItem('traverse_user',JSON.stringify(currentUser));
+    return true;
+  }catch(e){console.warn('Token refresh failed:',e.message);return false;}
+}
+
+async function ensureValidToken(){
+  // Called before DB requests; refresh if within 2 min of expiry
+  if(tokenExpiresAt&&Date.now()>tokenExpiresAt-120000){
+    const ok=await refreshSession();
+    if(!ok){forceReLogin();return false;}
+  }
+  return true;
+}
+
+function startTokenRefreshTimer(){
+  if(tokenRefreshTimer) clearInterval(tokenRefreshTimer);
+  // Proactively refresh every 45 min so active users never hit expiry
+  tokenRefreshTimer=setInterval(function(){refreshSession();},45*60*1000);
+}
+
+function forceReLogin(){
+  if(tokenRefreshTimer) clearInterval(tokenRefreshTimer);
+  authToken=null;refreshToken=null;tokenExpiresAt=0;currentUser=null;
+  localStorage.removeItem('traverse_token');
+  localStorage.removeItem('traverse_refresh');
+  localStorage.removeItem('traverse_expires');
+  localStorage.removeItem('traverse_user');
+  var app=document.getElementById('appScreen');
+  var login=document.getElementById('loginScreen');
+  if(app) app.style.display='none';
+  if(login) login.style.display='flex';
+  var lb=document.getElementById('loginBtn');
+  if(lb){lb.innerHTML='<i class="ti ti-login"></i> Sign in';lb.disabled=false;}
+  showLoginErr('Your session expired. Please sign in again.');
 }
 
 /* &#9472;&#9472; TOAST / STATUS &#9472;&#9472; */
@@ -1048,14 +1121,16 @@ async function saveDetailEdits(){
     notes:document.getElementById('di-notes').value,
     updated_at:new Date().toISOString()
   };
-  await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify(patch)});
-  Object.assign(currentLead,patch);
-  var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
-  if(idx>-1) Object.assign(leads[idx],patch);
-  document.getElementById('detailName').textContent=currentLead.name;
-  document.getElementById('detailSub').textContent=(currentLead.company||'')+(currentLead.project?' &#8226; '+currentLead.project:'');
-  renderBoard();
-  toast('Changes saved &#10003;');
+  try{
+    await sbWrite('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify(patch)});
+    Object.assign(currentLead,patch);
+    var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
+    if(idx>-1) Object.assign(leads[idx],patch);
+    document.getElementById('detailName').textContent=currentLead.name;
+    document.getElementById('detailSub').textContent=(currentLead.company||'')+(currentLead.project?' &#8226; '+currentLead.project:'');
+    renderBoard();
+    toast('Changes saved &#10003;');
+  }catch(e){toast('Save failed: '+e.message,'error');}
 }
 
 function renderDetailEmails(){
@@ -1485,10 +1560,13 @@ async function createNewQuote(){
   if(!currentLead) return;
   var d=new Date();
   var qNum='TIE-'+String(d.getFullYear()).slice(2)+String(d.getMonth()+1).padStart(2,'0')+'-'+String(Math.floor(Math.random()*9000)+1000);
-  var res=await sb('quotes',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,quote_number:qNum,status:'draft',client_name:currentLead.company||currentLead.name,client_address:'',subtotal:0,gst_total:0,total:0}),headers:{...sbH(authToken),'Prefer':'return=representation'}});
-  var rows=await res.json();
-  currentQuote=rows[0];currentLineItems=[];
-  renderPricingStep(document.getElementById('dtab-quote'));
+  try{
+    var res=await sbWrite('quotes',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,quote_number:qNum,status:'draft',client_name:currentLead.company||currentLead.name,client_address:'',subtotal:0,gst_total:0,total:0}),prefer:'return=representation'});
+    var rows=await res.json();
+    if(!rows||!rows.length) throw new Error('Quote was not created');
+    currentQuote=rows[0];currentLineItems=[];
+    renderPricingStep(document.getElementById('dtab-quote'));
+  }catch(e){toast('Could not create quote: '+e.message,'error');}
 }
 
 function renderPricingStep(el){
@@ -1705,25 +1783,29 @@ function renderQuoteReview(el){
 
 async function reviseQuote(){
   if(!currentQuote) return;
-  await sb('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({status:'draft',updated_at:new Date().toISOString()})});
-  currentQuote.status='draft';
-  var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
-  if(idx>-1) leads[idx].quote_status='draft';
-  currentLead.quote_status='draft';
-  toast('Quote reopened for revision');
-  renderPricingStep(document.getElementById('dtab-quote'));
+  try{
+    await sbWrite('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({status:'draft',updated_at:new Date().toISOString()})});
+    currentQuote.status='draft';
+    var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
+    if(idx>-1) leads[idx].quote_status='draft';
+    currentLead.quote_status='draft';
+    renderPricingStep(document.getElementById('dtab-quote'));
+    toast('Quote reopened for revision');
+  }catch(e){toast('Could not revise quote: '+e.message,'error');}
 }
 
 async function markQuoteApproved(){
   if(!currentQuote) return;
-  await sb('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({status:'approved',updated_at:new Date().toISOString()})});
-  await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Quote approved',detail:currentQuote.quote_number+' approved'})});
-  currentQuote.status='approved';
-  var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
-  if(idx>-1) leads[idx].quote_status='approved';
-  currentLead.quote_status='approved';
-  renderBoard();renderQuoteReview(document.getElementById('dtab-quote'));
-  toast('Quote marked as approved &#10003;');
+  try{
+    await sbWrite('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({status:'approved',updated_at:new Date().toISOString()})});
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Quote approved',detail:currentQuote.quote_number+' approved'})});
+    currentQuote.status='approved';
+    var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
+    if(idx>-1) leads[idx].quote_status='approved';
+    currentLead.quote_status='approved';
+    renderBoard();renderQuoteReview(document.getElementById('dtab-quote'));
+    toast('Quote marked as approved &#10003;');
+  }catch(e){toast('Could not approve quote: '+e.message,'error');}
 }
 
 function downloadQuotePDF(){
@@ -1739,12 +1821,14 @@ function downloadQuotePDF(){
 async function setFreightType(type){
   if(!currentLead) return;
   var newType=currentLead.freight_type===type?null:type;
-  await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({freight_type:newType,freight_carrier:null,updated_at:new Date().toISOString()})});
-  currentLead.freight_type=newType;currentLead.freight_carrier=null;
-  var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
-  if(idx>-1){leads[idx].freight_type=newType;leads[idx].freight_carrier=null;}
-  renderDetailFreight();
-  toast('Freight type '+(newType?'saved: '+newType:'cleared'));
+  try{
+    await sbWrite('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({freight_type:newType,freight_carrier:null,updated_at:new Date().toISOString()})});
+    currentLead.freight_type=newType;currentLead.freight_carrier=null;
+    var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
+    if(idx>-1){leads[idx].freight_type=newType;leads[idx].freight_carrier=null;}
+    renderDetailFreight();
+    toast('Freight type '+(newType?'saved: '+newType:'cleared'));
+  }catch(e){toast('Could not save freight type: '+e.message,'error');}
 }
 
 function renderWvsPCard(title,wVal,pVal){
@@ -1975,6 +2059,18 @@ function exportReportCSV(){
   var csv=rows.map(function(r){return r.map(function(c){return '"'+String(c).replace(/"/g,'""')+'"';}).join(',');}).join('\n');
   var blob=new Blob([csv],{type:'text/csv'});
   var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='traverse_report.csv';a.click();
-}</script>
+}
+
+/*  APP INITIALIZATION  */
+(function init(){
+  // Allow Enter key to submit login
+  var pw=document.getElementById('loginPassword');
+  if(pw) pw.addEventListener('keydown',function(e){if(e.key==='Enter')doLogin();});
+  var em=document.getElementById('loginEmail');
+  if(em) em.addEventListener('keydown',function(e){if(e.key==='Enter')doLogin();});
+  // Restore session if a valid token exists (async - refreshes if expired)
+  checkSession().catch(function(e){console.warn('Session restore failed:',e);});
+})();
+</script>
 </body>
 </html>

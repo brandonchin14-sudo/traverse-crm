@@ -377,7 +377,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 const SB_URL='https://dwmpunbcwrprhhzwduyx.supabase.co';
 var DRIVE_API_URL='https://dwmpunbcwrprhhzwduyx.supabase.co/functions/v1/drive-api';
 var GOOGLE_AUTH_URL='https://dwmpunbcwrprhhzwduyx.supabase.co/functions/v1/google-auth';
-var FREIGHT_DOCS_URL='https://dwmpunbcwrprhhzwduyx.supabase.co/functions/v1/generate-freight-docs';
 var FREIGHT_CARRIERS={
   sea:[
     {id:'kalgin',name:'Kalgin'},
@@ -950,9 +949,11 @@ async function saveLead(){
   const leadType=document.querySelector('input[name="f-type"]:checked')?.value||'wholesale';
   const payload={name,company:comp,contact,mobile:document.getElementById('f-mobile').value,project:proj,phase:parseInt(document.getElementById('f-phase').value),notes:document.getElementById('f-notes').value,client:comp,emails_sent:0,quote_status:'none',lead_type:leadType,doc_code:`${ymd}-${comp.substring(0,12)}-${proj.substring(0,8)}`};
   try{
-    const res=await sb('leads',{method:'POST',body:JSON.stringify(payload),headers:{...sbH(authToken),'Prefer':'return=representation'}});
+    const res=await sb('leads',{method:'POST',body:JSON.stringify(payload),prefer:'return=representation'});
     if(!res.ok) throw new Error(await res.text());
-    const [saved]=await res.json();
+    const rows=await res.json();
+    const saved=Array.isArray(rows)?rows[0]:rows;
+    if(!saved||!saved.id) throw new Error('Lead was not created (no row returned)');
     await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:saved.id,action:'Lead created',detail:`New lead for ${comp}`})});
     closeModal('leadOverlay');
     await loadLeads();

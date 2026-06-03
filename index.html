@@ -674,7 +674,13 @@ async function doLogin(){
   try{
     const r=await fetch(SB_URL+'/auth/v1/token?grant_type=password',{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY},body:JSON.stringify({email,password:pass})});
     const d=await r.json();
-    if(!r.ok) throw new Error(d.error_description||d.msg||'Invalid email or password');
+    if(!r.ok){
+      var msg=d.error_description||d.msg||d.error||'Invalid email or password';
+      if(r.status===429||/rate|too many/i.test(msg)) msg='Too many login attempts. Please wait a minute and try again.';
+      else if(/invalid login|invalid cred/i.test(msg)) msg='Incorrect email or password.';
+      else if(/email not confirmed/i.test(msg)) msg='Please confirm your email address before signing in.';
+      throw new Error(msg);
+    }
     authToken=d.access_token;currentUser=d.user;
     refreshToken=d.refresh_token;
     tokenExpiresAt=Date.now()+((d.expires_in||3600)*1000);
@@ -775,12 +781,19 @@ function forceReLogin(){
 }
 
 /* &#9472;&#9472; TOAST / STATUS &#9472;&#9472; */
+let _toastTimer=null,_sendingTimer=null;
 function toast(msg,type='success'){
   const t=document.getElementById('toast');
   t.className='toast show '+type;
   const ic={success:'ti-check',error:'ti-alert-circle',info:'ti-info-circle',sending:'ti-send'};
   t.innerHTML=`<i class="ti ${ic[type]||'ti-check'}"></i> ${msg}`;
-  if(type!=='sending') setTimeout(()=>t.classList.remove('show'),3500);
+  if(_toastTimer){clearTimeout(_toastTimer);_toastTimer=null;}
+  if(_sendingTimer){clearTimeout(_sendingTimer);_sendingTimer=null;}
+  if(type!=='sending'){
+    _toastTimer=setTimeout(()=>t.classList.remove('show'),3500);
+  }else{
+    _sendingTimer=setTimeout(()=>{if(t.classList.contains('sending'))t.classList.remove('show');},30000);
+  }
 }
 function setStatus(dId,lId,live,label){
   document.getElementById(dId).className='dot'+(live?' live':' warn');

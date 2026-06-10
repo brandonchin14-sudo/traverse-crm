@@ -1618,6 +1618,7 @@ function renderPricingStep(el){
     +'<div style="margin-bottom:8px"><input class="form-input" id="eq-client-name" placeholder="Client name" value="'+escHtml(currentQuote.client_name||'')+'"></div>'
     +'<div style="margin-bottom:12px"><input class="form-input" id="eq-client-addr" placeholder="Client address" value="'+escHtml(currentQuote.client_address||'')+'"></div>'
     +'<div style="margin-bottom:12px"><label class="form-label">Expiry date</label><input class="form-input" id="eq-expiry" type="date" value="'+(currentQuote.expiry_date||'')+'"></div>'
+    +'<div style="margin-bottom:12px"><label class="form-label">Internal notes <span style="font-size:11px;color:var(--text-tertiary);font-weight:400">&mdash; not sent to client</span></label><textarea class="form-input" id="eq-quote-notes" rows="3" placeholder="e.g. supplier name, price validity, scan source, special conditions...">'+escHtml(currentQuote.notes||'')+'</textarea></div>'
     +'<table class="line-items-table" style="margin-bottom:8px"><thead><tr>'
     +'<th>Item</th><th>Description</th><th style="text-align:right">Qty</th><th style="text-align:right">Cost</th><th style="text-align:right">Rate (sell)</th><th style="text-align:right">Amount</th><th style="text-align:center">Status</th><th></th>'
     +'</tr></thead><tbody id="liTbody">'+itemRows+'</tbody></table>'
@@ -1716,6 +1717,8 @@ function showEditableQuote(){
   if(cnEl) currentQuote.client_name=cnEl.value||currentQuote.client_name;
   if(caEl) currentQuote.client_address=caEl.value||currentQuote.client_address;
   if(exEl&&exEl.value) currentQuote.expiry_date=exEl.value;
+  var notesEl=document.getElementById('eq-quote-notes');
+  if(notesEl) currentQuote.notes=notesEl.value;
   var sub=0,gst=0;
   currentLineItems.forEach(function(item){var a=(item.quantity||1)*(item.rate||0);item.amount=a;sub+=a;if(item.gst_applicable)gst+=a*0.1;});
   currentQuote.subtotal=sub;currentQuote.gst_total=gst;currentQuote.total=sub+gst;
@@ -1800,7 +1803,7 @@ async function sendQuoteToClient(){
     var pdfB64=null;
     try{if(typeof window.jspdf!=='undefined') pdfB64=generateQuotePDF(currentQuote,currentLineItems);}catch(pe){console.warn('PDF:',pe);}
     if(btn) btn.innerHTML='<i class="ti ti-loader"></i> Saving...';
-    await sbWrite('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({client_name:currentQuote.client_name,client_address:currentQuote.client_address,expiry_date:currentQuote.expiry_date||null,subtotal:currentQuote.subtotal,gst_total:currentQuote.gst_total,total:currentQuote.total,markup_pct:Number(currentQuote.markup_pct)||0,status:'sent',updated_at:new Date().toISOString()})});
+    await sbWrite('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({client_name:currentQuote.client_name,client_address:currentQuote.client_address,expiry_date:currentQuote.expiry_date||null,subtotal:currentQuote.subtotal,gst_total:currentQuote.gst_total,total:currentQuote.total,markup_pct:Number(currentQuote.markup_pct)||0,notes:currentQuote.notes||null,status:'sent',updated_at:new Date().toISOString()})});
     await sbWrite('quote_line_items?quote_id=eq.'+currentQuote.id,{method:'DELETE'});
     if(currentLineItems.length>0){
       var ins=currentLineItems.map(function(item,i){return {quote_id:currentQuote.id,item_name:item.item_name||'',description:item.description||'',quantity:Number(item.quantity)||1,cost:Number(item.cost)||0,rate:Number(item.rate)||0,gst_applicable:item.gst_applicable===true,manual:item.manual===true,amount:(Number(item.quantity)||1)*(Number(item.rate)||0),sort_order:i};});
@@ -1862,7 +1865,28 @@ function renderQuoteReview(el){
     }).join('')+'</tbody></table>'
     +(q.status==='sent'?'<div style="background:#FAEEDA;border:0.5px solid #633806;border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:#633806"><i class="ti ti-clock"></i> <strong>Awaiting client approval.</strong> Click Revise quote if changes needed, or Client approved once confirmed.</div>':'')
     +(q.status==='approved'?'<div style="background:var(--green-light);border:0.5px solid var(--green);border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:var(--green)"><i class="ti ti-check"></i> <strong>Client approved.</strong> Click Generate QB Invoice above to create the invoice.</div>':'')
-    +(q.status==='invoiced'?'<div style="background:var(--accent-light);border:0.5px solid var(--accent);border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:var(--accent-dark)"><i class="ti ti-check"></i> <strong>Invoiced.</strong> QB Invoice: '+(q.qb_invoice_id||'Pending')+'</div>':'');
+    +(q.status==='invoiced'?'<div style="background:var(--accent-light);border:0.5px solid var(--accent);border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:var(--accent-dark)"><i class="ti ti-check"></i> <strong>Invoiced.</strong> QB Invoice: '+(q.qb_invoice_id||'Pending')+'</div>':'')
+    +(function(){
+      var s='<div style="margin-top:14px;padding:12px 14px;background:var(--bg-secondary);border-radius:var(--radius-md);border:0.5px solid var(--border-t)">'
+        +'<div style="font-size:12px;font-weight:600;margin-bottom:8px">Internal notes <span style="font-size:11px;color:var(--text-tertiary);font-weight:400">&mdash; not sent to client</span></div>';
+      if(q.status!=='invoiced'){
+        s+='<textarea class="form-input" id="qr-notes" rows="3" placeholder="Add internal notes...">'+escHtml(q.notes||'')+'</textarea>'
+          +'<div style="margin-top:8px;display:flex;justify-content:flex-end">'
+          +'<button class="btn btn-sm btn-primary" onclick="saveQuoteNote(false)"><i class="ti ti-device-floppy"></i> Save note</button>'
+          +'</div>';
+      }else{
+        s+=(q.notes
+          ?'<div style="font-size:13px;white-space:pre-wrap;padding:8px 10px;background:var(--bg-primary);border-radius:var(--radius-md);border:0.5px solid var(--border-t);margin-bottom:10px">'+escHtml(q.notes)+'</div>'
+          :'<div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px">No notes on record.</div>')
+          +'<div style="border-top:0.5px solid var(--border-t);padding-top:10px">'
+          +'<div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px">Add a follow-up note &mdash; saved to lead history</div>'
+          +'<textarea class="form-input" id="qr-note-append" rows="2" placeholder="Type a follow-up note..."></textarea>'
+          +'<div style="margin-top:8px;display:flex;justify-content:flex-end">'
+          +'<button class="btn btn-sm btn-primary" onclick="saveQuoteNote(true)"><i class="ti ti-plus"></i> Add note</button>'
+          +'</div></div>';
+      }
+      return s+'</div>';
+    })();
 }
 
 async function reviseQuote(){
@@ -1890,6 +1914,39 @@ async function markQuoteApproved(){
     renderBoard();renderQuoteReview(document.getElementById('dtab-quote'));
     toast('Quote marked as approved &#10003;');
   }catch(e){toast('Could not approve quote: '+e.message,'error');}
+}
+
+async function saveQuoteNote(append){
+  if(!currentQuote||!currentLead) return;
+  var btn=document.querySelector(append?'[onclick="saveQuoteNote(true)"]':'[onclick="saveQuoteNote(false)"]');
+  if(btn){btn.disabled=true;btn.innerHTML='<i class="ti ti-loader"></i> Saving...';}
+  try{
+    var updatedNotes,logText;
+    if(append){
+      var appendEl=document.getElementById('qr-note-append');
+      var newText=(appendEl&&appendEl.value||'').trim();
+      if(!newText){toast('Please enter a note first','error');if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-plus"></i> Add note';}return;}
+      var ts=new Date().toLocaleString('en-AU',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+      updatedNotes=(currentQuote.notes?currentQuote.notes+'\n\n':'')+'['+ts+']\n'+newText;
+      logText=newText;
+    }else{
+      var notesEl=document.getElementById('qr-notes');
+      updatedNotes=(notesEl&&notesEl.value)||'';
+      logText=updatedNotes;
+    }
+    await sbWrite('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({notes:updatedNotes||null,updated_at:new Date().toISOString()})});
+    currentQuote.notes=updatedNotes||null;
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Quote note '+(append?'added':'updated'),detail:(logText||'').substring(0,200)})});
+    toast('Note saved \u2713');
+    if(append){
+      renderQuoteReview(document.getElementById('dtab-quote'));
+    }else{
+      if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-device-floppy"></i> Save note';}
+    }
+  }catch(e){
+    toast('Could not save note: '+e.message,'error');
+    if(btn){btn.disabled=false;btn.innerHTML='<i class="ti '+(append?'ti-plus':'ti-device-floppy')+'"></i> '+(append?'Add note':'Save note');}
+  }
 }
 
 function downloadQuotePDF(){

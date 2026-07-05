@@ -1036,6 +1036,39 @@ async function renderDetailInfo(){
     <div style="display:flex;gap:8px;margin-top:8px">
       <button class="btn btn-primary" onclick="saveDetailEdits()"><i class="ti ti-device-floppy"></i> Save changes</button>
     </div>
+    <div class="section-divider">Invoice / Revenue</div>
+    <div style="padding:14px;background:var(--bg-secondary);border-radius:var(--radius-md);border:1px solid var(--border-t)">
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Invoice total (A$)</label><input class="form-input" id="di-invtotal" type="number" step="0.01" value="${l.invoice_total!=null?Number(l.invoice_total):''}" placeholder="0.00"></div>
+        <div class="form-group"><label class="form-label">Invoice date</label><input class="form-input" id="di-invdate" type="date" value="${l.invoice_date?String(l.invoice_date).slice(0,10):''}"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Payment status</label>
+          <select class="form-input" id="di-invpaid">
+            <option value="true" ${l.invoice_paid!==false?'selected':''}>Paid</option>
+            <option value="false" ${l.invoice_paid===false?'selected':''}>Pending</option>
+          </select>
+        </div>
+        <div class="form-group"><label class="form-label">Shop</label>
+          <select class="form-input" id="di-shop">
+            <option value="" ${!l.shop?'selected':''}>&mdash; None &mdash;</option>
+            <option value="point_cruz" ${l.shop==='point_cruz'?'selected':''}>Point Cruz</option>
+            <option value="ranadi" ${l.shop==='ranadi'?'selected':''}>Ranadi</option>
+          </select>
+        </div>
+      </div>
+      <label style="font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;margin:4px 0 2px">
+        <input type="checkbox" id="di-freightonly" ${l.freight_only?'checked':''} onchange="document.getElementById('freight-goods-wrap').style.display=this.checked?'block':'none'" style="width:15px;height:15px;accent-color:var(--accent)">
+        <span><strong>Freight only</strong> &mdash; shop bought goods direct; we earned freight margin only</span>
+      </label>
+      <div id="freight-goods-wrap" style="display:${l.freight_only?'block':'none'};margin-top:10px">
+        <div class="form-group"><label class="form-label">Goods value (A$) <span style="font-size:11px;color:var(--text-tertiary);font-weight:400">&mdash; recorded as wholesale leakage, NOT counted as revenue</span></label><input class="form-input" id="di-goodsvalue" type="number" step="0.01" value="${l.goods_value!=null?Number(l.goods_value):''}" placeholder="0.00"></div>
+        <div style="font-size:11px;color:var(--text-secondary);padding:8px 10px;background:rgba(180,83,9,0.06);border-radius:6px;border:1px solid rgba(180,83,9,0.2)"><i class="ti ti-info-circle"></i> Only the <strong>Invoice total</strong> (freight) counts toward revenue. <strong>Goods value</strong> is tracked separately as the wholesale sale we lost to direct supply.</div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-top:12px">
+        <button class="btn btn-primary" onclick="saveInvoiceFields()"><i class="ti ti-device-floppy"></i> Save invoice / revenue</button>
+      </div>
+    </div>
     ${(function(){
       var html='';
       if((l.phase||0)===0){
@@ -1118,7 +1151,6 @@ async function renderDetailInfo(){
         +(q.gst_total>0?'<div style="font-size:12px;color:var(--text-secondary)">GST: A$'+Number(q.gst_total||0).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})+'</div>':'')
         +'<div style="font-size:14px;font-weight:700">Total: A$'+Number(q.total||0).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})+'</div>'
         +'</div>'
-        +(q.notes?'<div style="margin-top:8px;padding:8px 10px;background:var(--bg-primary);border-radius:var(--radius-md);border:0.5px solid var(--border-t);font-size:12px;white-space:pre-wrap"><span style="font-weight:600;color:var(--text-secondary)">Notes: </span>'+escHtml(q.notes)+'</div>':'')
         +'</div>';
     } else if(summaryEl){summaryEl.innerHTML='';}
   } catch(e){console.warn('Quote summary:',e);}
@@ -1145,6 +1177,35 @@ async function saveDetailEdits(){
     document.getElementById('detailSub').textContent=(currentLead.company||'')+(currentLead.project?' &#8226; '+currentLead.project:'');
     renderBoard();
     toast('Changes saved &#10003;');
+  }catch(e){toast('Save failed: '+e.message,'error');}
+}
+
+async function saveInvoiceFields(){
+  if(!currentLead) return;
+  var totalEl=document.getElementById('di-invtotal');
+  var dateEl=document.getElementById('di-invdate');
+  var paidEl=document.getElementById('di-invpaid');
+  var shopEl=document.getElementById('di-shop');
+  var foEl=document.getElementById('di-freightonly');
+  var gvEl=document.getElementById('di-goodsvalue');
+  var freightOnly=!!(foEl&&foEl.checked);
+  var patch={
+    invoice_total: totalEl&&totalEl.value!==''?Number(totalEl.value):0,
+    invoice_date: dateEl&&dateEl.value?dateEl.value:null,
+    invoice_paid: paidEl?paidEl.value==='true':true,
+    shop: shopEl&&shopEl.value?shopEl.value:null,
+    freight_only: freightOnly,
+    goods_value: freightOnly&&gvEl&&gvEl.value!==''?Number(gvEl.value):0,
+    updated_at:new Date().toISOString()
+  };
+  try{
+    await sbWrite('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify(patch)});
+    Object.assign(currentLead,patch);
+    var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
+    if(idx>-1) Object.assign(leads[idx],patch);
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Invoice updated',detail:'Invoice total A$'+(patch.invoice_total||0).toFixed(2)+(freightOnly?' (freight only, goods A$'+(patch.goods_value||0).toFixed(2)+')':'')})});
+    renderBoard();
+    toast('Invoice details saved \u2713');
   }catch(e){toast('Save failed: '+e.message,'error');}
 }
 
@@ -1619,7 +1680,6 @@ function renderPricingStep(el){
     +'<div style="margin-bottom:8px"><input class="form-input" id="eq-client-name" placeholder="Client name" value="'+escHtml(currentQuote.client_name||'')+'"></div>'
     +'<div style="margin-bottom:12px"><input class="form-input" id="eq-client-addr" placeholder="Client address" value="'+escHtml(currentQuote.client_address||'')+'"></div>'
     +'<div style="margin-bottom:12px"><label class="form-label">Expiry date</label><input class="form-input" id="eq-expiry" type="date" value="'+(currentQuote.expiry_date||'')+'"></div>'
-    +'<div style="margin-bottom:12px"><label class="form-label">Internal notes <span style="font-size:11px;color:var(--text-tertiary);font-weight:400">&mdash; not sent to client</span></label><textarea class="form-input" id="eq-quote-notes" rows="3" placeholder="e.g. supplier name, price validity, scan source, special conditions...">'+escHtml(currentQuote.notes||'')+'</textarea></div>'
     +'<table class="line-items-table" style="margin-bottom:8px"><thead><tr>'
     +'<th>Item</th><th>Description</th><th style="text-align:right">Qty</th><th style="text-align:right">Cost</th><th style="text-align:right">Rate (sell)</th><th style="text-align:right">Amount</th><th style="text-align:center">Status</th><th></th>'
     +'</tr></thead><tbody id="liTbody">'+itemRows+'</tbody></table>'
@@ -1718,8 +1778,6 @@ function showEditableQuote(){
   if(cnEl) currentQuote.client_name=cnEl.value||currentQuote.client_name;
   if(caEl) currentQuote.client_address=caEl.value||currentQuote.client_address;
   if(exEl&&exEl.value) currentQuote.expiry_date=exEl.value;
-  var notesEl=document.getElementById('eq-quote-notes');
-  if(notesEl) currentQuote.notes=notesEl.value;
   var sub=0,gst=0;
   currentLineItems.forEach(function(item){var a=(item.quantity||1)*(item.rate||0);item.amount=a;sub+=a;if(item.gst_applicable)gst+=a*0.1;});
   currentQuote.subtotal=sub;currentQuote.gst_total=gst;currentQuote.total=sub+gst;
@@ -1804,7 +1862,7 @@ async function sendQuoteToClient(){
     var pdfB64=null;
     try{if(typeof window.jspdf!=='undefined') pdfB64=generateQuotePDF(currentQuote,currentLineItems);}catch(pe){console.warn('PDF:',pe);}
     if(btn) btn.innerHTML='<i class="ti ti-loader"></i> Saving...';
-    await sbWrite('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({client_name:currentQuote.client_name,client_address:currentQuote.client_address,expiry_date:currentQuote.expiry_date||null,subtotal:currentQuote.subtotal,gst_total:currentQuote.gst_total,total:currentQuote.total,markup_pct:Number(currentQuote.markup_pct)||0,notes:currentQuote.notes||null,status:'sent',updated_at:new Date().toISOString()})});
+    await sbWrite('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({client_name:currentQuote.client_name,client_address:currentQuote.client_address,expiry_date:currentQuote.expiry_date||null,subtotal:currentQuote.subtotal,gst_total:currentQuote.gst_total,total:currentQuote.total,markup_pct:Number(currentQuote.markup_pct)||0,status:'sent',updated_at:new Date().toISOString()})});
     await sbWrite('quote_line_items?quote_id=eq.'+currentQuote.id,{method:'DELETE'});
     if(currentLineItems.length>0){
       var ins=currentLineItems.map(function(item,i){return {quote_id:currentQuote.id,item_name:item.item_name||'',description:item.description||'',quantity:Number(item.quantity)||1,cost:Number(item.cost)||0,rate:Number(item.rate)||0,gst_applicable:item.gst_applicable===true,manual:item.manual===true,amount:(Number(item.quantity)||1)*(Number(item.rate)||0),sort_order:i};});
@@ -1866,28 +1924,7 @@ function renderQuoteReview(el){
     }).join('')+'</tbody></table>'
     +(q.status==='sent'?'<div style="background:#FAEEDA;border:0.5px solid #633806;border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:#633806"><i class="ti ti-clock"></i> <strong>Awaiting client approval.</strong> Click Revise quote if changes needed, or Client approved once confirmed.</div>':'')
     +(q.status==='approved'?'<div style="background:var(--green-light);border:0.5px solid var(--green);border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:var(--green)"><i class="ti ti-check"></i> <strong>Client approved.</strong> Click Generate QB Invoice above to create the invoice.</div>':'')
-    +(q.status==='invoiced'?'<div style="background:var(--accent-light);border:0.5px solid var(--accent);border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:var(--accent-dark)"><i class="ti ti-check"></i> <strong>Invoiced.</strong> QB Invoice: '+(q.qb_invoice_id||'Pending')+'</div>':'')
-    +(function(){
-      var s='<div style="margin-top:14px;padding:12px 14px;background:var(--bg-secondary);border-radius:var(--radius-md);border:0.5px solid var(--border-t)">'
-        +'<div style="font-size:12px;font-weight:600;margin-bottom:8px">Internal notes <span style="font-size:11px;color:var(--text-tertiary);font-weight:400">&mdash; not sent to client</span></div>';
-      if(q.status!=='invoiced'){
-        s+='<textarea class="form-input" id="qr-notes" rows="3" placeholder="Add internal notes...">'+escHtml(q.notes||'')+'</textarea>'
-          +'<div style="margin-top:8px;display:flex;justify-content:flex-end">'
-          +'<button class="btn btn-sm btn-primary" onclick="saveQuoteNote(false)"><i class="ti ti-device-floppy"></i> Save note</button>'
-          +'</div>';
-      }else{
-        s+=(q.notes
-          ?'<div style="font-size:13px;white-space:pre-wrap;padding:8px 10px;background:var(--bg-primary);border-radius:var(--radius-md);border:0.5px solid var(--border-t);margin-bottom:10px">'+escHtml(q.notes)+'</div>'
-          :'<div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px">No notes on record.</div>')
-          +'<div style="border-top:0.5px solid var(--border-t);padding-top:10px">'
-          +'<div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px">Add a follow-up note &mdash; saved to lead history</div>'
-          +'<textarea class="form-input" id="qr-note-append" rows="2" placeholder="Type a follow-up note..."></textarea>'
-          +'<div style="margin-top:8px;display:flex;justify-content:flex-end">'
-          +'<button class="btn btn-sm btn-primary" onclick="saveQuoteNote(true)"><i class="ti ti-plus"></i> Add note</button>'
-          +'</div></div>';
-      }
-      return s+'</div>';
-    })();
+    +(q.status==='invoiced'?'<div style="background:var(--accent-light);border:0.5px solid var(--accent);border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:var(--accent-dark)"><i class="ti ti-check"></i> <strong>Invoiced.</strong> QB Invoice: '+(q.qb_invoice_id||'Pending')+'</div>':'');
 }
 
 async function reviseQuote(){
@@ -1915,39 +1952,6 @@ async function markQuoteApproved(){
     renderBoard();renderQuoteReview(document.getElementById('dtab-quote'));
     toast('Quote marked as approved &#10003;');
   }catch(e){toast('Could not approve quote: '+e.message,'error');}
-}
-
-async function saveQuoteNote(append){
-  if(!currentQuote||!currentLead) return;
-  var btn=document.querySelector(append?'[onclick="saveQuoteNote(true)"]':'[onclick="saveQuoteNote(false)"]');
-  if(btn){btn.disabled=true;btn.innerHTML='<i class="ti ti-loader"></i> Saving...';}
-  try{
-    var updatedNotes,logText;
-    if(append){
-      var appendEl=document.getElementById('qr-note-append');
-      var newText=(appendEl&&appendEl.value||'').trim();
-      if(!newText){toast('Please enter a note first','error');if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-plus"></i> Add note';}return;}
-      var ts=new Date().toLocaleString('en-AU',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
-      updatedNotes=(currentQuote.notes?currentQuote.notes+'\n\n':'')+'['+ts+']\n'+newText;
-      logText=newText;
-    }else{
-      var notesEl=document.getElementById('qr-notes');
-      updatedNotes=(notesEl&&notesEl.value)||'';
-      logText=updatedNotes;
-    }
-    await sbWrite('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({notes:updatedNotes||null,updated_at:new Date().toISOString()})});
-    currentQuote.notes=updatedNotes||null;
-    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Quote note '+(append?'added':'updated'),detail:(logText||'').substring(0,200)})});
-    toast('Note saved \u2713');
-    if(append){
-      renderQuoteReview(document.getElementById('dtab-quote'));
-    }else{
-      if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-device-floppy"></i> Save note';}
-    }
-  }catch(e){
-    toast('Could not save note: '+e.message,'error');
-    if(btn){btn.disabled=false;btn.innerHTML='<i class="ti '+(append?'ti-plus':'ti-device-floppy')+'"></i> '+(append?'Add note':'Save note');}
-  }
 }
 
 function downloadQuotePDF(){
@@ -2120,6 +2124,26 @@ function renderReports(){
     +(function(){var qStart=new Date(now.getFullYear(),Math.floor(now.getMonth()/3)*3,1);return renderWholesaleCard('Wholesale &mdash; This Quarter',function(l){return invDate(l)>=qStart;},invoiced,fmtMoney);})()
     +(function(){var fyStart=new Date(now.getMonth()>=6?now.getFullYear():now.getFullYear()-1,6,1);return renderWholesaleCard('Wholesale &mdash; FY YTD (Jul-Jun)',function(l){return invDate(l)>=fyStart;},invoiced,fmtMoney);})()
     +'</div>'
+    +(function(){
+      var fo=leads.filter(function(l){return l.freight_only===true;});
+      var pc=fo.filter(function(l){return l.shop==='point_cruz';}).reduce(function(s,l){return s+(Number(l.goods_value)||0);},0);
+      var rn=fo.filter(function(l){return l.shop==='ranadi';}).reduce(function(s,l){return s+(Number(l.goods_value)||0);},0);
+      var untagLeads=fo.filter(function(l){return l.shop!=='point_cruz'&&l.shop!=='ranadi';});
+      var untag=untagLeads.reduce(function(s,l){return s+(Number(l.goods_value)||0);},0);
+      var totalLeak=pc+rn+untag;
+      var cell=function(label,val,color){return '<div style="flex:1;text-align:center;padding:12px;background:var(--bg-primary);border-radius:var(--radius-md);border:1px solid var(--border-t)"><div style="font-size:11px;color:var(--text-secondary);margin-bottom:4px">'+label+'</div><div style="font-size:16px;font-weight:700;color:'+color+'">'+fmtMoney(val)+'</div></div>';};
+      return '<div style="background:rgba(180,83,9,0.05);border-radius:var(--radius-md);padding:16px;margin-bottom:20px;border:1px solid rgba(180,83,9,0.25)">'
+        +'<div style="font-size:13px;font-weight:700;margin-bottom:4px;color:#b45309"><i class="ti ti-alert-triangle"></i> Wholesale Leakage &mdash; Freight-Only Deals</div>'
+        +'<div style="font-size:11px;color:var(--text-secondary);margin-bottom:12px">Goods value bought direct from suppliers (sales lost to direct supply). Not counted as revenue.</div>'
+        +'<div style="display:flex;gap:12px;flex-wrap:wrap">'
+        +cell('Point Cruz',pc,'#0369a1')
+        +cell('Ranadi',rn,'#7c3aed')
+        +cell('Total leakage',totalLeak,'#b45309')
+        +(untag>0?cell('Untagged (set shop)',untag,'#9b6a1a'):'')
+        +'</div>'
+        +(untag>0?'<div style="font-size:11px;color:#b45309;margin-top:8px"><i class="ti ti-info-circle"></i> '+untagLeads.length+' freight-only lead(s) have no shop set &mdash; tag them in the lead\'s Details tab to attribute leakage.</div>':'')
+        +'</div>';
+    })()
     +'<div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:16px;margin-bottom:20px;border:1px solid var(--border-t)">'
     +'<div style="font-size:13px;font-weight:700;margin-bottom:12px">'+monthName+' &mdash; Previous 3 Years</div>'
     +'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">'

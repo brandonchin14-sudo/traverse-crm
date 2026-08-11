@@ -584,6 +584,31 @@ async function loadQBCustomers(){
     return [];
   }
 }
+async function loadQBCustomerDropdown(){
+  var sel=document.getElementById('eq-qb-customer');
+  if(!sel) return;
+  sel.innerHTML='<option value="">Loading...</option>';
+  var custs=await loadQBCustomers();
+  if(!custs.length){
+    sel.innerHTML='<option value="">QB not connected &mdash; click QB in header</option>';
+    toast('Could not load QB customers. Check QB is connected.','error');
+    return;
+  }
+  var cur=currentQuote?currentQuote.qb_customer_id:'';
+  sel.innerHTML='<option value="">-- Select QB customer --</option>'+custs.map(function(c){
+    return '<option value="'+c.id+'" data-name="'+escHtml(c.name)+'"'+(c.id===cur?' selected':'')+'>'+escHtml(c.name)+(c.company&&c.company!==c.name?' ('+escHtml(c.company)+')':'')+'</option>';
+  }).join('');
+  sel.onchange=function(){
+    var opt=sel.options[sel.selectedIndex];
+    if(currentQuote){
+      currentQuote.qb_customer_id=sel.value||null;
+      currentQuote.qb_customer_name=sel.value?(opt.getAttribute('data-name')||''):null;
+      if(sel.value){
+        sbWrite('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({qb_customer_id:currentQuote.qb_customer_id,qb_customer_name:currentQuote.qb_customer_name,updated_at:new Date().toISOString()})}).then(function(){toast('QB customer linked: '+currentQuote.qb_customer_name+' \u2713');}).catch(function(e){toast('Could not save customer: '+e.message,'error');});
+      }
+    }
+  };
+}
 async function generateQBInvoice(){
   if(!currentLead||!currentQuote) return;
   // Check QB is connected before trying
@@ -1677,8 +1702,8 @@ function renderPricingStep(el){
     +'<div style="font-size:14px;font-weight:600">'+escHtml(currentQuote.quote_number)+'</div>'
     +'<button class="btn btn-primary btn-sm" onclick="openQuotePreview()"><i class="ti ti-eye"></i> Preview &amp; Send</button>'
     +'</div>'
-    +'<div style="margin-bottom:8px"><input class="form-input" id="eq-client-name" placeholder="Client name" value="'+escHtml(currentQuote.client_name||'')+'"></div>'
-    +'<div style="margin-bottom:12px"><input class="form-input" id="eq-client-addr" placeholder="Client address" value="'+escHtml(currentQuote.client_address||'')+'"></div>'
++'<div style="margin-bottom:8px"><label class="form-label">QuickBooks customer <span style="font-size:11px;color:var(--text-tertiary);font-weight:400">&mdash; links this quote to the right QB customer for invoicing</span></label><div style="display:flex;gap:6px"><select class="form-input" id="eq-qb-customer" style="flex:1"><option value="">'+(currentQuote.qb_customer_id?escHtml(currentQuote.qb_customer_name||'Selected customer'):'-- Load customers --')+'</option></select><button class="btn btn-sm" type="button" onclick="loadQBCustomerDropdown()"><i class="ti ti-refresh"></i> Load</button></div></div>'
+    +'<div style="margin-bottom:8px"><input class="form-input" id="eq-client-name" placeholder="Client name" value="'+escHtml(currentQuote.client_name||'')+'"></div>'    +'<div style="margin-bottom:12px"><input class="form-input" id="eq-client-addr" placeholder="Client address" value="'+escHtml(currentQuote.client_address||'')+'"></div>'
     +'<div style="margin-bottom:12px"><label class="form-label">Expiry date</label><input class="form-input" id="eq-expiry" type="date" value="'+(currentQuote.expiry_date||'')+'"></div>'
     +'<table class="line-items-table" style="margin-bottom:8px"><thead><tr>'
     +'<th>Item</th><th>Description</th><th style="text-align:right">Qty</th><th style="text-align:right">Cost</th><th style="text-align:right">Rate (sell)</th><th style="text-align:right">Amount</th><th style="text-align:center">Status</th><th></th>'

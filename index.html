@@ -609,8 +609,52 @@ async function loadQBCustomerDropdown(){
     }
   };
 }
+async function saveQuotePOReference(val){
+  if(!currentQuote) return;
+  var po=(val||'').trim();
+  currentQuote.po_reference=po||null;
+  try{
+    await sbWrite('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({po_reference:currentQuote.po_reference,updated_at:new Date().toISOString()})});
+  }catch(e){toast('Could not save PO reference: '+e.message,'error');}
+}
+async function createQBEstimate(){
+  if(!currentLead||!currentQuote) return false;
+  if(currentQuote.qb_estimate_id){
+    var eLbl=currentQuote.qb_estimate_number||currentQuote.qb_estimate_id;
+    if(currentQuote.qb_estimate_stale) toast('QB estimate '+eLbl+' already exists but is out of date &#8212; update or delete it in QuickBooks','error');
+    else toast('QB estimate already exists ('+eLbl+')','info');
+    return true;
+  }
+  if(!currentQuote.qb_customer_id){
+    toast('No QuickBooks customer linked to this quote. Open Edit and preview, select one, then click Create QB Estimate.','error');
+    return false;
+  }
+  var connCheck=await callQB('check_connection');
+  if(!connCheck||!connCheck.success){
+    toast('QuickBooks not connected. Quote is approved but no estimate was created — reconnect QB, then click Create QB Estimate.','error');
+    return false;
+  }
+  toast('Creating QB estimate...','info');
+  try{
+    var data=await callQB('create_estimate',{quote:currentQuote,lineItems:currentLineItems,clientId:currentQuote.qb_customer_id});
+    if(!data.success) throw new Error(data.error||'Failed');
+    await sbWrite('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({qb_estimate_id:data.estimate_id,qb_estimate_number:data.estimate_number,updated_at:new Date().toISOString()})});
+    currentQuote.qb_estimate_id=data.estimate_id;
+    currentQuote.qb_estimate_number=data.estimate_number;
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'QB Estimate created',detail:'Estimate '+(data.estimate_number||data.estimate_id)+' created (A$'+data.total+')'})});
+    renderQuoteReview(document.getElementById('dtab-quote'));
+    toast('Estimate '+(data.estimate_number||data.estimate_id)+' created in QuickBooks &#10003;');
+    return true;
+  }catch(e){
+    toast('QB Estimate failed: '+e.message+' — quote is approved; click Create QB Estimate to retry.','error');
+    return false;
+  }
+}
 async function generateQBInvoice(){
   if(!currentLead||!currentQuote) return;
+  var estimateId=currentQuote.qb_estimate_id||null;
+  if(!estimateId&&!confirm('This quote has no QuickBooks estimate, so the invoice will not be linked to one in QuickBooks.\n\nCreate the invoice anyway?')) return;
+  if(estimateId&&currentQuote.qb_estimate_stale&&!confirm('This quote was revised after its QuickBooks estimate '+(currentQuote.qb_estimate_number||estimateId)+' was created, so the estimate is out of date.\n\nThe invoice will still link to it. Continue?')) return;
   // Check QB is connected before trying
   var connCheck=await callQB('check_connection');
   if(!connCheck||!connCheck.success){
@@ -635,11 +679,11 @@ async function generateQBInvoice(){
     return;
   }
   try{
-        var data=await callQB('create_invoice',{quote:currentQuote,lineItems:currentLineItems,clientId:clientId});
+        var data=await callQB('create_invoice',{quote:currentQuote,lineItems:currentLineItems,clientId:clientId,estimateId:estimateId});
     if(!data.success) throw new Error(data.error||'Failed');
     await sb('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({status:'invoiced',qb_invoice_id:data.invoice_id,updated_at:new Date().toISOString()})});
     await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({quote_status:'invoiced',updated_at:new Date().toISOString()})});
-    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'QB Invoice created',detail:'Invoice '+data.invoice_number+' created (A$'+data.total+')'})});
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'QB Invoice created',detail:'Invoice '+data.invoice_number+' created (A$'+data.total+')'+(estimateId?' — linked to estimate '+(currentQuote.qb_estimate_number||estimateId):' — not linked to an estimate')})});
     currentQuote.status='invoiced';currentQuote.qb_invoice_id=data.invoice_id;
     currentLead.quote_status='invoiced';
     leads.forEach(function(l,i){if(l.id===currentLead.id)leads[i].quote_status='invoiced';});
@@ -1703,6 +1747,7 @@ function renderPricingStep(el){
     +'<button class="btn btn-primary btn-sm" onclick="openQuotePreview()"><i class="ti ti-eye"></i> Preview &amp; Send</button>'
     +'</div>'
 +'<div style="margin-bottom:8px"><label class="form-label">QuickBooks customer <span style="font-size:11px;color:var(--text-tertiary);font-weight:400">&mdash; links this quote to the right QB customer for invoicing</span></label><div style="display:flex;gap:6px"><select class="form-input" id="eq-qb-customer" style="flex:1"><option value="">'+(currentQuote.qb_customer_id?escHtml(currentQuote.qb_customer_name||'Selected customer'):'-- Load customers --')+'</option></select><button class="btn btn-sm" type="button" onclick="loadQBCustomerDropdown()"><i class="ti ti-refresh"></i> Load</button></div></div>'
+    +'<div style="margin-bottom:8px"><label class="form-label">PO reference <span style="font-size:11px;color:var(--text-tertiary);font-weight:400">&mdash; client purchase order number</span></label><input class="form-input" id="eq-po-reference" placeholder="Client PO number" value="'+escHtml(currentQuote.po_reference||'')+'" onchange="saveQuotePOReference(this.value)"></div>'
     +'<div style="margin-bottom:8px"><input class="form-input" id="eq-client-name" placeholder="Client name" value="'+escHtml(currentQuote.client_name||'')+'"></div>'    +'<div style="margin-bottom:12px"><input class="form-input" id="eq-client-addr" placeholder="Client address" value="'+escHtml(currentQuote.client_address||'')+'"></div>'
     +'<div style="margin-bottom:12px"><label class="form-label">Expiry date</label><input class="form-input" id="eq-expiry" type="date" value="'+(currentQuote.expiry_date||'')+'"></div>'
     +'<table class="line-items-table" style="margin-bottom:8px"><thead><tr>'
@@ -1930,6 +1975,7 @@ function renderQuoteReview(el){
     +'<button class="btn btn-sm" onclick="showEditableQuote()"><i class="ti ti-pencil"></i> Edit &amp; preview</button>'
     +(q.status==='sent'||q.status==='draft'?'<button class="btn btn-amber btn-sm" onclick="reviseQuote()"><i class="ti ti-refresh"></i> Revise quote</button>':'')
     +(q.status==='sent'?'<button class="btn btn-green btn-sm" onclick="markQuoteApproved()"><i class="ti ti-check"></i> Client approved</button>':'')
+    +(q.status==='approved'&&!q.qb_estimate_id?'<button class="btn btn-sm" onclick="createQBEstimate()"><i class="ti ti-file-text"></i> Create QB Estimate</button>':'')
     +(q.status==='approved'?'<button class="btn btn-primary btn-sm" onclick="generateQBInvoice()"><i class="ti ti-file-invoice"></i> Generate QB Invoice</button>':'')
     +'</div></div>'
     +'<div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:12px 16px;margin-bottom:14px">'
@@ -1948,20 +1994,30 @@ function renderQuoteReview(el){
         +'<td style="text-align:center;font-size:12px">'+(item.gst_applicable?'&#10003;':'&#8212;')+'</td></tr>';
     }).join('')+'</tbody></table>'
     +(q.status==='sent'?'<div style="background:#FAEEDA;border:0.5px solid #633806;border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:#633806"><i class="ti ti-clock"></i> <strong>Awaiting client approval.</strong> Click Revise quote if changes needed, or Client approved once confirmed.</div>':'')
-    +(q.status==='approved'?'<div style="background:var(--green-light);border:0.5px solid var(--green);border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:var(--green)"><i class="ti ti-check"></i> <strong>Client approved.</strong> Click Generate QB Invoice above to create the invoice.</div>':'')
-    +(q.status==='invoiced'?'<div style="background:var(--accent-light);border:0.5px solid var(--accent);border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:var(--accent-dark)"><i class="ti ti-check"></i> <strong>Invoiced.</strong> QB Invoice: '+(q.qb_invoice_id||'Pending')+'</div>':'');
+    +(q.status==='approved'?(q.qb_estimate_id
+      ?(q.qb_estimate_stale?''
+        :'<div style="background:var(--green-light);border:0.5px solid var(--green);border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:var(--green)"><i class="ti ti-check"></i> <strong>Client approved.</strong> QB estimate '+escHtml(q.qb_estimate_number||q.qb_estimate_id)+' created. Click Generate QB Invoice above to create the invoice.</div>')
+      :'<div style="background:rgba(180,83,9,0.06);border:0.5px solid rgba(180,83,9,0.4);border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:#b45309"><i class="ti ti-alert-triangle"></i> <strong>Client approved, but no QB estimate exists.</strong> '+(q.qb_customer_id?'Click Create QB Estimate above to retry.':'Select a QuickBooks customer in Edit &amp; preview first, then click Create QB Estimate.')+'</div>')
+      :'')
+    +(q.qb_estimate_id&&q.qb_estimate_stale&&q.status!=='invoiced'?'<div style="background:rgba(180,83,9,0.06);border:0.5px solid rgba(180,83,9,0.4);border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:#b45309"><i class="ti ti-alert-triangle"></i> <strong>QB estimate '+escHtml(q.qb_estimate_number||q.qb_estimate_id)+' is out of date.</strong> This quote was revised after the estimate was created, so the figures in QuickBooks no longer match. Update or delete the estimate in QuickBooks before invoicing &#8212; the invoice will still link to it.</div>':'')
+    +(q.status==='invoiced'?'<div style="background:var(--accent-light);border:0.5px solid var(--accent);border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:var(--accent-dark)"><i class="ti ti-check"></i> <strong>Invoiced.</strong> QB Invoice: '+(q.qb_invoice_id||'Pending')+(q.qb_estimate_id?' &middot; QB Estimate: '+escHtml(q.qb_estimate_number||q.qb_estimate_id):'')+'</div>':'');
 }
 
 async function reviseQuote(){
   if(!currentQuote) return;
+  var hadEstimate=!!currentQuote.qb_estimate_id;
   try{
-    await sbWrite('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({status:'draft',updated_at:new Date().toISOString()})});
+    var patch={status:'draft',updated_at:new Date().toISOString()};
+    if(hadEstimate) patch.qb_estimate_stale=true;
+    await sbWrite('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify(patch)});
     currentQuote.status='draft';
+    if(hadEstimate) currentQuote.qb_estimate_stale=true;
     var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
     if(idx>-1) leads[idx].quote_status='draft';
     currentLead.quote_status='draft';
+    if(hadEstimate) await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'QB Estimate stale',detail:'Quote '+currentQuote.quote_number+' reopened after estimate '+(currentQuote.qb_estimate_number||currentQuote.qb_estimate_id)+' was created'})});
     renderPricingStep(document.getElementById('dtab-quote'));
-    toast('Quote reopened for revision');
+    toast(hadEstimate?'Quote reopened — QB estimate '+(currentQuote.qb_estimate_number||currentQuote.qb_estimate_id)+' is now out of date and must be updated or deleted in QuickBooks':'Quote reopened for revision',hadEstimate?'error':undefined);
   }catch(e){toast('Could not revise quote: '+e.message,'error');}
 }
 
@@ -1976,7 +2032,8 @@ async function markQuoteApproved(){
     currentLead.quote_status='approved';
     renderBoard();renderQuoteReview(document.getElementById('dtab-quote'));
     toast('Quote marked as approved &#10003;');
-  }catch(e){toast('Could not approve quote: '+e.message,'error');}
+  }catch(e){toast('Could not approve quote: '+e.message,'error');return;}
+  await createQBEstimate();
 }
 
 function downloadQuotePDF(){

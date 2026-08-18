@@ -1690,13 +1690,41 @@ function fileToBase64(file){
   });
 }
 
+var SCAN_TYPES={'.pdf':'application/pdf','.jpg':'image/jpeg','.jpeg':'image/jpeg','.png':'image/png','.gif':'image/gif','.webp':'image/webp'};
+var SCAN_MAX_MB=20;
+
+// Work out the media type, falling back to the file extension when the browser
+// cannot determine it (common for files dragged out of Outlook or a network share).
+function scanMediaType(file){
+  if(file.type&&file.type!=='application/octet-stream') return file.type;
+  var name=(file.name||'').toLowerCase();
+  for(var ext in SCAN_TYPES){ if(name.slice(-ext.length)===ext) return SCAN_TYPES[ext]; }
+  return '';
+}
+
 async function scanDocument(file){
+  var mediaType=scanMediaType(file);
+  if(!mediaType) throw new Error('Could not tell what kind of file this is. Please use a PDF, JPG or PNG.');
+  var allowed=false;
+  for(var k in SCAN_TYPES){ if(SCAN_TYPES[k]===mediaType) allowed=true; }
+  if(!allowed) throw new Error('Cannot scan this file type ('+mediaType+'). Please use a PDF, JPG or PNG.');
+  if(!file.size) throw new Error('This file is empty (0 bytes). If it is stored in iCloud, OneDrive or Google Drive, open it once so it downloads to this Mac, then try again. Aliases and shortcuts will not work either.');
+  if(file.size>SCAN_MAX_MB*1024*1024) throw new Error('This file is '+(file.size/1048576).toFixed(1)+' MB, which is too big to scan (limit '+SCAN_MAX_MB+' MB). Please split or compress it first.');
   var b64=await fileToBase64(file);
-  var isPdf=file.type==='application/pdf';
+  if(!b64) throw new Error('This file could not be read &#8212; it came through with no content. If it is stored in iCloud, OneDrive or Google Drive, open it once so it downloads to this Mac, then try again.');
+  var isPdf=mediaType==='application/pdf';
+  // A valid PDF carries the '%PDF-' signature at the top of the file. Checking it
+  // here catches a damaged file before it makes the round trip to the scanner,
+  // which would otherwise come back as an unhelpful parsing error.
+  if(isPdf){
+    var head='';
+    try{ var hb=b64.slice(0,1368); hb=hb.slice(0,hb.length-(hb.length%4)); head=atob(hb); }catch(err){}
+    if(head.indexOf('%PDF-')===-1) throw new Error('This PDF appears to be damaged &#8212; it is missing the header every PDF should start with. Try re-downloading or re-exporting it, then scan again.');
+  }
   var res=await fetch(SB_URL+'/functions/v1/scan-document',{
     method:'POST',
     headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},
-    body:JSON.stringify({action:'scan',base64:b64,mediaType:file.type,isPdf:isPdf})
+    body:JSON.stringify({action:'scan',base64:b64,mediaType:mediaType,isPdf:isPdf})
   });
   var result=await res.json();
   if(!res.ok||!result.success) throw new Error(result.error||'Scan failed');

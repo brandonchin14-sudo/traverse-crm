@@ -109,6 +109,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .phase-title{font-size:11px;font-weight:600;padding:4px 10px;border-radius:99px}
 .ph1{background:#E6F1FB;color:#0C447C}.ph2{background:#FAEEDA;color:#633806}
 .ph3{background:#EAF3DE;color:#27500A}.ph4{background:#E1F5EE;color:#085041}
+.ph5{background:#EDEDEB;color:#4A4A48}.ph6{background:#F1E9FA;color:#4B2A70}
 .card{background:var(--bg-primary);border-radius:var(--radius-md);border:0.5px solid var(--border-t);padding:11px 12px;margin-bottom:8px;cursor:pointer;transition:border-color .15s,box-shadow .15s}
 .card:hover{border-color:var(--border-p);box-shadow:0 2px 8px rgba(0,0,0,0.06)}
 .card-name{font-size:13px;font-weight:600;margin-bottom:3px}
@@ -332,8 +333,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
           <option value="1">Quoted</option>
           <option value="2">Client Approved</option>
           <option value="3">Freighting</option>
-          <option value="4">Completed</option>
           <option value="5">Completed</option>
+          <option value="6">Future</option>
         </select>
         <button class="close-btn" onclick="closeModal('detailOverlay')"><i class="ti ti-x"></i></button>
       </div>
@@ -703,13 +704,28 @@ async function generateQBInvoice(){
 
 const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR3bXB1bmJjd3JwcmhoendkdXl4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk3NTc5MDgsImV4cCI6MjA5NTMzMzkwOH0.3Y4eUIXDWoBX7K_HgBSswMLDo4me_eDxcAw4SQVZxZM';
 const EMAIL_FN=SB_URL+'/functions/v1/send-email';
+/* Index === the lead.phase integer stored in the database, so the order and the
+   length of this array are load-bearing. Phase 4 and 5 are BOTH 'Completed' for
+   historical reasons (the phase dropdown shipped with two options labelled the
+   same, so leads landed in both). 5 is canonical — the invoice reporting keys on
+   phase===5 — and 4 is legacy, marked merged so it renders no column of its own
+   and offers no dropdown option. The two are shown together in one column and no
+   lead's stored phase is rewritten: moving the phase-4 leads to 5 would make them
+   count as invoiced at $0. Future is 6, deliberately NOT 5, so parked leads can
+   never be picked up by the revenue reports. */
 const PHASES=[
   {name:'Phase 1 &#8212; New Lead',short:'New Lead',cls:'ph1'},
   {name:'Phase 2 &#8212; Quoted',short:'Quoted',cls:'ph2'},
   {name:'Phase 3 &#8212; Client Approved',short:'Client Approved',cls:'ph3'},
   {name:'Phase 4 &#8212; Freighting',short:'Freighting',cls:'ph4'},
-  {name:'Phase 5 &#8212; Completed',short:'Completed',cls:'ph5'}
+  {name:'Phase 5 &#8212; Completed',short:'Completed',cls:'ph5',merged:true},
+  {name:'Phase 5 &#8212; Completed',short:'Completed',cls:'ph5'},
+  {name:'Future',short:'Future',cls:'ph6'}
 ];
+/* Phases a lead can sit in that are neither finished nor parked. */
+const ACTIVE_PHASES=4;
+/* Legacy 'Completed' bucket that shares a column with the canonical one. */
+const COMPLETED_LEGACY=4,COMPLETED=5,FUTURE=6;
 const DOTS=['dot-blue','dot-amber','dot-green','dot-teal'];
 let leads=[],currentLead=null,currentQuote=null,currentLineItems=[],authToken=null,currentUser=null;
   let refreshToken=null,tokenExpiresAt=0,tokenRefreshTimer=null;
@@ -907,16 +923,22 @@ function renderBoard(){
   );
   document.getElementById('leadCount').textContent=filtered.length+' lead'+(filtered.length!==1?'s':'');
   document.getElementById('phasesBoard').innerHTML=PHASES.map((p,i)=>{
-    const cols=filtered.filter(l=>l.phase===i);
-    if(i===4){
-      var exp=window._completedExpanded||false;
+    if(p.merged) return '';
+    /* The canonical Completed column also carries the legacy phase-4 leads, which
+       otherwise render nowhere and leave the header count disagreeing with the board. */
+    const cols=filtered.filter(l=>i===COMPLETED?(l.phase===COMPLETED||l.phase===COMPLETED_LEGACY):l.phase===i);
+    if(i===COMPLETED||i===FUTURE){
+      var isFuture=i===FUTURE;
+      var key=isFuture?'_futureExpanded':'_completedExpanded';
+      /* Future starts open because it needs chasing; Completed starts shut because it is long. */
+      var exp=isFuture?(window._futureExpanded!==false):(window._completedExpanded||false);
       return '<div class="phase-col" style="min-width:180px;max-width:180px">'
-        +'<div class="phase-header" style="cursor:pointer" onclick="window._completedExpanded=!window._completedExpanded;renderBoard()">'
-        +'<span class="phase-title ph5">Completed</span>'
+        +'<div class="phase-header" style="cursor:pointer" onclick="window.'+key+'='+(!exp)+';renderBoard()">'
+        +'<span class="phase-title '+p.cls+'">'+p.short+'</span>'
         +'<span style="font-size:11px;color:var(--text-secondary)">'+cols.length+'</span>'
         +'<i class="ti ti-chevron-'+(exp?'up':'down')+'" style="font-size:11px;margin-left:4px;color:var(--text-secondary)"></i>'
         +'</div>'
-        +(exp?cols.map(function(l){return '<div class="card" onclick="openDetail(\''+l.id+'\')">'+'<div class="card-name">'+(l.name||'Unnamed')+'</div>'+'<div class="card-company">'+(l.company||'')+'</div></div>';}).join(''):'<div style="padding:12px;font-size:12px;color:var(--text-secondary);text-align:center">'+cols.length+' completed</div>')
+        +(exp?(cols.length?cols.map(function(l){return '<div class="card" onclick="openDetail(\''+l.id+'\')">'+'<div class="card-name">'+(l.name||'Unnamed')+'</div>'+'<div class="card-company">'+(l.company||'')+'</div></div>';}).join(''):'<div class="empty-state" style="padding:14px;font-size:12px">'+(isFuture?'Nothing parked':'None')+'</div>'):'<div style="padding:12px;font-size:12px;color:var(--text-secondary);text-align:center">'+cols.length+' '+(isFuture?'parked':'completed')+'</div>')
         +'</div>';
     }
     return `<div class="phase-col">
@@ -935,7 +957,7 @@ function renderBoard(){
           ${l.quote_status&&l.quote_status!=='none'?`<span class="indicator amber"><i class="ti ti-file-invoice"></i> ${l.quote_status}</span>`:''}
         </div>
       </div>`).join('')}
-      ${i<4?`<button class="add-card-btn" onclick="openNewLeadPhase(${i})"><i class="ti ti-plus"></i> Add lead</button>`:''}
+      ${i<ACTIVE_PHASES?`<button class="add-card-btn" onclick="openNewLeadPhase(${i})"><i class="ti ti-plus"></i> Add lead</button>`:''}
     </div>`;
   }).join('');
 }
@@ -948,7 +970,9 @@ async function openDetail(id){
     document.getElementById('detailName').textContent=currentLead.name||'';
     document.getElementById('detailSub').textContent=(currentLead.company||'')+(currentLead.project?' &#8226; '+currentLead.project:'');
     var ps=document.getElementById('detailPhaseSelect');
-    if(ps) ps.value=Math.min(currentLead.phase||0,5);
+    /* Legacy phase-4 leads show as Completed without being rewritten — the value is
+       only persisted if someone actually changes the dropdown. */
+    if(ps) ps.value=(currentLead.phase===COMPLETED_LEGACY?COMPLETED:Math.min(currentLead.phase||0,FUTURE));
     document.querySelectorAll('.detail-tab').forEach((t,i)=>t.classList.toggle('active',i===0));
     document.querySelectorAll('.detail-section').forEach((s,i)=>s.classList.toggle('active',i===0));
     await loadCurrentQuote();
@@ -991,7 +1015,7 @@ function openNewLeadPhase(phase){
     <div class="form-row">
       <div class="form-group"><label class="form-label">Project ref</label><input class="form-input" id="f-project" placeholder="GPC-2024-01"></div>
       <div class="form-group"><label class="form-label">Phase</label>
-        <select class="form-input" id="f-phase">${PHASES.map((p,i)=>`<option value="${i}" ${i===phase?'selected':''}>${p.name}</option>`).join('')}</select>
+        <select class="form-input" id="f-phase">${PHASES.map((p,i)=>p.merged?'':`<option value="${i}" ${i===phase?'selected':''}>${p.name}</option>`).join('')}</select>
       </div>
     </div>
     <div class="form-group"><label class="form-label">Notes</label><input class="form-input" id="f-notes" placeholder="Additional context..."></div>
@@ -1178,6 +1202,7 @@ async function renderDetailInfo(){
     <div id="detail-quote-summary"></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
       ${!l.drive_folder_id?`<button class="btn btn-green" onclick="createFolderFromDetail()"><i class="ti ti-brand-google-drive"></i> Create Drive folder</button>`:''}
+      ${l.phase!==FUTURE?`<button class="btn" onclick="moveToFuture('${l.id}')"><i class="ti ti-clock"></i> Move to Future</button>`:''}
       <button class="btn btn-danger" style="margin-left:auto" onclick="deleteLead('${l.id}')"><i class="ti ti-trash"></i> Delete lead</button>
     </div>`;
   try {
@@ -1432,6 +1457,7 @@ async function renderDetailActivity(){
       'Moved to Quoted':{cls:'',icon:'ti-arrow-right'},
       'Moved to Client Approved':{cls:'',icon:'ti-check'},
       'Moved to Freighting':{cls:'',icon:'ti-ship'},
+      'Moved to Future':{cls:'',icon:'ti-clock'},
       'Freight documents generated':{cls:'',icon:'ti-file-export'},
     };
     document.getElementById('dtab-activity').innerHTML=rows.length===0
@@ -1447,12 +1473,28 @@ async function updatePhase(){
   const old=currentLead.phase;
   try{
     await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({phase:newPhase,updated_at:new Date().toISOString()})});
-    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Phase changed',detail:'Phase '+(old+1)+' to Phase '+(newPhase+1)})});
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Phase changed',detail:phaseLabel(old)+' to '+phaseLabel(newPhase)})});
     currentLead.phase=newPhase;
     const idx=leads.findIndex(function(l){return l.id===currentLead.id;});
     if(idx>-1) leads[idx].phase=newPhase;
     renderBoard();toast('Phase updated &#10003;');
   }catch(e){toast('Update failed','error');}
+}
+
+function phaseLabel(p){return PHASES[p]?PHASES[p].short:'Phase '+((p||0)+1);}
+
+/* Park a lead that is not proceeding now but is worth chasing later. Deliberately
+   NOT a delete: the quote, files and activity history all stay, and phase 6 is
+   outside every reporting filter, so a parked lead never counts as revenue. */
+async function moveToFuture(id){
+  if(!confirm('Move this lead to Future?\n\nIt leaves the active pipeline but keeps its quote, files and history. You can move it back any time from the phase dropdown.')) return;
+  try{
+    await sb('leads?id=eq.'+id,{method:'PATCH',body:JSON.stringify({phase:FUTURE,updated_at:new Date().toISOString()})});
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:id,action:'Moved to Future',detail:'Parked for later - not proceeding right now'})});
+    closeModal('detailOverlay');
+    await loadLeads();
+    toast('Moved to Future &#10003;');
+  }catch(e){toast('Could not move to Future','error');}
 }
 
 async function deleteLead(id){

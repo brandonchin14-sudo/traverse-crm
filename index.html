@@ -1625,16 +1625,51 @@ async function renderDetailActivity(){
 
 async function updatePhase(){
   if(!currentLead) return;
-  const newPhase=parseInt(document.getElementById('detailPhaseSelect').value);
+  const sel=document.getElementById('detailPhaseSelect');
+  const newPhase=parseInt(sel.value);
   if(newPhase===currentLead.phase) return;
   const old=currentLead.phase;
+  var patch={phase:newPhase,updated_at:new Date().toISOString()};
+
+  /* Completing a lead with no invoice total silently books it as a A$0 sale, because
+     the revenue filter is (invoice_total>0 || phase===COMPLETED). Seven leads reached
+     phase 5 that way. Now that a job can carry both a goods and a freight quote there
+     are two figures that must land in one hand-typed box, so catch it here.
+     Only fires when there is billable quote value to offer — a genuinely zero lead
+     (the '(Void)' ones) has no approved quote and is never interrupted. */
+  if(newPhase===COMPLETED&&!(Number(currentLead.invoice_total)>0)){
+    var billable=0;
+    /* Read fresh rather than trusting currentQuotes: a stale cache would fail closed
+       and skip the warning, which is the one outcome this guard exists to prevent. */
+    try{
+      var qr=await sb('quotes?lead_id=eq.'+currentLead.id+'&select=status,total');
+      var qrows=await qr.json();
+      billable=(Array.isArray(qrows)?qrows:[]).filter(function(q){return q.status==='approved'||q.status==='invoiced';})
+        .reduce(function(s,q){return s+(Number(q.total)||0);},0);
+    }catch(e){billable=0;}
+    if(billable>0){
+      var amt=fmtAud(billable);
+      if(confirm('This lead has '+amt+' in approved or invoiced quotes, but no invoice total.\n\nCompleted leads with no total still count as a sale of A$0 in every revenue report.\n\nOK — set the invoice total to '+amt+' and complete.\nCancel — choose something else.')){
+        patch.invoice_total=billable;
+        if(!currentLead.invoice_date) patch.invoice_date=new Date().toISOString().slice(0,10);
+      } else if(!confirm('Complete anyway and record A$0 revenue for this lead?\n\nOK — complete it with no revenue.\nCancel — leave the phase unchanged so you can enter the total yourself.')){
+        /* Legacy phase 4 displays as Completed, so revert to what the dropdown shows
+           rather than to the raw stored value, which has no option and would blank it. */
+        sel.value=(old===COMPLETED_LEGACY?COMPLETED:old);
+        return;
+      }
+    }
+  }
+
   try{
-    await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({phase:newPhase,updated_at:new Date().toISOString()})});
+    await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify(patch)});
     await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Phase changed',detail:phaseLabel(old)+' to '+phaseLabel(newPhase)})});
-    currentLead.phase=newPhase;
+    if(patch.invoice_total!=null) await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Invoice updated',detail:'Invoice total set to A$'+Number(patch.invoice_total).toFixed(2)+' from approved quotes on completion'})});
+    Object.assign(currentLead,patch);
     const idx=leads.findIndex(function(l){return l.id===currentLead.id;});
-    if(idx>-1) leads[idx].phase=newPhase;
-    renderBoard();toast('Phase updated &#10003;');
+    if(idx>-1) Object.assign(leads[idx],patch);
+    renderBoard();
+    toast(patch.invoice_total!=null?('Completed — invoice total set to '+fmtAud(patch.invoice_total)):'Phase updated &#10003;');
   }catch(e){toast('Update failed','error');}
 }
 

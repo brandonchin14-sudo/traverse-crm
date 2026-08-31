@@ -728,6 +728,21 @@ const ACTIVE_PHASES=4;
 const COMPLETED_LEGACY=4,COMPLETED=5,FUTURE=6;
 const DOTS=['dot-blue','dot-amber','dot-green','dot-teal'];
 let leads=[],currentLead=null,currentQuote=null,currentLineItems=[],authToken=null,currentUser=null;
+/* A lead can carry one quote per type. Goods and freight are quoted separately
+   because production lead times mean freight cannot be priced until closer to
+   shipping, and freight rates move with the season.
+
+   currentQuotes holds every quote on the open lead; currentQuote points at the one
+   currently selected. Everything downstream — pricing, preview, email, QB estimate,
+   QB invoice — reads currentQuote and so works on the selected quote without needing
+   to know that more than one can exist. That is deliberate: it keeps the live
+   invoicing path unchanged. */
+const QUOTE_TYPES=[{key:'goods',label:'Goods',short:'G',icon:'ti-package'},{key:'freight',label:'Freight',short:'F',icon:'ti-ship'}];
+let currentQuotes=[],selectedQuoteType='goods';
+/* lead_id -> [{quote_type,status}], loaded with the board so cards can show a badge
+   per quote type. Read-only; the board never writes it. */
+let quotesByLead={};
+function quoteTypeLabel(t){var d=QUOTE_TYPES.find(function(x){return x.key===t;});return d?d.label:'Goods';}
   let refreshToken=null,tokenExpiresAt=0,tokenRefreshTimer=null;
 
 /* &#9472;&#9472; AUTH &#9472;&#9472; */
@@ -893,8 +908,49 @@ async function loadLeads(){
     if(!r.ok) throw new Error();
     leads=await r.json();
     setStatus('sbDot','sbLabel',true,'DB &#10003;');
+    await loadQuotesIndex();
     populateClientFilter();renderBoard();
   }catch(e){setStatus('sbDot','sbLabel',false,'DB error');toast('Cannot connect to database','error');leads=[];renderBoard();}
+}
+
+/* One small fetch so board cards can show a badge per quote type. Deliberately not
+   denormalised onto leads: a copied status would need keeping in sync on every quote
+   write, and the whole table is a couple of dozen rows. A failure here leaves the
+   index empty and cards fall back to the single leads.quote_status badge. */
+async function loadQuotesIndex(){
+  try{
+    var r=await sb('quotes?select=lead_id,quote_type,status,total');
+    var rows=await r.json();
+    var map={};
+    (Array.isArray(rows)?rows:[]).forEach(function(q){
+      if(!q.lead_id) return;
+      (map[q.lead_id]=map[q.lead_id]||[]).push(q);
+    });
+    quotesByLead=map;
+  }catch(e){quotesByLead={};}
+}
+
+/* Leads with only a goods quote render exactly one badge, as before. The type prefix
+   appears only once a lead actually has more than one quote, so the ~180 single-quote
+   cards are visually unchanged. */
+function quoteBadgesForLead(l){
+  var qs=quotesByLead[l.id];
+  if(!qs||!qs.length) return (l.quote_status&&l.quote_status!=='none')?quoteStatusBadge(l.quote_status):'';
+  if(qs.length===1) return quoteStatusBadge(qs[0].status);
+  return QUOTE_TYPES.map(function(t){
+    var q=qs.find(function(x){return (x.quote_type||'goods')===t.key;});
+    return q?quoteStatusBadge(q.status,t.short):'';
+  }).join('');
+}
+
+/* The status badges above already carry the per-type detail, so once a lead has two
+   quotes this indicator states the split instead of repeating one ambiguous status. */
+function quoteIndicatorForLead(l){
+  var qs=quotesByLead[l.id];
+  if(qs&&qs.length>1) return '<span class="indicator amber"><i class="ti ti-file-invoice"></i> '+qs.length+' quotes</span>';
+  var s=(qs&&qs.length)?qs[0].status:l.quote_status;
+  if(!s||s==='none') return '';
+  return '<span class="indicator amber"><i class="ti ti-file-invoice"></i> '+escHtml(s)+'</span>';
 }
 
 function populateClientFilter(){
@@ -904,15 +960,27 @@ function populateClientFilter(){
   sel.innerHTML='<option value="">All clients</option>'+clients.map(c=>`<option ${c===cur?'selected':''}>${c}</option>`).join('');
 }
 
-function quoteStatusBadge(qs){
+function quoteStatusBadge(qs,prefix){
   const map={draft:'qs-draft',sent:'qs-sent',approved:'qs-approved',invoiced:'qs-invoiced'};
   const labels={draft:'Draft',sent:'Sent',approved:'Approved',invoiced:'Invoiced'};
   const s=qs||'none';
   if(s==='none') return '';
-  return `<span class="quote-status-badge ${map[s]||'qs-draft'}">${labels[s]||s}</span>`;
+  return `<span class="quote-status-badge ${map[s]||'qs-draft'}">${prefix?prefix+': ':''}${labels[s]||s}</span>`;
+}
+
+/* currentQuote is a reference into currentQuotes, so the existing code that sets
+   currentQuote.status='approved' already keeps the array current. Re-deriving the
+   open lead's index entry here means every status change picks up its new badge on
+   the next board draw, with no extra fetch and no write. */
+function syncQuoteIndex(){
+  if(!currentLead||!currentQuotes.length) return;
+  quotesByLead[currentLead.id]=currentQuotes.map(function(q){
+    return {lead_id:currentLead.id,quote_type:q.quote_type||'goods',status:q.status,total:q.total};
+  });
 }
 
 function renderBoard(){
+  syncQuoteIndex();
   const search=document.getElementById('searchInput').value.toLowerCase();
   const cf=document.getElementById('clientFilter').value;
   const tf=document.getElementById('typeFilter')?.value||'';
@@ -949,12 +1017,12 @@ function renderBoard(){
         <div class="card-company">${l.company||''}</div>
         <div class="card-meta">
           ${l.project?`<span class="tag">${l.project}</span>`:''}
-          ${l.quote_status&&l.quote_status!=='none'?quoteStatusBadge(l.quote_status):''}
+          ${quoteBadgesForLead(l)}
         </div>
         <div class="card-indicators">
           <span class="indicator" style="color:${l.lead_type==='project'?'var(--purple)':'#633806'};font-weight:600"><i class="ti ti-${l.lead_type==='project'?'building':'storefront'}"></i> ${l.lead_type==='project'?'Project':'Wholesale'}</span>
           <span class="indicator ${l.drive_folder_id?'on':''}"><i class="ti ti-brand-google-drive"></i> ${l.drive_folder_id?'Drive':'No folder'}</span>
-          ${l.quote_status&&l.quote_status!=='none'?`<span class="indicator amber"><i class="ti ti-file-invoice"></i> ${l.quote_status}</span>`:''}
+          ${quoteIndicatorForLead(l)}
         </div>
       </div>`).join('')}
       ${i<ACTIVE_PHASES?`<button class="add-card-btn" onclick="openNewLeadPhase(${i})"><i class="ti ti-plus"></i> Add lead</button>`:''}
@@ -975,6 +1043,9 @@ async function openDetail(id){
     if(ps) ps.value=(currentLead.phase===COMPLETED_LEGACY?COMPLETED:Math.min(currentLead.phase||0,FUTURE));
     document.querySelectorAll('.detail-tab').forEach((t,i)=>t.classList.toggle('active',i===0));
     document.querySelectorAll('.detail-section').forEach((s,i)=>s.classList.toggle('active',i===0));
+    /* Clear the type selection so each lead opens on its own most relevant quote
+       rather than inheriting the type left selected on the previous lead. */
+    selectedQuoteType=null;currentQuotes=[];
     await loadCurrentQuote();
     await renderDetailInfo();
     renderDetailEmails();
@@ -988,17 +1059,39 @@ async function openDetail(id){
   }
 }
 
+/* Loads every quote on the lead and selects one. Selection prefers the type the user
+   last looked at, then goods, then whatever exists — so a freight-only lead opens on
+   its freight quote rather than an empty Goods tab. */
 async function loadCurrentQuote(){
   if(!currentLead) return;
   try{
-    const r=await sb('quotes?lead_id=eq.'+currentLead.id+'&order=created_at.desc&limit=1&select=*');
+    const r=await sb('quotes?lead_id=eq.'+currentLead.id+'&order=created_at.asc&select=*');
     const rows=await r.json();
-    if(rows.length>0){
-      currentQuote=rows[0];
+    currentQuotes=Array.isArray(rows)?rows:[];
+    /* null means "just opened this lead" — auto-pick. Once the user has clicked a
+       type we honour it strictly, so choosing Freight on a lead with no freight quote
+       shows an empty Freight tab to create one, rather than bouncing back to Goods. */
+    if(selectedQuoteType===null){
+      var auto=quoteOfType('goods')||currentQuotes[0]||null;
+      selectedQuoteType=auto?(auto.quote_type||'goods'):'goods';
+    }
+    currentQuote=quoteOfType(selectedQuoteType);
+    if(currentQuote){
       const lr=await sb('quote_line_items?quote_id=eq.'+currentQuote.id+'&order=sort_order.asc&select=*');
       currentLineItems=await lr.json();
-    } else {currentQuote=null;currentLineItems=[];}
-  }catch(e){currentQuote=null;currentLineItems=[];}
+    } else {currentLineItems=[];}
+  }catch(e){currentQuotes=[];currentQuote=null;currentLineItems=[];}
+}
+
+function quoteOfType(t){return currentQuotes.find(function(q){return (q.quote_type||'goods')===t;})||null;}
+
+/* Switch the Quote tab between Goods and Freight. Re-reads from the database rather
+   than reusing anything cached, so an unsaved edit in one type can never leak into
+   the other's line items. */
+async function selectQuoteType(t){
+  selectedQuoteType=t;
+  currentQuote=null;currentLineItems=[];
+  await renderQuoteTab();
 }
 
 function openNewLeadPhase(phase){
@@ -1135,6 +1228,7 @@ async function renderDetailInfo(){
         <div class="form-group"><label class="form-label">Invoice total (A$)</label><input class="form-input" id="di-invtotal" type="number" step="0.01" value="${l.invoice_total!=null?Number(l.invoice_total):''}" placeholder="0.00"></div>
         <div class="form-group"><label class="form-label">Invoice date</label><input class="form-input" id="di-invdate" type="date" value="${l.invoice_date?String(l.invoice_date).slice(0,10):''}"></div>
       </div>
+      <div id="invtotal-hint"></div>
       <div class="form-row">
         <div class="form-group"><label class="form-label">Payment status</label>
           <select class="form-input" id="di-invpaid">
@@ -1206,11 +1300,16 @@ async function renderDetailInfo(){
       <button class="btn btn-danger" style="margin-left:auto" onclick="deleteLead('${l.id}')"><i class="ti ti-trash"></i> Delete lead</button>
     </div>`;
   try {
-    var qr = await sb('quotes?lead_id=eq.'+l.id+'&order=created_at.desc&limit=1');
+    var qr = await sb('quotes?lead_id=eq.'+l.id+'&order=created_at.asc');
     var quotes = await qr.json();
+    renderInvoiceTotalHint(quotes,l);
     var summaryEl = document.getElementById('detail-quote-summary');
     if(summaryEl && quotes && quotes.length){
-      var q = quotes[0];
+      /* Stack every quote on the lead — goods and freight each with their own line
+         items — so the Info tab shows the full value of the job, not just one half. */
+      var blocks='';
+      for(var qi=0;qi<quotes.length;qi++){
+      var q = quotes[qi];
       var liRes = await sb('quote_line_items?quote_id=eq.'+q.id+'&order=sort_order.asc');
       var items = await liRes.json();
       var itemsHtml = '';
@@ -1235,9 +1334,9 @@ async function renderDetailInfo(){
         });
         itemsHtml += '</tbody></table>';
       }
-      summaryEl.innerHTML = '<div style="margin:16px 0;padding:14px;background:var(--bg-secondary);border-radius:var(--radius-md);border:1px solid var(--border-t)">'
+      blocks += '<div style="margin:16px 0;padding:14px;background:var(--bg-secondary);border-radius:var(--radius-md);border:1px solid var(--border-t)">'
         +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'
-        +'<div style="font-size:13px;font-weight:700"><i class="ti ti-file-invoice"></i> Quote '+escHtml(q.quote_number)+'</div>'
+        +'<div style="font-size:13px;font-weight:700"><i class="ti ti-file-invoice"></i> '+escHtml(quoteTypeLabel(q.quote_type||'goods'))+' quote '+escHtml(q.quote_number)+'</div>'
         +'<span style="font-size:11px;padding:2px 8px;border-radius:99px;font-weight:600;background:'+(q.status==='sent'?'rgba(34,197,94,0.12)':'rgba(245,158,11,0.12)')+';color:'+(q.status==='sent'?'var(--green)':'#b45309')+'">'+q.status+'</span>'
         +'</div>'
         + itemsHtml
@@ -1246,6 +1345,16 @@ async function renderDetailInfo(){
         +'<div style="font-size:14px;font-weight:700">Total: A$'+Number(q.total||0).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})+'</div>'
         +'</div>'
         +'</div>';
+      }
+      /* Combined figure only when there is genuinely more than one quote to combine. */
+      if(quotes.length>1){
+        var grand=quotes.reduce(function(s,x){return s+(Number(x.total)||0);},0);
+        blocks += '<div style="margin:0 0 16px;padding:12px 14px;background:var(--accent-light);border:1px solid var(--accent);border-radius:var(--radius-md);display:flex;justify-content:space-between;align-items:center">'
+          +'<span style="font-size:13px;font-weight:700">Job total &#8212; all quotes</span>'
+          +'<span style="font-size:15px;font-weight:700;color:var(--accent-dark)">A$'+grand.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2})+'</span>'
+          +'</div>';
+      }
+      summaryEl.innerHTML = blocks;
     } else if(summaryEl){summaryEl.innerHTML='';}
   } catch(e){console.warn('Quote summary:',e);}
 }
@@ -1274,6 +1383,51 @@ async function saveDetailEdits(){
   }catch(e){toast('Save failed: '+e.message,'error');}
 }
 
+function fmtAud(n){return 'A$'+Number(n||0).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2});}
+
+/* Shows what the quotes on this lead add up to, next to the hand-typed invoice total
+   that every revenue report actually reads. Deliberately does NOT write the field:
+   invoice_total stays the single source of truth, so no existing report can shift on
+   its own. It only makes a disagreement visible and one click to resolve.
+   Only approved and invoiced quotes count toward the figure — a draft freight quote
+   is not yet money — but unbilled quotes are called out so a half-billed job is
+   obvious rather than silently under-reported. */
+function renderInvoiceTotalHint(quotes,l){
+  var el=document.getElementById('invtotal-hint');
+  if(!el) return;
+  var all=Array.isArray(quotes)?quotes:[];
+  if(!all.length){el.innerHTML='';return;}
+  var billable=all.filter(function(q){return q.status==='approved'||q.status==='invoiced';});
+  var pending=all.filter(function(q){return q.status!=='approved'&&q.status!=='invoiced';});
+  var sum=billable.reduce(function(s,q){return s+(Number(q.total)||0);},0);
+  var cur=Number(l.invoice_total)||0;
+  var matches=billable.length>0&&Math.abs(cur-sum)<0.005;
+  var parts=billable.map(function(q){
+    return escHtml(quoteTypeLabel(q.quote_type||'goods').toLowerCase())+' '+fmtAud(q.total);
+  }).join(' + ');
+  var body='';
+  if(billable.length){
+    body='<span>Quotes: '+parts+(billable.length>1?' = <strong>'+fmtAud(sum)+'</strong>':'')+'</span>'
+      +(matches
+        ?'<span style="color:var(--green);font-weight:600;white-space:nowrap"><i class="ti ti-check"></i> matches</span>'
+        :'<button type="button" class="btn btn-sm" style="white-space:nowrap" onclick="useQuoteTotal('+sum.toFixed(2)+')"><i class="ti ti-arrow-up"></i> Use total</button>');
+  } else {
+    body='<span>No approved or invoiced quotes on this lead yet.</span>';
+  }
+  var warn=pending.length?'<div style="font-size:11px;color:#b45309;margin-top:6px"><i class="ti ti-alert-triangle"></i> Not counted: '
+    +pending.map(function(q){return escHtml(quoteTypeLabel(q.quote_type||'goods').toLowerCase())+' quote is '+escHtml(q.status||'draft');}).join(', ')
+    +'. This job is not fully billed.</div>':'';
+  el.innerHTML='<div style="margin:-2px 0 12px;padding:9px 12px;background:var(--bg-primary);border:1px solid var(--border-t);border-radius:var(--radius-md);font-size:12px">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;gap:10px">'+body+'</div>'+warn+'</div>';
+}
+
+function useQuoteTotal(v){
+  var el=document.getElementById('di-invtotal');
+  if(!el) return;
+  el.value=Number(v).toFixed(2);
+  toast('Filled &#8212; click Save invoice / revenue to store it');
+}
+
 async function saveInvoiceFields(){
   if(!currentLead) return;
   var totalEl=document.getElementById('di-invtotal');
@@ -1299,6 +1453,9 @@ async function saveInvoiceFields(){
     if(idx>-1) Object.assign(leads[idx],patch);
     await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Invoice updated',detail:'Invoice total A$'+(patch.invoice_total||0).toFixed(2)+(freightOnly?' (freight only, goods A$'+(patch.goods_value||0).toFixed(2)+')':'')})});
     renderBoard();
+    /* Re-derive the hint so it reads "matches" straight after saving rather than
+       still offering a Use total button for a figure now stored. */
+    try{var hq=await sb('quotes?lead_id=eq.'+currentLead.id+'&select=quote_type,status,total');renderInvoiceTotalHint(await hq.json(),currentLead);}catch(_){}
     toast('Invoice details saved \u2713');
   }catch(e){toast('Save failed: '+e.message,'error');}
 }
@@ -1643,6 +1800,24 @@ async function uploadFreightFiles(files){
 
 
 
+/* Goods / Freight selector, prepended by each of the three quote renderers rather
+   than rendered once into a wrapper — because renderPricingStep and renderQuoteReview
+   are called directly from a dozen places (recalc, save, revise) that each overwrite
+   dtab-quote wholesale, and a wrapper would be wiped by every one of them. */
+function quoteSwitcherHtml(){
+  return '<div style="display:flex;gap:8px;margin-bottom:14px">'
+    +QUOTE_TYPES.map(function(t){
+      var q=quoteOfType(t.key);
+      var on=selectedQuoteType===t.key;
+      var amt=q&&Number(q.total)>0?' &middot; A$'+Number(q.total).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
+      return '<button type="button" onclick="selectQuoteType(\''+t.key+'\')" style="flex:1;text-align:left;cursor:pointer;padding:9px 12px;border-radius:var(--radius-md);border:1px solid '+(on?'var(--accent)':'var(--border-t)')+';background:'+(on?'var(--accent-light)':'var(--bg-secondary)')+'">'
+        +'<div style="font-size:12px;font-weight:700;display:flex;align-items:center;gap:5px"><i class="ti '+t.icon+'"></i> '+t.label+'</div>'
+        +'<div style="font-size:11px;color:var(--text-secondary);text-transform:capitalize;margin-top:2px">'+(q?escHtml(q.status||'draft'):'Not quoted')+amt+'</div>'
+        +'</button>';
+    }).join('')
+    +'</div>';
+}
+
 async function renderQuoteTab(){
   var el=document.getElementById('dtab-quote');
   if(!el) return;
@@ -1657,10 +1832,12 @@ async function renderQuoteTab(){
 }
 
 function renderDocumentScan(el){
-  var html='<div style="padding:4px 0">'
+  var isFreight=selectedQuoteType==='freight';
+  var html=quoteSwitcherHtml()
+    +'<div style="padding:4px 0">'
     +'<div id="scan-dropzone" style="border:2px dashed var(--border-t);border-radius:var(--radius-md);padding:24px;text-align:center;background:var(--bg-secondary);cursor:pointer;margin-bottom:16px">'
     +'<i class="ti ti-scan" style="font-size:32px;color:var(--purple);margin-bottom:8px;display:block"></i>'
-    +'<div style="font-size:14px;font-weight:600;margin-bottom:4px">Upload Supplier Quote</div>'
+    +'<div style="font-size:14px;font-weight:600;margin-bottom:4px">Upload '+(isFreight?'Freight':'Supplier')+' Quote</div>'
     +'<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">Drop a PDF or image here &mdash; AI will extract line items automatically</div>'
     +'<div style="font-size:11px;color:var(--text-tertiary)">Supports PDF, JPG, PNG</div>'
     +'<input type="file" id="scan-file-input" accept=".pdf,.jpg,.jpeg,.png" style="display:none">'
@@ -1671,8 +1848,9 @@ function renderDocumentScan(el){
     +'<div style="flex:1;height:1px;background:var(--border-t)"></div>'
     +'</div>'
     +'<div style="text-align:center">'
-    +'<button class="btn btn-primary" onclick="createNewQuote()"><i class="ti ti-plus"></i> New Blank Quote</button>'
+    +'<button class="btn btn-primary" onclick="createNewQuote(\''+selectedQuoteType+'\')"><i class="ti ti-plus"></i> New Blank '+(isFreight?'Freight':'Goods')+' Quote</button>'
     +'</div>'
+    +(isFreight?'<div style="font-size:11px;color:var(--text-tertiary);text-align:center;margin-top:10px">Freight is quoted separately and runs its own approval, QB estimate and invoice.</div>':'')
     +'</div>';
   el.innerHTML=html;
   // Wire up events after DOM insertion
@@ -1697,13 +1875,14 @@ async function handleScanFile(file){
     var data=await scanDocument(file);
     // Create or update quote with scanned data
     if(!currentQuote){
-      var d=new Date();
-      var qNum='TIE-'+String(d.getFullYear()).slice(2)+String(d.getMonth()+1).padStart(2,'0')+'-'+String(Math.floor(Math.random()*9000)+1000);
       var cn=data.client_name||currentLead.company||currentLead.name||'';
       var ca=data.client_address||'';
-      var res=await sb('quotes',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,quote_number:qNum,status:'draft',client_name:cn,client_address:ca,subtotal:0,gst_total:0,total:0}),prefer:'return=representation'});
+      /* Scanning into an empty Freight tab creates a freight quote, not a goods one. */
+      var scanType=selectedQuoteType==='freight'?'freight':'goods';
+      var res=await sb('quotes',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,quote_number:newQuoteNumber(scanType),quote_type:scanType,status:'draft',client_name:cn,client_address:ca,subtotal:0,gst_total:0,total:0}),prefer:'return=representation'});
       var rows=await res.json();
       currentQuote=rows[0];
+      currentQuotes.push(rows[0]);
     }
     // Populate line items from scan
     currentLineItems=(data.line_items||[]).map(function(item,i){
@@ -1773,15 +1952,23 @@ async function scanDocument(file){
   return result.data;
 }
 
-async function createNewQuote(){
-  if(!currentLead) return;
+/* Freight quote numbers carry a -FR suffix so the customer can tell the two documents
+   apart when both land in their inbox for the same job. */
+function newQuoteNumber(type){
   var d=new Date();
-  var qNum='TIE-'+String(d.getFullYear()).slice(2)+String(d.getMonth()+1).padStart(2,'0')+'-'+String(Math.floor(Math.random()*9000)+1000);
+  return 'TIE-'+String(d.getFullYear()).slice(2)+String(d.getMonth()+1).padStart(2,'0')+'-'+String(Math.floor(Math.random()*9000)+1000)+(type==='freight'?'-FR':'');
+}
+
+async function createNewQuote(type){
+  if(!currentLead) return;
+  type=(type==='freight')?'freight':'goods';
+  if(quoteOfType(type)){toast('This lead already has a '+quoteTypeLabel(type).toLowerCase()+' quote','error');return;}
   try{
-    var res=await sbWrite('quotes',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,quote_number:qNum,status:'draft',client_name:currentLead.company||currentLead.name,client_address:'',subtotal:0,gst_total:0,total:0}),prefer:'return=representation'});
+    var res=await sbWrite('quotes',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,quote_number:newQuoteNumber(type),quote_type:type,status:'draft',client_name:currentLead.company||currentLead.name,client_address:'',subtotal:0,gst_total:0,total:0}),prefer:'return=representation'});
     var rows=await res.json();
     if(!rows||!rows.length) throw new Error('Quote was not created');
-    currentQuote=rows[0];currentLineItems=[];
+    currentQuotes.push(rows[0]);
+    currentQuote=rows[0];currentLineItems=[];selectedQuoteType=type;
     renderPricingStep(document.getElementById('dtab-quote'));
   }catch(e){toast('Could not create quote: '+e.message,'error');}
 }
@@ -1805,7 +1992,8 @@ function renderPricingStep(el){
       +'<td><button class="btn btn-danger btn-sm" onclick="removeLineItem('+i+')"><i class="ti ti-trash"></i></button></td>'
       +'</tr>';
   }).join('');
-  el.innerHTML='<div style="border:1px dashed var(--border-t);border-radius:var(--radius-md);padding:10px 14px;margin-bottom:14px;background:var(--bg-secondary);display:flex;align-items:center;gap:10px;cursor:pointer" id="scan-dropzone-pricing">'
+  el.innerHTML=quoteSwitcherHtml()
+    +'<div style="border:1px dashed var(--border-t);border-radius:var(--radius-md);padding:10px 14px;margin-bottom:14px;background:var(--bg-secondary);display:flex;align-items:center;gap:10px;cursor:pointer" id="scan-dropzone-pricing">'
     +'<i class="ti ti-scan" style="font-size:20px;color:var(--purple);flex-shrink:0"></i>'
     +'<div style="flex:1"><div style="font-size:12px;font-weight:600">Upload supplier quote to auto-fill items</div>'
     +'<div style="font-size:11px;color:var(--text-secondary)">Drop a PDF or image here &mdash; AI extracts items &amp; costs</div></div>'
@@ -2034,10 +2222,11 @@ async function sendQuoteToClient(){
 
 function renderQuoteReview(el){
   var q=currentQuote;
-  if(!q){el.innerHTML='<div class="empty-state">No quote found</div>';return;}
+  if(!q){el.innerHTML=quoteSwitcherHtml()+'<div class="empty-state">No quote found</div>';return;}
   var statusColors={sent:'#633806',approved:'var(--green)',invoiced:'var(--accent)',draft:'var(--text-secondary)'};
   var statusBg={sent:'#FAEEDA',approved:'#EAF3DE',invoiced:'#E6F1FB',draft:'#f3f2f0'};
-  el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px">'
+  el.innerHTML=quoteSwitcherHtml()
+    +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px">'
     +'<div><div style="font-size:14px;font-weight:600">'+escHtml(q.quote_number||'')+'</div>'
     +'<span style="font-size:11px;padding:3px 9px;border-radius:99px;font-weight:600;background:'+(statusBg[q.status]||'#f3f2f0')+';color:'+(statusColors[q.status]||'var(--text-secondary)')+';text-transform:capitalize;display:inline-block;margin-top:4px">'+(q.status||'draft')+'</span>'
     +'</div>'

@@ -685,6 +685,28 @@ async function generateQBInvoice(){
     await sb('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({status:'invoiced',qb_invoice_id:data.invoice_id,updated_at:new Date().toISOString()})});
     await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({quote_status:'invoiced',updated_at:new Date().toISOString()})});
     await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'QB Invoice created',detail:'Invoice '+data.invoice_number+' created (A$'+data.total+')'+(estimateId?' — linked to estimate '+(currentQuote.qb_estimate_number||estimateId):' — not linked to an estimate')})});
+
+    /* Record the money on the lead. Until now this step only wrote quote_status, so
+       every report — which sums leads.invoice_total — missed the invoice entirely:
+       six real QB invoices worth A$229,750.75 were raised in Aug 2026 and never
+       appeared anywhere. Summed across *invoiced* quotes so a goods + freight job
+       reports both halves, and only written when the sum increases, so a figure
+       someone corrected by hand is never silently reduced.
+       Wrapped so it can never fail the surrounding flow — by this point the invoice
+       already exists in QuickBooks and must not be reported as failed. */
+    try{
+      var invRes=await sb('quotes?lead_id=eq.'+currentLead.id+'&status=eq.invoiced&select=total');
+      var invRows=await invRes.json();
+      var invSum=(Array.isArray(invRows)?invRows:[]).reduce(function(s,q){return s+(Number(q.total)||0);},0);
+      if(invSum>(Number(currentLead.invoice_total)||0)){
+        var invPatch={invoice_total:invSum,updated_at:new Date().toISOString()};
+        if(!currentLead.invoice_date) invPatch.invoice_date=todayLocalISO();
+        await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify(invPatch)});
+        Object.assign(currentLead,invPatch);
+        leads.forEach(function(l,i){if(l.id===currentLead.id)Object.assign(leads[i],invPatch);});
+        await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Invoice updated',detail:'Revenue recorded as A$'+invSum.toFixed(2)+' from invoiced quotes'})});
+      }
+    }catch(invTotErr){console.warn('Invoice total not recorded:',invTotErr);}
     currentQuote.status='invoiced';currentQuote.qb_invoice_id=data.invoice_id;
     currentLead.quote_status='invoiced';
     leads.forEach(function(l,i){if(l.id===currentLead.id)leads[i].quote_status='invoiced';});
@@ -1385,6 +1407,14 @@ async function saveDetailEdits(){
 
 function fmtAud(n){return 'A$'+Number(n||0).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2});}
 
+/* Local calendar date, not UTC. Brisbane is UTC+10, so toISOString().slice(0,10)
+   stamps yesterday on anything done before 10am — which would drop an invoice into
+   the wrong month for everything raised on the 1st before mid-morning. */
+function todayLocalISO(){
+  var d=new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+
 /* Shows what the quotes on this lead add up to, next to the hand-typed invoice total
    that every revenue report actually reads. Deliberately does NOT write the field:
    invoice_total stays the single source of truth, so no existing report can shift on
@@ -1651,7 +1681,7 @@ async function updatePhase(){
       var amt=fmtAud(billable);
       if(confirm('This lead has '+amt+' in approved or invoiced quotes, but no invoice total.\n\nCompleted leads with no total still count as a sale of A$0 in every revenue report.\n\nOK — set the invoice total to '+amt+' and complete.\nCancel — choose something else.')){
         patch.invoice_total=billable;
-        if(!currentLead.invoice_date) patch.invoice_date=new Date().toISOString().slice(0,10);
+        if(!currentLead.invoice_date) patch.invoice_date=todayLocalISO();
       } else if(!confirm('Complete anyway and record A$0 revenue for this lead?\n\nOK — complete it with no revenue.\nCancel — leave the phase unchanged so you can enter the total yourself.')){
         /* Legacy phase 4 displays as Completed, so revert to what the dropdown shows
            rather than to the raw stored value, which has no option and would blank it. */

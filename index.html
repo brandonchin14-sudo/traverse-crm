@@ -2496,7 +2496,13 @@ function renderReports(){
   var invoiced=leads.filter(function(l){return l.invoice_total>0||l.phase===5;});
   var thisMonthLeads=invoiced.filter(function(l){return sameMonth(invDate(l),thisMonth,thisYear);});
   var paidThisMonth=thisMonthLeads.filter(function(l){return l.invoice_paid!==false;}).reduce(function(s,l){return s+(l.invoice_total||0);},0);
-  var pendingThisMonth=thisMonthLeads.filter(function(l){return l.invoice_paid===false;}).reduce(function(s,l){return s+(l.invoice_total||0);},0);
+  /* Outstanding is a running balance, not a monthly flow. Scoping it to the current
+     calendar month made it read A$0 for most of every month — on 2026-09-03 it showed
+     nothing while A$1,124,569.17 was unpaid, because every open invoice was dated
+     August or earlier. Paid stays monthly (money actually received in the period);
+     this counts every unpaid invoice regardless of date. */
+  var outstandingLeads=leads.filter(function(l){return l.invoice_paid===false&&(Number(l.invoice_total)||0)>0;});
+  var outstandingTotal=outstandingLeads.reduce(function(s,l){return s+(Number(l.invoice_total)||0);},0);
   var wholesaleMonth=thisMonthLeads.filter(function(l){return l.lead_type!=='project';}).reduce(function(s,l){return s+(l.invoice_total||0);},0);
   var projectMonth=thisMonthLeads.filter(function(l){return l.lead_type==='project';}).reduce(function(s,l){return s+(l.invoice_total||0);},0);
   var monthlyTarget=parseFloat(localStorage.getItem('monthly_target')||'100000');
@@ -2514,7 +2520,7 @@ function renderReports(){
     +'</div>'
     +'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:16px">'
     +'<div class="metric" style="border-color:var(--green)"><div class="metric-label" style="color:var(--green)">Paid This Month</div><div class="metric-val" style="color:var(--green)">'+fmtMoney(paidThisMonth)+'</div><div class="metric-sub">'+monthName+' '+thisYear+'</div></div>'
-    +'<div class="metric" style="border-color:var(--amber)"><div class="metric-label" style="color:#b45309">Pending This Month</div><div class="metric-val" style="color:#b45309">'+fmtMoney(pendingThisMonth)+'</div><div class="metric-sub">'+thisMonthLeads.filter(function(l){return l.invoice_paid===false;}).length+' invoice(s)</div></div>'
+    +'<div class="metric" style="border-color:var(--amber)"><div class="metric-label" style="color:#b45309">Outstanding</div><div class="metric-val" style="color:#b45309">'+fmtMoney(outstandingTotal)+'</div><div class="metric-sub">'+outstandingLeads.length+' unpaid invoice(s) &#8212; all time</div></div>'
     +'<div class="metric" style="border-color:var(--purple)"><div class="metric-label" style="color:var(--purple)">Monthly Target</div>'
     +'<input type="number" value="'+monthlyTarget+'" onchange="localStorage.setItem(String.fromCharCode(109,111,110,116,104,108,121,95,116,97,114,103,101,116),this.value);renderReports()" style="width:130px;font-size:16px;font-weight:700;border:1px solid var(--border-t);border-radius:6px;padding:4px 8px;color:var(--purple);margin:6px 0">'
     +'<div style="background:var(--border-t);border-radius:99px;height:8px;margin-top:4px"><div style="background:'+(targetPct>=100?'var(--green)':'var(--purple)')+';height:8px;border-radius:99px;width:'+targetPct+'%;transition:width 0.5s"></div></div>'

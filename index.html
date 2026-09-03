@@ -941,7 +941,7 @@ async function loadLeads(){
    index empty and cards fall back to the single leads.quote_status badge. */
 async function loadQuotesIndex(){
   try{
-    var r=await sb('quotes?select=lead_id,quote_type,status,total');
+    var r=await sb('quotes?select=lead_id,quote_type,status,total,qb_invoice_id');
     var rows=await r.json();
     var map={};
     (Array.isArray(rows)?rows:[]).forEach(function(q){
@@ -997,7 +997,9 @@ function quoteStatusBadge(qs,prefix){
 function syncQuoteIndex(){
   if(!currentLead||!currentQuotes.length) return;
   quotesByLead[currentLead.id]=currentQuotes.map(function(q){
-    return {lead_id:currentLead.id,quote_type:q.quote_type||'goods',status:q.status,total:q.total};
+    /* qb_invoice_id must be carried: the Outstanding card keys on it, so dropping it
+       here would make the open lead vanish from that total while its detail is open. */
+    return {lead_id:currentLead.id,quote_type:q.quote_type||'goods',status:q.status,total:q.total,qb_invoice_id:q.qb_invoice_id||null};
   });
 }
 
@@ -2501,7 +2503,17 @@ function renderReports(){
      nothing while A$1,124,569.17 was unpaid, because every open invoice was dated
      August or earlier. Paid stays monthly (money actually received in the period);
      this counts every unpaid invoice regardless of date. */
-  var outstandingLeads=leads.filter(function(l){return l.invoice_paid===false&&(Number(l.invoice_total)||0)>0;});
+  /* Only invoices actually raised through the CRM count, i.e. the quote carries a
+     qb_invoice_id. Leads invoiced before the CRM did the invoicing hold their invoice
+     number in free text on leads.project and their unpaid flag was hand-set years ago
+     in some cases — 28 such leads carried A$888,785.35 that nobody could vouch for.
+     Everything is raised through the CRM from now on, so new invoices qualify
+     automatically and this stays correct without maintenance. */
+  var outstandingLeads=leads.filter(function(l){
+    if(l.invoice_paid!==false||!((Number(l.invoice_total)||0)>0)) return false;
+    var qs=quotesByLead[l.id];
+    return !!(qs&&qs.some(function(q){return !!q.qb_invoice_id;}));
+  });
   var outstandingTotal=outstandingLeads.reduce(function(s,l){return s+(Number(l.invoice_total)||0);},0);
   var wholesaleMonth=thisMonthLeads.filter(function(l){return l.lead_type!=='project';}).reduce(function(s,l){return s+(l.invoice_total||0);},0);
   var projectMonth=thisMonthLeads.filter(function(l){return l.lead_type==='project';}).reduce(function(s,l){return s+(l.invoice_total||0);},0);
@@ -2520,7 +2532,7 @@ function renderReports(){
     +'</div>'
     +'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:16px">'
     +'<div class="metric" style="border-color:var(--green)"><div class="metric-label" style="color:var(--green)">Paid This Month</div><div class="metric-val" style="color:var(--green)">'+fmtMoney(paidThisMonth)+'</div><div class="metric-sub">'+monthName+' '+thisYear+'</div></div>'
-    +'<div class="metric" style="border-color:var(--amber)"><div class="metric-label" style="color:#b45309">Outstanding</div><div class="metric-val" style="color:#b45309">'+fmtMoney(outstandingTotal)+'</div><div class="metric-sub">'+outstandingLeads.length+' unpaid invoice(s) &#8212; all time</div></div>'
+    +'<div class="metric" style="border-color:var(--amber)"><div class="metric-label" style="color:#b45309">Outstanding</div><div class="metric-val" style="color:#b45309">'+fmtMoney(outstandingTotal)+'</div><div class="metric-sub">'+outstandingLeads.length+' unpaid invoice(s) raised in CRM</div></div>'
     +'<div class="metric" style="border-color:var(--purple)"><div class="metric-label" style="color:var(--purple)">Monthly Target</div>'
     +'<input type="number" value="'+monthlyTarget+'" onchange="localStorage.setItem(String.fromCharCode(109,111,110,116,104,108,121,95,116,97,114,103,101,116),this.value);renderReports()" style="width:130px;font-size:16px;font-weight:700;border:1px solid var(--border-t);border-radius:6px;padding:4px 8px;color:var(--purple);margin:6px 0">'
     +'<div style="background:var(--border-t);border-radius:99px;height:8px;margin-top:4px"><div style="background:'+(targetPct>=100?'var(--green)':'var(--purple)')+';height:8px;border-radius:99px;width:'+targetPct+'%;transition:width 0.5s"></div></div>'

@@ -761,6 +761,10 @@ let leads=[],currentLead=null,currentQuote=null,currentLineItems=[],authToken=nu
    invoicing path unchanged. */
 const QUOTE_TYPES=[{key:'goods',label:'Goods',short:'G',icon:'ti-package'},{key:'freight',label:'Freight',short:'F',icon:'ti-ship'}];
 let currentQuotes=[],selectedQuoteType='goods';
+/* Invoices raised against the selected quote. A job is quoted once and can be billed
+   in stages (30% advance, then the balance), so one quote carries many invoices.
+   partialForm holds the in-progress "invoice a part" form, or null when it is shut. */
+let currentQuoteInvoices=[],partialForm=null;
 /* lead_id -> [{quote_type,status}], loaded with the board so cards can show a badge
    per quote type. Read-only; the board never writes it. */
 let quotesByLead={};
@@ -1100,10 +1104,14 @@ async function loadCurrentQuote(){
       selectedQuoteType=auto?(auto.quote_type||'goods'):'goods';
     }
     currentQuote=quoteOfType(selectedQuoteType);
+    partialForm=null;
     if(currentQuote){
       const lr=await sb('quote_line_items?quote_id=eq.'+currentQuote.id+'&order=sort_order.asc&select=*');
       currentLineItems=await lr.json();
-    } else {currentLineItems=[];}
+      const ir=await sb('quote_invoices?quote_id=eq.'+currentQuote.id+'&order=seq.asc&select=*');
+      currentQuoteInvoices=await ir.json();
+      if(!Array.isArray(currentQuoteInvoices)) currentQuoteInvoices=[];
+    } else {currentLineItems=[];currentQuoteInvoices=[];}
   }catch(e){currentQuotes=[];currentQuote=null;currentLineItems=[];}
 }
 
@@ -1327,10 +1335,12 @@ async function renderDetailInfo(){
   try {
     var qr = await sb('quotes?lead_id=eq.'+l.id+'&order=created_at.asc');
     var quotes = await qr.json();
-    renderInvoiceTotalHint(quotes,l);
+    var partsRes=await sb('quote_invoices?lead_id=eq.'+l.id+'&order=seq.asc&select=*');
+    var leadPartials=await partsRes.json();
+    renderInvoiceTotalHint(quotes,leadPartials,l);
     /* Not awaited: this makes one QuickBooks call per invoice, and the rest of the
        detail panel must not sit blank behind a slow or disconnected QB. */
-    renderQBPayments(quotes,l);
+    renderQBPayments(quotes,leadPartials,l);
     var summaryEl = document.getElementById('detail-quote-summary');
     if(summaryEl && quotes && quotes.length){
       /* Stack every quote on the lead — goods and freight each with their own line
@@ -1428,11 +1438,16 @@ function todayLocalISO(){
    Only approved and invoiced quotes count toward the figure — a draft freight quote
    is not yet money — but unbilled quotes are called out so a half-billed job is
    obvious rather than silently under-reported. */
-function renderInvoiceTotalHint(quotes,l){
+function renderInvoiceTotalHint(quotes,partials,l){
   var el=document.getElementById('invtotal-hint');
   if(!el) return;
   var all=Array.isArray(quotes)?quotes:[];
   if(!all.length){el.innerHTML='';return;}
+  /* A quote billed in stages is worth what has actually been invoiced, not its full
+     value — otherwise a 30% advance would offer to book the whole job as revenue. */
+  var stageSum={};
+  (Array.isArray(partials)?partials:[]).forEach(function(p){stageSum[p.quote_id]=(stageSum[p.quote_id]||0)+(Number(p.amount)||0);});
+  all=all.map(function(q){return stageSum[q.id]!=null?Object.assign({},q,{total:round2(stageSum[q.id]),staged:true}):q;});
   var billable=all.filter(function(q){return q.status==='approved'||q.status==='invoiced';});
   var pending=all.filter(function(q){return q.status!=='approved'&&q.status!=='invoiced';});
   var sum=billable.reduce(function(s,q){return s+(Number(q.total)||0);},0);
@@ -1471,10 +1486,23 @@ function useQuoteTotal(v){
    is a separate, explicit button, because invoice_paid is a boolean and cannot
    represent a part-paid invoice. */
 var _qbPayCache={};
-async function renderQBPayments(quotes,l){
+async function renderQBPayments(quotes,partials,l){
   var el=document.getElementById('qb-payments');
   if(!el) return;
-  var withInv=(Array.isArray(quotes)?quotes:[]).filter(function(q){return !!q.qb_invoice_id;});
+  var qs=Array.isArray(quotes)?quotes:[],ps=Array.isArray(partials)?partials:[];
+  /* A staged quote has one row per stage; a normally-invoiced quote has its single
+     invoice on the quote itself. Take the stages where they exist so a job billed in
+     parts shows every part, and fall back to the quote otherwise. */
+  var staged={},byQuote={};
+  qs.forEach(function(q){byQuote[q.id]=q;});
+  ps.forEach(function(p){staged[p.quote_id]=true;});
+  var withInv=[];
+  ps.forEach(function(p){
+    if(!p.qb_invoice_id) return;
+    var q=byQuote[p.quote_id];
+    withInv.push({qb_invoice_id:p.qb_invoice_id,quote_type:q?q.quote_type:'goods',stage:p.label||('Stage '+partialSuffix(p.seq))});
+  });
+  qs.forEach(function(q){if(q.qb_invoice_id&&!staged[q.id]) withInv.push({qb_invoice_id:q.qb_invoice_id,quote_type:q.quote_type,stage:''});});
   if(!withInv.length){el.innerHTML='';return;}
   el.innerHTML='<div style="margin-top:14px;padding:10px 12px;border-top:1px solid var(--border-t);font-size:12px;color:var(--text-secondary)"><i class="ti ti-loader"></i> Checking payments in QuickBooks&hellip;</div>';
   var rows=[],failed=0;
@@ -1486,7 +1514,8 @@ async function renderQBPayments(quotes,l){
     _qbPayCache[q.qb_invoice_id]=d;
     var inv=d.txn.Invoice;
     var total=Number(inv.TotalAmt)||0,bal=Number(inv.Balance)||0;
-    rows.push({num:inv.DocNumber||q.qb_invoice_id,date:inv.TxnDate||'',total:total,paid:total-bal,bal:bal,type:quoteTypeLabel(q.quote_type||'goods')});
+    rows.push({num:inv.DocNumber||q.qb_invoice_id,date:inv.TxnDate||'',total:total,paid:total-bal,bal:bal,
+      type:quoteTypeLabel(q.quote_type||'goods')+(q.stage?' · '+q.stage:'')});
   }
   if(!rows.length){
     el.innerHTML='<div style="margin-top:14px;padding:10px 12px;border-top:1px solid var(--border-t);font-size:12px;color:var(--text-secondary)">Could not reach QuickBooks to check payments. '
@@ -1588,7 +1617,11 @@ async function saveInvoiceFields(){
     renderBoard();
     /* Re-derive the hint so it reads "matches" straight after saving rather than
        still offering a Use total button for a figure now stored. */
-    try{var hq=await sb('quotes?lead_id=eq.'+currentLead.id+'&select=quote_type,status,total');renderInvoiceTotalHint(await hq.json(),currentLead);}catch(_){}
+    try{
+      var hq=await sb('quotes?lead_id=eq.'+currentLead.id+'&select=id,quote_type,status,total');
+      var hp=await sb('quote_invoices?lead_id=eq.'+currentLead.id+'&select=quote_id,amount');
+      renderInvoiceTotalHint(await hq.json(),await hp.json(),currentLead);
+    }catch(_){}
     toast('Invoice details saved \u2713');
   }catch(e){toast('Save failed: '+e.message,'error');}
 }
@@ -2388,6 +2421,202 @@ async function sendQuoteToClient(){
   }
 }
 
+function round2(n){return Math.round((Number(n)||0)*100)/100;}
+function quoteInvoicedToDate(){return round2(currentQuoteInvoices.reduce(function(s,r){return s+(Number(r.amount)||0);},0));}
+/* 1 -> 'a', 2 -> 'b'. Matches the TIE-2608-3656a numbering already used by hand in
+   QuickBooks, so staged invoices keep the convention the customer has already seen. */
+function partialSuffix(seq){return seq>=1&&seq<=26?String.fromCharCode(96+seq):String(seq);}
+function nextPartialSeq(){return currentQuoteInvoices.reduce(function(m,r){return Math.max(m,Number(r.seq)||0);},0)+1;}
+
+/* Builds the line items for one stage. Percentage and amount both scale the unit rate
+   and leave quantities whole — the method used on TIE-2608-3656a — which avoids
+   fractional quantities on goods and keeps GST proportional automatically, since each
+   line keeps its own gst_applicable flag. 'items' bills chosen lines in full. */
+function partialLines(){
+  var f=partialForm; if(!f) return [];
+  var items=currentLineItems||[];
+  if(f.mode==='items') return items.filter(function(_,i){return !!f.items[i];}).map(function(it){return Object.assign({},it);});
+  var qTotal=Number(currentQuote&&currentQuote.total)||0;
+  var pct=f.mode==='percent'?(Number(f.value)||0)/100:(qTotal>0?(Number(f.value)||0)/qTotal:0);
+  if(!(pct>0)) return [];
+  return items.map(function(it){
+    var qty=Number(it.quantity)||1,rate=round2((Number(it.rate)||0)*pct);
+    return Object.assign({},it,{rate:rate,amount:round2(rate*qty)});
+  });
+}
+
+function partialTotals(lines){
+  var sub=lines.reduce(function(s,i){return s+round2((Number(i.quantity)||1)*(Number(i.rate)||0));},0);
+  var gst=lines.reduce(function(s,i){return s+(i.gst_applicable?round2((Number(i.quantity)||1)*(Number(i.rate)||0)*0.1):0);},0);
+  return {sub:round2(sub),gst:round2(gst),total:round2(sub+gst)};
+}
+
+function partialPreviewHtml(){
+  var f=partialForm; if(!f) return '';
+  var lines=partialLines();
+  if(!lines.length) return '<div style="font-size:12px;color:var(--text-tertiary);padding:8px 0">Enter a value to preview the invoice.</div>';
+  var t=partialTotals(lines);
+  var qTotal=Number(currentQuote.total)||0,done=quoteInvoicedToDate(),remaining=round2(qTotal-done);
+  /* The requested figure and the real one can differ by cents once each line's rate is
+     rounded to 2dp. Show both rather than let it surprise anyone in QuickBooks. */
+  var asked=f.mode==='percent'?round2(qTotal*(Number(f.value)||0)/100):(f.mode==='amount'?round2(Number(f.value)||0):t.total);
+  var drift=round2(t.total-asked);
+  return '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:8px">'
+    +'<thead><tr style="background:var(--bg-primary)"><th style="padding:5px 7px;text-align:left">Item</th><th style="padding:5px 7px;text-align:right">Qty</th><th style="padding:5px 7px;text-align:right">Unit</th><th style="padding:5px 7px;text-align:right">Amount</th></tr></thead><tbody>'
+    +lines.map(function(i){return '<tr style="border-top:1px solid var(--border-t)">'
+      +'<td style="padding:5px 7px">'+escHtml(i.item_name||i.description||'Item')+'</td>'
+      +'<td style="padding:5px 7px;text-align:right">'+(Number(i.quantity)||1)+'</td>'
+      +'<td style="padding:5px 7px;text-align:right">'+fmtAud(i.rate)+'</td>'
+      +'<td style="padding:5px 7px;text-align:right;font-weight:600">'+fmtAud(i.amount)+'</td></tr>';}).join('')
+    +'</tbody></table>'
+    +'<div style="display:flex;justify-content:flex-end;gap:14px;margin-top:8px;font-size:12px">'
+    +(t.gst>0?'<span style="color:var(--text-secondary)">GST '+fmtAud(t.gst)+'</span>':'')
+    +'<span style="font-weight:700;font-size:14px">This invoice: '+fmtAud(t.total)+'</span></div>'
+    +(Math.abs(drift)>=0.005?'<div style="font-size:11px;color:var(--text-tertiary);text-align:right">'+fmtAud(asked)+' requested; '+(drift>0?'+':'')+fmtAud(drift)+' from rounding each line to the cent.</div>':'')
+    +(t.total>remaining+0.005?'<div style="font-size:11px;color:#b45309;margin-top:6px"><i class="ti ti-alert-triangle"></i> This is more than the '+fmtAud(remaining)+' still to invoice on this quote.</div>':'');
+}
+
+function updatePartialPreview(){
+  var el=document.getElementById('partial-preview');
+  if(el) el.innerHTML=partialPreviewHtml();
+}
+function setPartialField(k,v){if(!partialForm)return;partialForm[k]=v;updatePartialPreview();}
+function togglePartialItem(i,on){if(!partialForm)return;partialForm.items[i]=on;updatePartialPreview();}
+function setPartialMode(m){
+  if(!partialForm)return;
+  partialForm.mode=m;partialForm.value='';
+  renderQuoteReview(document.getElementById('dtab-quote'));
+}
+function openPartialForm(){
+  partialForm={mode:'percent',value:'',label:'',items:{}};
+  renderQuoteReview(document.getElementById('dtab-quote'));
+}
+function closePartialForm(){
+  partialForm=null;
+  renderQuoteReview(document.getElementById('dtab-quote'));
+}
+
+/* Panel showing what has been billed against this quote and what is left, plus the
+   form to raise the next stage. Only on approved/invoiced quotes — there is nothing
+   to bill against a draft. */
+function partialPanelHtml(){
+  var q=currentQuote;
+  if(!q||(q.status!=='approved'&&q.status!=='invoiced')) return '';
+  var qTotal=Number(q.total)||0,done=quoteInvoicedToDate(),remaining=round2(qTotal-done);
+  var rows=currentQuoteInvoices.map(function(r){
+    return '<tr style="border-top:1px solid var(--border-t)">'
+      +'<td style="padding:6px 8px"><div style="font-weight:600">'+escHtml(r.qb_invoice_number||('Stage '+partialSuffix(r.seq)))+'</div>'
+      +'<div style="font-size:11px;color:var(--text-tertiary)">'+escHtml(r.label||'')+(r.invoice_date?' &middot; '+escHtml(String(r.invoice_date).slice(0,10)):'')+'</div></td>'
+      +'<td style="padding:6px 8px;text-align:right">'+(r.pct!=null?Number(r.pct)+'%':'&#8212;')+'</td>'
+      +'<td style="padding:6px 8px;text-align:right;font-weight:600">'+fmtAud(r.amount)+'</td></tr>';
+  }).join('');
+  var form='';
+  if(partialForm){
+    var f=partialForm;
+    var modeBtn=function(m,lbl){return '<button type="button" onclick="setPartialMode(\''+m+'\')" style="cursor:pointer;padding:6px 10px;font-size:12px;border-radius:var(--radius-md);border:1px solid '+(f.mode===m?'var(--accent)':'var(--border-t)')+';background:'+(f.mode===m?'var(--accent-light)':'var(--bg-secondary)')+'">'+lbl+'</button>';};
+    var input='';
+    if(f.mode==='percent') input='<input class="form-input" type="number" step="0.01" min="0" placeholder="30" value="'+escHtml(f.value)+'" oninput="setPartialField(\'value\',this.value)" style="width:110px"> <span style="font-size:12px;color:var(--text-secondary)">% of '+fmtAud(qTotal)+'</span>';
+    else if(f.mode==='amount') input='<span style="font-size:12px;color:var(--text-secondary)">A$</span> <input class="form-input" type="number" step="0.01" min="0" placeholder="0.00" value="'+escHtml(f.value)+'" oninput="setPartialField(\'value\',this.value)" style="width:140px">';
+    else input='<div style="display:flex;flex-direction:column;gap:4px">'+(currentLineItems||[]).map(function(it,i){
+        return '<label style="font-size:12px;display:flex;align-items:center;gap:7px;cursor:pointer"><input type="checkbox" '+(f.items[i]?'checked':'')+' onchange="togglePartialItem('+i+',this.checked)" style="width:14px;height:14px;accent-color:var(--accent)"> '+escHtml(it.item_name||it.description||('Item '+(i+1)))+' &mdash; '+fmtAud(it.amount)+'</label>';
+      }).join('')+'</div>';
+    form='<div style="margin-top:12px;padding:12px;border:1px solid var(--accent);border-radius:var(--radius-md);background:var(--bg-secondary)">'
+      +'<div style="display:flex;gap:6px;margin-bottom:10px">'+modeBtn('percent','Percentage')+modeBtn('amount','Deposit amount')+modeBtn('items','Specific materials')+'</div>'
+      +'<div style="margin-bottom:10px">'+input+'</div>'
+      +'<div style="margin-bottom:8px"><input class="form-input" placeholder="Label, e.g. 30% advance" value="'+escHtml(f.label)+'" oninput="setPartialField(\'label\',this.value)" style="max-width:280px;font-size:12px"></div>'
+      +'<div id="partial-preview">'+partialPreviewHtml()+'</div>'
+      +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">'
+      +'<button class="btn btn-sm" onclick="closePartialForm()">Cancel</button>'
+      +'<button class="btn btn-primary btn-sm" onclick="createPartialInvoice()"><i class="ti ti-file-invoice"></i> Create invoice '+escHtml(q.quote_number+partialSuffix(nextPartialSeq()))+' in QuickBooks</button>'
+      +'</div></div>';
+  }
+  return '<div style="margin-top:16px;padding:14px;background:var(--bg-secondary);border-radius:var(--radius-md);border:1px solid var(--border-t)">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">'
+    +'<div style="font-size:13px;font-weight:700"><i class="ti ti-stack-2"></i> Staged invoicing</div>'
+    +(partialForm?'':'<button class="btn btn-sm" onclick="openPartialForm()"><i class="ti ti-plus"></i> Invoice a part</button>')
+    +'</div>'
+    +'<div style="display:flex;gap:18px;flex-wrap:wrap;font-size:12px;margin-bottom:'+(rows?'8px':'2px')+'">'
+    +'<span>Quote <strong>'+fmtAud(qTotal)+'</strong></span>'
+    +'<span>Invoiced to date <strong>'+fmtAud(done)+'</strong></span>'
+    +'<span>Remaining <strong style="color:'+(remaining<=0.005?'var(--green)':'var(--accent-dark)')+'">'+fmtAud(remaining)+'</strong></span>'
+    +'</div>'
+    +(rows?'<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:var(--bg-primary)">'
+      +'<th style="padding:6px 8px;text-align:left">Invoice</th><th style="padding:6px 8px;text-align:right">%</th><th style="padding:6px 8px;text-align:right">Amount</th>'
+      +'</tr></thead><tbody>'+rows+'</tbody></table>':'')
+    +form
+    +'</div>';
+}
+
+/* Raises one stage as a real QuickBooks invoice. Deliberately sends no estimateId:
+   linking a part-value invoice would flip the full-value estimate to Closed while
+   most of the job is still unbilled, which misrepresents it in QuickBooks. */
+async function createPartialInvoice(){
+  if(!currentQuote||!partialForm) return;
+  var lines=partialLines();
+  if(!lines.length){toast('Nothing to invoice — enter a value or pick some items','error');return;}
+  var t=partialTotals(lines);
+  if(!(t.total>0)){toast('This invoice would be A$0.00','error');return;}
+  if(!currentQuote.qb_customer_id){toast('No QuickBooks customer on this quote. Open Edit & preview and select one first.','error');return;}
+  var qTotal=Number(currentQuote.total)||0,remaining=round2(qTotal-quoteInvoicedToDate());
+  if(t.total>remaining+0.005&&!confirm('This invoice is '+fmtAud(t.total)+', which is more than the '+fmtAud(remaining)+' still to invoice on this quote.\n\nRaise it anyway?')) return;
+  var seq=nextPartialSeq(),num=currentQuote.quote_number+partialSuffix(seq);
+  if(!confirm('Create invoice '+num+' in QuickBooks for '+fmtAud(t.total)+'?')) return;
+  try{
+    /* expiry_date cleared so the edge function falls back to a 30-day due date rather
+       than using the original quote's expiry, which is often already past. */
+    var qCopy=Object.assign({},currentQuote,{quote_number:num,expiry_date:null});
+    var data=await callQB('create_invoice',{quote:qCopy,lineItems:lines,clientId:currentQuote.qb_customer_id});
+    if(!data||!data.success) throw new Error((data&&data.error)||'Failed');
+    var row={quote_id:currentQuote.id,lead_id:currentLead.id,seq:seq,label:partialForm.label||'',
+      basis:partialForm.mode,pct:partialForm.mode==='percent'?Number(partialForm.value)||null:null,
+      amount:t.total,qb_invoice_id:String(data.invoice_id),qb_invoice_number:data.invoice_number||num,
+      invoice_date:todayLocalISO()};
+    var ins=await sbWrite('quote_invoices',{method:'POST',body:JSON.stringify(row),prefer:'return=representation'});
+    var saved=await ins.json();
+    currentQuoteInvoices.push(Array.isArray(saved)&&saved.length?saved[0]:row);
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'QB Invoice created',detail:'Invoice '+(data.invoice_number||num)+' created ('+fmtAud(t.total)+')'+(partialForm.label?' — '+partialForm.label:'')+' — staged invoice, not linked to an estimate'})});
+    if(currentQuote.status!=='invoiced'){
+      await sbWrite('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({status:'invoiced',updated_at:new Date().toISOString()})});
+      currentQuote.status='invoiced';
+    }
+    if(!currentQuote.qb_invoice_id){
+      await sbWrite('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({qb_invoice_id:String(data.invoice_id)})});
+      currentQuote.qb_invoice_id=String(data.invoice_id);
+    }
+    await applyLeadInvoiceTotal();
+    partialForm=null;
+    _qbPayCache={};
+    renderBoard();renderQuoteReview(document.getElementById('dtab-quote'));
+    toast('Invoice '+(data.invoice_number||num)+' created &#10003; '+fmtAud(t.total));
+  }catch(e){toast('QB Invoice failed: '+e.message,'error');}
+}
+
+/* Recomputes the lead's revenue figure from what has actually been invoiced: staged
+   invoices where they exist, plus the full total of any invoiced quote that has no
+   stages (so a lead with a normal goods invoice and a staged freight quote adds up).
+   Only ever raised, never lowered, so a figure corrected by hand is not clobbered. */
+async function applyLeadInvoiceTotal(){
+  if(!currentLead) return;
+  try{
+    var pr=await sb('quote_invoices?lead_id=eq.'+currentLead.id+'&select=quote_id,amount');
+    var parts=await pr.json(); if(!Array.isArray(parts)) parts=[];
+    var staged={},partSum=0;
+    parts.forEach(function(p){staged[p.quote_id]=true;partSum+=Number(p.amount)||0;});
+    var qr=await sb('quotes?lead_id=eq.'+currentLead.id+'&status=eq.invoiced&select=id,total');
+    var qs=await qr.json(); if(!Array.isArray(qs)) qs=[];
+    var fullSum=qs.reduce(function(s,q){return staged[q.id]?s:s+(Number(q.total)||0);},0);
+    var total=round2(partSum+fullSum);
+    if(total>(Number(currentLead.invoice_total)||0)){
+      var patch={invoice_total:total,updated_at:new Date().toISOString()};
+      if(!currentLead.invoice_date) patch.invoice_date=todayLocalISO();
+      await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify(patch)});
+      Object.assign(currentLead,patch);
+      var i=leads.findIndex(function(l){return l.id===currentLead.id;});
+      if(i>-1) Object.assign(leads[i],patch);
+    }
+  }catch(e){console.warn('Lead invoice total not updated:',e);}
+}
+
 function renderQuoteReview(el){
   var q=currentQuote;
   if(!q){el.innerHTML=quoteSwitcherHtml()+'<div class="empty-state">No quote found</div>';return;}
@@ -2427,7 +2656,8 @@ function renderQuoteReview(el){
       :'<div style="background:rgba(180,83,9,0.06);border:0.5px solid rgba(180,83,9,0.4);border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:#b45309"><i class="ti ti-alert-triangle"></i> <strong>Client approved, but no QB estimate exists.</strong> '+(q.qb_customer_id?'Click Create QB Estimate above to retry.':'Select a QuickBooks customer in Edit &amp; preview first, then click Create QB Estimate.')+'</div>')
       :'')
     +(q.qb_estimate_id&&q.qb_estimate_stale&&q.status!=='invoiced'?'<div style="background:rgba(180,83,9,0.06);border:0.5px solid rgba(180,83,9,0.4);border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:#b45309"><i class="ti ti-alert-triangle"></i> <strong>QB estimate '+escHtml(q.qb_estimate_number||q.qb_estimate_id)+' is out of date.</strong> This quote was revised after the estimate was created, so the figures in QuickBooks no longer match. Update or delete the estimate in QuickBooks before invoicing &#8212; the invoice will still link to it.</div>':'')
-    +(q.status==='invoiced'?'<div style="background:var(--accent-light);border:0.5px solid var(--accent);border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:var(--accent-dark)"><i class="ti ti-check"></i> <strong>Invoiced.</strong> QB Invoice: '+(q.qb_invoice_id||'Pending')+(q.qb_estimate_id?' &middot; QB Estimate: '+escHtml(q.qb_estimate_number||q.qb_estimate_id):'')+'</div>':'');
+    +(q.status==='invoiced'?'<div style="background:var(--accent-light);border:0.5px solid var(--accent);border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:var(--accent-dark)"><i class="ti ti-check"></i> <strong>Invoiced.</strong> QB Invoice: '+(q.qb_invoice_id||'Pending')+(q.qb_estimate_id?' &middot; QB Estimate: '+escHtml(q.qb_estimate_number||q.qb_estimate_id):'')+'</div>':'')
+    +partialPanelHtml();
 }
 
 async function reviseQuote(){

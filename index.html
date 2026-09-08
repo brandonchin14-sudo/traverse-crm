@@ -1279,6 +1279,7 @@ async function renderDetailInfo(){
       <div style="display:flex;justify-content:flex-end;margin-top:12px">
         <button class="btn btn-primary" onclick="saveInvoiceFields()"><i class="ti ti-device-floppy"></i> Save invoice / revenue</button>
       </div>
+      <div id="qb-payments"></div>
     </div>
     ${(function(){
       var html='';
@@ -1327,6 +1328,9 @@ async function renderDetailInfo(){
     var qr = await sb('quotes?lead_id=eq.'+l.id+'&order=created_at.asc');
     var quotes = await qr.json();
     renderInvoiceTotalHint(quotes,l);
+    /* Not awaited: this makes one QuickBooks call per invoice, and the rest of the
+       detail panel must not sit blank behind a slow or disconnected QB. */
+    renderQBPayments(quotes,l);
     var summaryEl = document.getElementById('detail-quote-summary');
     if(summaryEl && quotes && quotes.length){
       /* Stack every quote on the lead — goods and freight each with their own line
@@ -1458,6 +1462,103 @@ function useQuoteTotal(v){
   if(!el) return;
   el.value=Number(v).toFixed(2);
   toast('Filled &#8212; click Save invoice / revenue to store it');
+}
+
+/* Live payment position, read straight from QuickBooks per invoice.
+   QuickBooks is the only place that knows what has actually been received, so this
+   reads rather than stores: Balance is the truth, and a cached copy would drift the
+   moment someone banks a payment. Nothing here writes — updating the CRM's paid flag
+   is a separate, explicit button, because invoice_paid is a boolean and cannot
+   represent a part-paid invoice. */
+var _qbPayCache={};
+async function renderQBPayments(quotes,l){
+  var el=document.getElementById('qb-payments');
+  if(!el) return;
+  var withInv=(Array.isArray(quotes)?quotes:[]).filter(function(q){return !!q.qb_invoice_id;});
+  if(!withInv.length){el.innerHTML='';return;}
+  el.innerHTML='<div style="margin-top:14px;padding:10px 12px;border-top:1px solid var(--border-t);font-size:12px;color:var(--text-secondary)"><i class="ti ti-loader"></i> Checking payments in QuickBooks&hellip;</div>';
+  var rows=[],failed=0;
+  for(var i=0;i<withInv.length;i++){
+    var q=withInv[i];
+    var cached=_qbPayCache[q.qb_invoice_id];
+    var d=cached||await callQB('get_transaction',{query:'invoice',clientId:String(q.qb_invoice_id)});
+    if(!d||!d.success||!d.txn||!d.txn.Invoice){failed++;continue;}
+    _qbPayCache[q.qb_invoice_id]=d;
+    var inv=d.txn.Invoice;
+    var total=Number(inv.TotalAmt)||0,bal=Number(inv.Balance)||0;
+    rows.push({num:inv.DocNumber||q.qb_invoice_id,date:inv.TxnDate||'',total:total,paid:total-bal,bal:bal,type:quoteTypeLabel(q.quote_type||'goods')});
+  }
+  if(!rows.length){
+    el.innerHTML='<div style="margin-top:14px;padding:10px 12px;border-top:1px solid var(--border-t);font-size:12px;color:var(--text-secondary)">Could not reach QuickBooks to check payments. '
+      +'<button type="button" class="btn btn-sm" onclick="refreshQBPayments()"><i class="ti ti-refresh"></i> Retry</button></div>';
+    return;
+  }
+  var sT=rows.reduce(function(s,r){return s+r.total;},0);
+  var sP=rows.reduce(function(s,r){return s+r.paid;},0);
+  var sB=rows.reduce(function(s,r){return s+r.bal;},0);
+  var body=rows.map(function(r){
+    var pct=r.total>0?Math.round((r.paid/r.total)*100):0;
+    var col=r.bal<=0.005?'var(--green)':(r.paid>0.005?'#b45309':'var(--text-secondary)');
+    var label=r.bal<=0.005?'Paid in full':(r.paid>0.005?pct+'% paid':'Nothing paid yet');
+    return '<tr style="border-top:1px solid var(--border-t)">'
+      +'<td style="padding:6px 8px"><div style="font-weight:600">'+escHtml(r.num)+'</div><div style="font-size:11px;color:var(--text-tertiary)">'+escHtml(r.type)+(r.date?' &middot; '+escHtml(r.date):'')+'</div></td>'
+      +'<td style="padding:6px 8px;text-align:right">'+fmtAud(r.total)+'</td>'
+      +'<td style="padding:6px 8px;text-align:right;color:var(--green)">'+fmtAud(r.paid)+'</td>'
+      +'<td style="padding:6px 8px;text-align:right;font-weight:600">'+fmtAud(r.bal)+'</td>'
+      +'<td style="padding:6px 8px;text-align:right;font-size:11px;font-weight:600;color:'+col+'">'+label+'</td>'
+      +'</tr>';
+  }).join('');
+  el.innerHTML='<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border-t)">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'
+    +'<div style="font-size:12px;font-weight:700"><i class="ti ti-cash"></i> Payments &#8212; live from QuickBooks</div>'
+    +'<button type="button" class="btn btn-sm" onclick="refreshQBPayments()"><i class="ti ti-refresh"></i> Refresh</button>'
+    +'</div>'
+    +'<table style="width:100%;border-collapse:collapse;font-size:12px">'
+    +'<thead><tr style="background:var(--bg-primary)">'
+    +'<th style="padding:6px 8px;text-align:left;font-weight:700">Invoice</th>'
+    +'<th style="padding:6px 8px;text-align:right;font-weight:700">Invoiced</th>'
+    +'<th style="padding:6px 8px;text-align:right;font-weight:700">Paid</th>'
+    +'<th style="padding:6px 8px;text-align:right;font-weight:700">Outstanding</th>'
+    +'<th style="padding:6px 8px;text-align:right;font-weight:700">Status</th>'
+    +'</tr></thead><tbody>'+body+'</tbody>'
+    +(rows.length>1?'<tfoot><tr style="border-top:2px solid var(--border-t);font-weight:700">'
+      +'<td style="padding:6px 8px">Total</td>'
+      +'<td style="padding:6px 8px;text-align:right">'+fmtAud(sT)+'</td>'
+      +'<td style="padding:6px 8px;text-align:right;color:var(--green)">'+fmtAud(sP)+'</td>'
+      +'<td style="padding:6px 8px;text-align:right">'+fmtAud(sB)+'</td><td></td></tr></tfoot>':'')
+    +'</table>'
+    +(failed?'<div style="font-size:11px;color:#b45309;margin-top:6px"><i class="ti ti-alert-triangle"></i> '+failed+' invoice(s) could not be read from QuickBooks.</div>':'')
+    +renderPaidSyncHint(sB,l)
+    +'</div>';
+}
+
+/* Offers to correct the CRM's paid flag when QuickBooks disagrees with it. Explicit,
+   never automatic: this flag drives every revenue report. */
+function renderPaidSyncHint(balance,l){
+  var qbPaid=balance<=0.005, crmPaid=l.invoice_paid!==false;
+  if(qbPaid===crmPaid) return '';
+  return '<div style="margin-top:8px;padding:8px 10px;background:var(--bg-primary);border:1px solid var(--border-t);border-radius:var(--radius-md);display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:12px">'
+    +'<span>QuickBooks says this is <strong>'+(qbPaid?'paid in full':'still outstanding')+'</strong>, but the CRM has it as <strong>'+(crmPaid?'Paid':'Pending')+'</strong>.</span>'
+    +'<button type="button" class="btn btn-sm" style="white-space:nowrap" onclick="applyQBPaidStatus('+(qbPaid?'true':'false')+')"><i class="ti ti-check"></i> Use QuickBooks</button>'
+    +'</div>';
+}
+
+async function applyQBPaidStatus(paid){
+  if(!currentLead) return;
+  try{
+    await sbWrite('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({invoice_paid:paid,updated_at:new Date().toISOString()})});
+    currentLead.invoice_paid=paid;
+    var i=leads.findIndex(function(x){return x.id===currentLead.id;});
+    if(i>-1) leads[i].invoice_paid=paid;
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Invoice updated',detail:'Payment status set to '+(paid?'Paid':'Pending')+' from QuickBooks'})});
+    renderBoard();await renderDetailInfo();
+    toast('Payment status updated from QuickBooks &#10003;');
+  }catch(e){toast('Could not update payment status','error');}
+}
+
+async function refreshQBPayments(){
+  _qbPayCache={};
+  if(currentLead) await renderDetailInfo();
 }
 
 async function saveInvoiceFields(){

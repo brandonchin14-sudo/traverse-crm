@@ -56,6 +56,26 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 #setPasswordScreen{display:none;min-height:100vh;align-items:center;justify-content:center;background:var(--bg-tertiary)}
 #appScreen{display:none}
 
+/* DAILY BRIEF — shared to-do board, opened every morning, so plain over decorative */
+.brief-group{background:var(--bg-primary);border:1px solid var(--border-t);border-radius:var(--radius-md);margin-bottom:16px;overflow:hidden}
+.brief-group-head{padding:9px 14px;background:var(--bg-secondary);border-bottom:1px solid var(--border-t);font-size:12px;font-weight:700;display:flex;align-items:center;gap:8px}
+.brief-row{display:flex;align-items:flex-start;gap:11px;padding:11px 14px;border-top:1px solid var(--border-t)}
+.brief-row:first-of-type{border-top:none}
+.brief-tick{flex-shrink:0;width:19px;height:19px;border-radius:5px;border:1.5px solid var(--border-p);background:var(--bg-primary);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:12px;color:#fff;margin-top:1px}
+.brief-tick.ok{background:var(--green);border-color:var(--green)}
+.brief-item-text{font-size:13px;font-weight:500;line-height:1.35}
+.brief-row.done .brief-item-text{color:var(--text-tertiary);text-decoration:line-through}
+.brief-chip{font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;background:var(--accent-light);color:var(--accent-dark);white-space:nowrap}
+.brief-stuck{font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;background:var(--danger-light);color:var(--danger);white-space:nowrap}
+.brief-meta{font-size:11px;color:var(--text-tertiary);margin-top:3px}
+.brief-note{width:100%;font-size:12px;color:var(--text-secondary);background:transparent;border:1px solid transparent;border-radius:6px;padding:3px 6px;margin-top:4px;font-family:inherit;resize:vertical}
+.brief-note:hover{border-color:var(--border-t)}
+.brief-note:focus{border-color:var(--accent);background:var(--bg-primary);outline:none;color:var(--text-primary)}
+.brief-sum{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+.brief-sum-card{flex:1;min-width:150px;background:var(--bg-primary);border:1px solid var(--border-t);border-radius:var(--radius-md);padding:11px 14px}
+.brief-sum-name{font-size:12px;font-weight:700;margin-bottom:5px}
+.brief-sum-nums{display:flex;gap:12px;font-size:12px;color:var(--text-secondary)}
+
 /* TOPBAR */
 .topbar{background:var(--bg-primary);border-bottom:0.5px solid var(--border-t);padding:0 24px;display:flex;align-items:center;height:56px;position:sticky;top:0;z-index:50;gap:0}
 .topbar-brand{font-size:15px;font-weight:600;margin-right:24px;display:flex;align-items:center;gap:8px}
@@ -277,6 +297,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <div class="nav-tab active" onclick="switchView('pipeline',this)"><i class="ti ti-layout-kanban"></i> Pipeline</div>
   <div class="nav-tab" onclick="switchView('drive',this)"><i class="ti ti-brand-google-drive"></i> Drive</div>
   <div class="nav-tab" onclick="switchView('reports',this)"><i class="ti ti-chart-bar"></i> Reports</div>
+  <div class="nav-tab" onclick="switchView('brief',this)"><i class="ti ti-checklist"></i> Brief</div>
   <div style="margin-left:auto;display:flex;align-items:center;gap:10px">
     <button class="btn btn-primary" onclick="openNewLead()"><i class="ti ti-plus"></i> New lead</button>
     <div class="user-pill" onclick="doLogout()"><i class="ti ti-user"></i><span id="userEmail"></span><i class="ti ti-logout" style="font-size:13px"></i></div>
@@ -307,6 +328,22 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <button class="btn" onclick="renderDriveView()"><i class="ti ti-refresh"></i></button>
   </div>
   <div id="driveView"></div>
+</div>
+
+<!-- DAILY BRIEF -->
+<div id="view-brief" class="view main">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;flex-wrap:wrap">
+    <div style="flex:1;min-width:200px">
+      <div style="font-size:16px;font-weight:600;margin-bottom:3px">Daily Brief</div>
+      <div style="font-size:13px;color:var(--text-secondary)">Shared board &#8212; everyone sees the same live state</div>
+    </div>
+    <button class="btn" id="briefArchiveBtn" onclick="toggleBriefArchive()"><i class="ti ti-archive"></i> Show archive</button>
+    <button class="btn" onclick="renderBrief()"><i class="ti ti-refresh"></i></button>
+    <button class="btn btn-primary" onclick="toggleBriefAdd()"><i class="ti ti-plus"></i> Add item</button>
+  </div>
+  <div id="briefSummary"></div>
+  <div id="briefAddForm"></div>
+  <div id="briefBoard"><div class="empty-state"><i class="ti ti-loader"></i> Loading...</div></div>
 </div>
 
 <!-- REPORTS -->
@@ -1332,6 +1369,7 @@ function switchView(view,el){
   el.classList.add('active');
   if(view==='reports') renderReports();
   if(view==='drive') renderDriveView();
+  if(view==='brief') renderBrief();
 }
 function escHtml(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
@@ -3162,6 +3200,353 @@ function renderReportTable(){
       +'<td style="padding:8px 12px;text-align:center">'+status+'</td>'
       +'</tr>';
   }).join('')+(rows.length===0?'<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--text-secondary)">No results</td></tr>':'');
+}
+
+/* ── DAILY BRIEF ──────────────────────────────────────────────────────────
+   Shared to-do board replacing a spreadsheet. Standing items are ongoing threads
+   that live on the board permanently; Tasks are one-offs that get archived once
+   OK. Two statuses only, Pending and OK, both CHECK-constrained in the database.
+   The 7am rebuild and 5pm rollover run outside this app — the front end only
+   reads and writes brief_items, and reads brief_snapshots. */
+let briefItems=[],briefArchived=[],briefStuck={},briefShowArchive=false,briefAdd=null;
+
+/* Known team plus anyone already on the board, so a new owner appearing in the
+   data does not need a code change. */
+function briefPeople(){
+  var s={Brandon:1,Cara:1,Luis:1};
+  briefItems.concat(briefArchived).forEach(function(it){(it.owners||[]).forEach(function(o){if(o)s[o]=1;});});
+  return Object.keys(s).sort();
+}
+
+/* Pending must sort above OK, which PostgREST's status.asc gets backwards —
+   'OK' < 'Pending' alphabetically. So order the sections and manual sort_order in
+   the query, and put Pending first here. */
+function briefSort(a,b){
+  if(a.section!==b.section) return a.section==='Standing'?-1:1;
+  if(a.status!==b.status) return a.status==='Pending'?-1:1;
+  return (a.sort_order||0)-(b.sort_order||0);
+}
+
+async function loadBriefItems(){
+  const r=await sb('brief_items?select=*&archived=eq.false&order=section.asc,sort_order.asc');
+  if(r.status===401){doLogout();return false;}
+  if(!r.ok) throw new Error('Could not load the brief');
+  briefItems=(await r.json()).sort(briefSort);
+  return true;
+}
+
+/* Flags anything Pending on the last three or more consecutive snapshots — the
+   main thing the board is for. A missing snapshot on a date breaks the run, so a
+   gap in the scheduled job cannot manufacture a false "stuck". Silent on failure:
+   a stuck badge is useful, not load-bearing. */
+async function loadBriefStuck(){
+  briefStuck={};
+  try{
+    const r=await sb('brief_snapshots?select=item_id,status,snapshot_date&order=snapshot_date.desc&limit=2000');
+    if(!r.ok) return;
+    const rows=await r.json();
+    if(!Array.isArray(rows)||!rows.length) return;
+    var dates=Object.keys(rows.reduce(function(m,s){m[s.snapshot_date]=1;return m;},{})).sort().reverse();
+    var byItem={};
+    rows.forEach(function(s){(byItem[s.item_id]=byItem[s.item_id]||{})[s.snapshot_date]=s.status;});
+    Object.keys(byItem).forEach(function(id){
+      var run=0;
+      for(var i=0;i<dates.length;i++){
+        if(byItem[id][dates[i]]==='Pending') run++; else break;
+      }
+      if(run>=3) briefStuck[id]=run;
+    });
+  }catch(e){}
+}
+
+async function renderBrief(){
+  var board=document.getElementById('briefBoard');
+  if(!board) return;
+  try{
+    if(!(await loadBriefItems())) return;
+    await loadBriefStuck();
+    if(briefShowArchive){
+      var ar=await sb('brief_items?select=*&archived=eq.true&order=closed_at.desc&limit=200');
+      briefArchived=ar.ok?await ar.json():[];
+    } else briefArchived=[];
+    renderBriefSummary();
+    renderBriefBoard();
+    renderBriefAddForm();
+  }catch(e){
+    board.innerHTML='<div class="empty-state"><i class="ti ti-alert-circle"></i> '+escHtml(e.message||'Could not load the brief')+'</div>';
+    toast('Could not load the brief','error');
+  }
+}
+
+function renderBriefSummary(){
+  var el=document.getElementById('briefSummary');
+  if(!el) return;
+  var per={};
+  briefItems.forEach(function(it){
+    (it.owners||[]).forEach(function(o){
+      per[o]=per[o]||{Pending:0,OK:0};
+      if(per[o][it.status]!=null) per[o][it.status]++;
+    });
+  });
+  var stuckCount=briefItems.filter(function(it){return briefStuck[it.id];}).length;
+  var names=briefPeople().filter(function(n){return per[n];});
+  el.innerHTML='<div class="brief-sum">'
+    +names.map(function(n){
+      var p=per[n];
+      return '<div class="brief-sum-card"><div class="brief-sum-name">'+escHtml(n)+'</div>'
+        +'<div class="brief-sum-nums">'
+        +'<span style="color:'+(p.Pending?'#b45309':'var(--text-tertiary)')+';font-weight:600">'+p.Pending+' pending</span>'
+        +'<span style="color:var(--green)">'+p.OK+' OK</span>'
+        +'</div></div>';
+    }).join('')
+    +'<div class="brief-sum-card" style="border-color:'+(stuckCount?'var(--danger)':'var(--border-t)')+'">'
+    +'<div class="brief-sum-name">Stuck</div><div class="brief-sum-nums">'
+    +(stuckCount
+      ?'<span style="color:var(--danger);font-weight:700">'+stuckCount+' item'+(stuckCount===1?'':'s')+' 3+ days pending</span>'
+      :'<span style="color:var(--text-tertiary)">Nothing stuck</span>')
+    +'</div></div></div>';
+}
+
+function briefRowHtml(it,archived){
+  var ok=it.status==='OK';
+  var stuck=briefStuck[it.id];
+  var who=it.updated_by_email?escHtml(String(it.updated_by_email).split('@')[0]):'';
+  var when=it.updated_at?new Date(it.updated_at).toLocaleString('en-AU',{day:'numeric',month:'short',hour:'numeric',minute:'2-digit'}):'';
+  return '<div class="brief-row'+(ok?' done':'')+'">'
+    +(archived
+      ?'<div class="brief-tick ok" style="cursor:default"><i class="ti ti-check"></i></div>'
+      :'<div class="brief-tick'+(ok?' ok':'')+'" onclick="toggleBriefStatus(\''+it.id+'\')" title="'+(ok?'Mark pending':'Mark OK')+'">'+(ok?'<i class="ti ti-check"></i>':'')+'</div>')
+    +'<div style="flex:1;min-width:0">'
+    +'<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">'
+    +'<span class="brief-item-text">'+escHtml(it.item)+'</span>'
+    +(it.owners||[]).map(function(o){return '<span class="brief-chip">'+escHtml(o)+'</span>';}).join('')
+    +(stuck?'<span class="brief-stuck"><i class="ti ti-alert-triangle"></i> stuck '+stuck+' days</span>':'')
+    +'</div>'
+    +(archived
+      ?(it.notes?'<div class="brief-meta">'+escHtml(it.notes)+'</div>':'')
+      :'<textarea class="brief-note" rows="1" placeholder="Notes — what are we waiting on?" onchange="saveBriefNotes(\''+it.id+'\',this.value)">'+escHtml(it.notes||'')+'</textarea>')
+    +'<div class="brief-meta">'
+    +(archived&&it.closed_at?'Closed '+new Date(it.closed_at).toLocaleDateString('en-AU')
+      :(who?'Last moved by '+who+(when?', '+when:''):'Not touched yet'))
+    +'</div></div></div>';
+}
+
+function renderBriefBoard(){
+  var el=document.getElementById('briefBoard');
+  if(!el) return;
+  var html='';
+  ['Standing','Task'].forEach(function(sec){
+    var rows=briefItems.filter(function(it){return it.section===sec;});
+    if(!rows.length) return;
+    var pending=rows.filter(function(r){return r.status==='Pending';}).length;
+    html+='<div class="brief-group"><div class="brief-group-head">'
+      +'<i class="ti '+(sec==='Standing'?'ti-repeat':'ti-list-check')+'"></i> '
+      +(sec==='Standing'?'Standing':'Tasks')
+      +'<span style="color:var(--text-tertiary);font-weight:500">'+rows.length+' item'+(rows.length===1?'':'s')
+      +(pending?' &middot; '+pending+' pending':'')+'</span></div>'
+      +rows.map(function(it){return briefRowHtml(it,false);}).join('')
+      +'</div>';
+  });
+  if(!html) html='<div class="empty-state"><i class="ti ti-checklist"></i> Nothing on the board. Click Add item to start.</div>';
+  if(briefShowArchive){
+    html+='<div class="brief-group"><div class="brief-group-head"><i class="ti ti-archive"></i> Archive'
+      +'<span style="color:var(--text-tertiary);font-weight:500">'+briefArchived.length+' closed</span></div>'
+      +(briefArchived.length?briefArchived.map(function(it){return briefRowHtml(it,true);}).join('')
+        :'<div class="brief-row"><div style="font-size:12px;color:var(--text-tertiary)">Nothing archived yet.</div></div>')
+      +'</div>';
+  }
+  el.innerHTML=html;
+}
+
+/* One click writes straight through — no save button. updated_at is owned by a
+   database trigger and must never be sent; updated_by_email is written because
+   auth.users is not exposed through PostgREST, so the browser cannot turn a uuid
+   into a person. */
+async function toggleBriefStatus(id){
+  var it=briefItems.find(function(x){return x.id===id;});
+  if(!it) return;
+  var next=it.status==='Pending'?'OK':'Pending';
+  var prev=it.status;
+  it.status=next;
+  briefItems.sort(briefSort);renderBriefSummary();renderBriefBoard();
+  try{
+    var r=await sbWrite('brief_items?id=eq.'+id,{method:'PATCH',
+      body:JSON.stringify({status:next,updated_by:(currentUser&&currentUser.id)||null,updated_by_email:(currentUser&&currentUser.email)||null}),
+      prefer:'return=representation'});
+    var rows=await r.json();
+    if(Array.isArray(rows)&&rows.length) Object.assign(it,rows[0]);
+    briefItems.sort(briefSort);renderBriefSummary();renderBriefBoard();
+  }catch(e){
+    it.status=prev;
+    briefItems.sort(briefSort);renderBriefSummary();renderBriefBoard();
+    toast('Could not update: '+e.message,'error');
+  }
+}
+
+async function saveBriefNotes(id,val){
+  var it=briefItems.find(function(x){return x.id===id;});
+  if(!it||(it.notes||'')===val) return;
+  try{
+    await sbWrite('brief_items?id=eq.'+id,{method:'PATCH',
+      body:JSON.stringify({notes:val||null,updated_by:(currentUser&&currentUser.id)||null,updated_by_email:(currentUser&&currentUser.email)||null})});
+    it.notes=val||null;
+    it.updated_by_email=(currentUser&&currentUser.email)||it.updated_by_email;
+    it.updated_at=new Date().toISOString();
+    renderBriefBoard();
+    toast('Note saved &#10003;');
+  }catch(e){toast('Could not save note: '+e.message,'error');}
+}
+
+function toggleBriefAdd(){
+  briefAdd=briefAdd?null:{section:'Task',item:'',owners:{},notes:'',mode:'one',bulk:''};
+  renderBriefAddForm();
+  if(briefAdd) setTimeout(function(){var f=document.getElementById('briefNewItem');if(f)f.focus();},30);
+}
+function setBriefAddMode(m){
+  if(!briefAdd) return;
+  briefAdd.mode=m;
+  renderBriefAddForm();
+  setTimeout(function(){var f=document.getElementById(m==='bulk'?'briefBulkText':'briefNewItem');if(f)f.focus();},30);
+}
+
+/* Parses a pasted block, one task per line, with an optional trailing owner list:
+     Chase Rexel ETA - Brandon, Luis
+   The suffix is only read as owners when *every* comma-separated part is a known
+   person, so an ordinary line like "Kone Keys - follow up Monday" keeps its text
+   intact instead of inventing an owner called "follow up Monday". */
+function parseBriefBulk(text,defaultOwners){
+  var known={};briefPeople().forEach(function(p){known[p.toLowerCase()]=p;});
+  return String(text||'').split('\n').map(function(raw){
+    var line=raw.trim();
+    if(!line) return null;
+    var item=line,owners=null;
+    var m=line.match(/^(.*\S)\s+[-–—]\s+([^-–—]+)$/);
+    if(m){
+      var parts=m[2].split(',').map(function(s){return s.trim();}).filter(Boolean);
+      if(parts.length&&parts.every(function(p){return known[p.toLowerCase()];})){
+        item=m[1].trim();
+        owners=parts.map(function(p){return known[p.toLowerCase()];});
+      }
+    }
+    return {item:item,owners:owners||defaultOwners.slice(),ownersFromLine:!!owners};
+  }).filter(Boolean);
+}
+
+function updateBriefBulkPreview(){
+  var el=document.getElementById('briefBulkPreview');
+  if(!el||!briefAdd) return;
+  var rows=parseBriefBulk(briefAdd.bulk,Object.keys(briefAdd.owners));
+  if(!rows.length){el.innerHTML='<div style="font-size:12px;color:var(--text-tertiary);padding:6px 0">One task per line. Add &ldquo; - Brandon, Luis&rdquo; on the end of a line to set its owners.</div>';return;}
+  var missing=rows.filter(function(r){return !r.owners.length;}).length;
+  el.innerHTML='<div style="font-size:12px;margin-top:6px">'
+    +'<div style="color:var(--text-secondary);margin-bottom:4px">'+rows.length+' item'+(rows.length===1?'':'s')+' will be added as <strong>'+escHtml(briefAdd.section==='Standing'?'Standing':'Tasks')+'</strong>, all Pending:</div>'
+    +rows.map(function(r){
+      return '<div style="display:flex;gap:6px;align-items:center;padding:2px 0"><span style="color:var(--text-tertiary)">&bull;</span>'
+        +'<span style="flex:1">'+escHtml(r.item)+'</span>'
+        +(r.owners.length?r.owners.map(function(o){return '<span class="brief-chip">'+escHtml(o)+'</span>';}).join('')
+          :'<span class="brief-stuck">no owner</span>')+'</div>';
+    }).join('')
+    +(missing?'<div style="color:#b45309;margin-top:5px"><i class="ti ti-alert-triangle"></i> '+missing+' line'+(missing===1?' has':'s have')+' no owner &#8212; tick a default owner above, or put &ldquo; - Name&rdquo; on the line.</div>':'')
+    +'</div>';
+}
+function setBriefBulk(v){if(briefAdd){briefAdd.bulk=v;updateBriefBulkPreview();}}
+
+async function addBriefBulk(){
+  if(!briefAdd) return;
+  var rows=parseBriefBulk(briefAdd.bulk,Object.keys(briefAdd.owners));
+  if(!rows.length){toast('Nothing to add — paste one task per line','error');return;}
+  var noOwner=rows.filter(function(r){return !r.owners.length;});
+  if(noOwner.length){toast(noOwner.length+' line(s) have no owner','error');return;}
+  var maxOrder=briefItems.filter(function(i){return i.section===briefAdd.section;})
+    .reduce(function(m,i){return Math.max(m,i.sort_order||0);},0);
+  /* One POST with an array — PostgREST inserts them all in a single request, so a
+     pasted list either lands complete or not at all. */
+  var payload=rows.map(function(r,i){
+    return {section:briefAdd.section,status:'Pending',item:r.item,owners:r.owners,notes:null,
+      sort_order:maxOrder+((i+1)*10),
+      updated_by:(currentUser&&currentUser.id)||null,updated_by_email:(currentUser&&currentUser.email)||null};
+  });
+  try{
+    var r=await sbWrite('brief_items',{method:'POST',prefer:'return=representation',body:JSON.stringify(payload)});
+    var saved=await r.json();
+    if(Array.isArray(saved)) briefItems=briefItems.concat(saved);
+    briefItems.sort(briefSort);
+    briefAdd=null;
+    renderBriefAddForm();renderBriefSummary();renderBriefBoard();
+    toast(payload.length+' item'+(payload.length===1?'':'s')+' added &#10003;');
+  }catch(e){toast('Could not add items: '+e.message,'error');}
+}
+function setBriefAddField(k,v){if(briefAdd) briefAdd[k]=v;}
+function toggleBriefAddOwner(n,on){if(briefAdd){if(on)briefAdd.owners[n]=1;else delete briefAdd.owners[n];}}
+
+/* State lives in briefAdd rather than the DOM, so typing never triggers a
+   re-render that would steal focus mid-word. */
+function renderBriefAddForm(){
+  var el=document.getElementById('briefAddForm');
+  if(!el) return;
+  if(!briefAdd){el.innerHTML='';return;}
+  var bulk=briefAdd.mode==='bulk';
+  var modeBtn=function(m,lbl){
+    return '<button type="button" onclick="setBriefAddMode(\''+m+'\')" style="cursor:pointer;padding:5px 10px;font-size:12px;border-radius:var(--radius-md);border:1px solid '
+      +(briefAdd.mode===m?'var(--accent)':'var(--border-t)')+';background:'+(briefAdd.mode===m?'var(--accent-light)':'var(--bg-secondary)')+'">'+lbl+'</button>';
+  };
+  el.innerHTML='<div style="background:var(--bg-primary);border:1px solid var(--accent);border-radius:var(--radius-md);padding:14px;margin-bottom:16px">'
+    +'<div style="display:flex;gap:6px;margin-bottom:10px">'+modeBtn('one','One item')+modeBtn('bulk','Paste a list')+'</div>'
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:9px">'
+    +'<select class="form-input" style="width:auto" onchange="setBriefAddField(\'section\',this.value);if(briefAdd.mode===\'bulk\')updateBriefBulkPreview()">'
+    +'<option value="Task"'+(briefAdd.section==='Task'?' selected':'')+'>Task &#8212; one-off, archived when done</option>'
+    +'<option value="Standing"'+(briefAdd.section==='Standing'?' selected':'')+'>Standing &#8212; ongoing, stays on the board</option>'
+    +'</select>'
+    +(bulk?'':'<input class="form-input" id="briefNewItem" placeholder="What needs doing?" style="flex:1;min-width:220px" oninput="setBriefAddField(\'item\',this.value)">')
+    +'</div>'
+    +'<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:9px;font-size:12px">'
+    +'<span style="color:var(--text-secondary)">'+(bulk?'Default owners':'Owners')+'</span>'
+    +briefPeople().map(function(n){
+      return '<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox"'+(briefAdd.owners[n]?' checked':'')+' onchange="toggleBriefAddOwner(\''+escHtml(n)+'\',this.checked);if(briefAdd.mode===\'bulk\')updateBriefBulkPreview()" style="width:14px;height:14px;accent-color:var(--accent)"> '+escHtml(n)+'</label>';
+    }).join('')
+    +(bulk?'<span style="color:var(--text-tertiary)">used for any line without its own &ldquo; - Name&rdquo;</span>':'')
+    +'</div>'
+    +(bulk
+      ?'<textarea class="form-input" id="briefBulkText" rows="6" style="font-size:12px;font-family:inherit;resize:vertical" placeholder="One task per line, for example:&#10;Kone Keys - Brandon&#10;Chase Rexel ETA - Brandon, Luis&#10;Quote SIPA and Tongs - Cara" oninput="setBriefBulk(this.value)">'+escHtml(briefAdd.bulk||'')+'</textarea>'
+       +'<div id="briefBulkPreview"></div>'
+      :'<input class="form-input" placeholder="Notes (optional)" style="font-size:12px;margin-bottom:10px" oninput="setBriefAddField(\'notes\',this.value)">')
+    +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">'
+    +'<button class="btn btn-sm" onclick="toggleBriefAdd()">Cancel</button>'
+    +(bulk
+      ?'<button class="btn btn-primary btn-sm" onclick="addBriefBulk()"><i class="ti ti-plus"></i> Add all to board</button>'
+      :'<button class="btn btn-primary btn-sm" onclick="addBriefItem()"><i class="ti ti-plus"></i> Add to board</button>')
+    +'</div></div>';
+  if(bulk) updateBriefBulkPreview();
+}
+
+async function addBriefItem(){
+  if(!briefAdd) return;
+  var text=(briefAdd.item||'').trim();
+  if(!text){toast('Enter what needs doing','error');return;}
+  var owners=Object.keys(briefAdd.owners);
+  if(!owners.length){toast('Pick at least one owner','error');return;}
+  /* Continue the existing 10, 20, 30 spacing so the board can be reordered by hand. */
+  var maxOrder=briefItems.filter(function(i){return i.section===briefAdd.section;})
+    .reduce(function(m,i){return Math.max(m,i.sort_order||0);},0);
+  try{
+    var r=await sbWrite('brief_items',{method:'POST',prefer:'return=representation',
+      body:JSON.stringify({section:briefAdd.section,status:'Pending',item:text,owners:owners,
+        notes:(briefAdd.notes||'').trim()||null,sort_order:maxOrder+10,
+        updated_by:(currentUser&&currentUser.id)||null,updated_by_email:(currentUser&&currentUser.email)||null})});
+    var rows=await r.json();
+    if(Array.isArray(rows)&&rows.length) briefItems.push(rows[0]);
+    briefItems.sort(briefSort);
+    briefAdd=null;
+    renderBriefAddForm();renderBriefSummary();renderBriefBoard();
+    toast('Added to the board &#10003;');
+  }catch(e){toast('Could not add item: '+e.message,'error');}
+}
+
+function toggleBriefArchive(){
+  briefShowArchive=!briefShowArchive;
+  var b=document.getElementById('briefArchiveBtn');
+  if(b) b.innerHTML='<i class="ti ti-archive"></i> '+(briefShowArchive?'Hide archive':'Show archive');
+  renderBrief();
 }
 
 function exportReportCSV(){

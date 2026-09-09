@@ -956,7 +956,18 @@ async function doSetPassword(){
   try{
     const r=await fetch(SB_URL+'/auth/v1/user',{method:'PUT',headers:sbH(_pendingAuth.access_token),body:JSON.stringify({password:p1})});
     const d=await r.json();
-    if(!r.ok) throw new Error(d.msg||d.error_description||d.error||'Could not set your password.');
+    if(!r.ok){
+      /* A stale link surfaces as raw JWT jargon from Supabase ("token is malformed:
+         token contains an invalid number of segments"), which means nothing to the
+         person reading it. The common cause is leaving the link open for over an
+         hour before setting a password. Anything about the token becomes one plain
+         sentence; genuine complaints about the password itself pass through. */
+      var raw=d.msg||d.error_description||d.error||'';
+      throw new Error(
+        (r.status===401||/jwt|token|expired|session/i.test(raw))
+          ? 'This link has expired or has already been used. Ask Brandon to send a new invite.'
+          : (raw||'Could not set your password.'));
+    }
     storeSession(_pendingAuth.access_token,_pendingAuth.refresh_token,_pendingAuth.expires_in,d);
     _pendingAuth=null;
     document.getElementById('setPasswordScreen').style.display='none';

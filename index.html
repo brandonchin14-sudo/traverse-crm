@@ -2428,6 +2428,31 @@ function quoteInvoicedToDate(){return round2(currentQuoteInvoices.reduce(functio
 function partialSuffix(seq){return seq>=1&&seq<=26?String.fromCharCode(96+seq):String(seq);}
 function nextPartialSeq(){return currentQuoteInvoices.reduce(function(m,r){return Math.max(m,Number(r.seq)||0);},0)+1;}
 
+/* Lines are keyed by sort_order, which is their position on the quote and is rewritten
+   on every quote save, so reordering a quote after part-shipping would mis-attribute
+   the already-shipped counts. Acceptable: quotes are not reordered once approved. */
+function lineKey(it,i){return it&&it.sort_order!=null?it.sort_order:i;}
+
+/* Units already billed per line, counted only from materials stages. A percentage or
+   deposit stage bills every line at a reduced rate rather than consuming units, so it
+   must not reduce what is left to ship. */
+function invoicedQtyByLine(){
+  var m={};
+  (currentQuoteInvoices||[]).forEach(function(r){
+    if(r.basis!=='items'||!r.lines) return;
+    var ls=r.lines;
+    if(typeof ls==='string'){try{ls=JSON.parse(ls);}catch(e){return;}}
+    if(!Array.isArray(ls)) return;
+    ls.forEach(function(x){
+      var k=x&&x.sort_order!=null?x.sort_order:null;
+      if(k===null) return;
+      m[k]=(m[k]||0)+(Number(x.quantity)||0);
+    });
+  });
+  return m;
+}
+function lineRemainingQty(it,i,done){return round2((Number(it.quantity)||0)-((done||{})[lineKey(it,i)]||0));}
+
 /* Builds the line items for one stage. Percentage and amount both scale the unit rate
    and leave quantities whole — the method used on TIE-2608-3656a — which avoids
    fractional quantities on goods and keeps GST proportional automatically, since each
@@ -2435,13 +2460,27 @@ function nextPartialSeq(){return currentQuoteInvoices.reduce(function(m,r){retur
 function partialLines(){
   var f=partialForm; if(!f) return [];
   var items=currentLineItems||[];
-  if(f.mode==='items') return items.filter(function(_,i){return !!f.items[i];}).map(function(it){return Object.assign({},it);});
+  if(f.mode==='items'){
+    /* Each ticked line is billed for the quantity chosen, at the full unit rate, so a
+       part shipment bills exactly the units that went. */
+    var picked=[];
+    items.forEach(function(it,i){
+      if(f.items[i]==null) return;
+      var qty=Number(f.items[i])||0;
+      if(!(qty>0)) return;
+      var rate=Number(it.rate)||0;
+      /* sort_order stamped from the line's position on the quote, not its position in
+         this subset, so the shipped-units tally attributes to the right line. */
+      picked.push(Object.assign({},it,{sort_order:lineKey(it,i),quantity:qty,amount:round2(qty*rate)}));
+    });
+    return picked;
+  }
   var qTotal=Number(currentQuote&&currentQuote.total)||0;
   var pct=f.mode==='percent'?(Number(f.value)||0)/100:(qTotal>0?(Number(f.value)||0)/qTotal:0);
   if(!(pct>0)) return [];
-  return items.map(function(it){
+  return items.map(function(it,i){
     var qty=Number(it.quantity)||1,rate=round2((Number(it.rate)||0)*pct);
-    return Object.assign({},it,{rate:rate,amount:round2(rate*qty)});
+    return Object.assign({},it,{sort_order:lineKey(it,i),rate:rate,amount:round2(rate*qty)});
   });
 }
 
@@ -2473,7 +2512,23 @@ function partialPreviewHtml(){
     +(t.gst>0?'<span style="color:var(--text-secondary)">GST '+fmtAud(t.gst)+'</span>':'')
     +'<span style="font-weight:700;font-size:14px">This invoice: '+fmtAud(t.total)+'</span></div>'
     +(Math.abs(drift)>=0.005?'<div style="font-size:11px;color:var(--text-tertiary);text-align:right">'+fmtAud(asked)+' requested; '+(drift>0?'+':'')+fmtAud(drift)+' from rounding each line to the cent.</div>':'')
-    +(t.total>remaining+0.005?'<div style="font-size:11px;color:#b45309;margin-top:6px"><i class="ti ti-alert-triangle"></i> This is more than the '+fmtAud(remaining)+' still to invoice on this quote.</div>':'');
+    +(t.total>remaining+0.005?'<div style="font-size:11px;color:#b45309;margin-top:6px"><i class="ti ti-alert-triangle"></i> This is more than the '+fmtAud(remaining)+' still to invoice on this quote.</div>':'')
+    +overQtyWarningHtml();
+}
+
+/* Flags a materials stage billing more units of a line than are left to ship. A
+   warning rather than a block: a genuine over-supply or a corrected quantity is the
+   user's call, not something to refuse. */
+function overQtyWarningHtml(){
+  var f=partialForm;
+  if(!f||f.mode!=='items') return '';
+  var doneQty=invoicedQtyByLine(),bad=[];
+  (currentLineItems||[]).forEach(function(it,i){
+    if(f.items[i]==null) return;
+    var want=Number(f.items[i])||0,rem=lineRemainingQty(it,i,doneQty);
+    if(want>rem+0.0001) bad.push(escHtml(it.item_name||it.description||('Item '+(i+1)))+': '+want+' of '+rem+' left');
+  });
+  return bad.length?'<div style="font-size:11px;color:#b45309;margin-top:6px"><i class="ti ti-alert-triangle"></i> More than remains to ship &#8212; '+bad.join('; ')+'</div>':'';
 }
 
 function updatePartialPreview(){
@@ -2481,7 +2536,19 @@ function updatePartialPreview(){
   if(el) el.innerHTML=partialPreviewHtml();
 }
 function setPartialField(k,v){if(!partialForm)return;partialForm[k]=v;updatePartialPreview();}
-function togglePartialItem(i,on){if(!partialForm)return;partialForm.items[i]=on;updatePartialPreview();}
+/* Ticking a line defaults its quantity to whatever has not shipped yet, which is the
+   common case for a staged delivery. Re-renders rather than patching, so the quantity
+   box appears and disappears with the tick. */
+function togglePartialItem(i,on){
+  if(!partialForm)return;
+  if(on){
+    var it=(currentLineItems||[])[i]||{};
+    var rem=lineRemainingQty(it,i,invoicedQtyByLine());
+    partialForm.items[i]=rem>0?rem:(Number(it.quantity)||1);
+  } else delete partialForm.items[i];
+  renderQuoteReview(document.getElementById('dtab-quote'));
+}
+function setPartialItemQty(i,v){if(!partialForm)return;partialForm.items[i]=v;updatePartialPreview();}
 function setPartialMode(m){
   if(!partialForm)return;
   partialForm.mode=m;partialForm.value='';
@@ -2517,9 +2584,21 @@ function partialPanelHtml(){
     var input='';
     if(f.mode==='percent') input='<input class="form-input" type="number" step="0.01" min="0" placeholder="30" value="'+escHtml(f.value)+'" oninput="setPartialField(\'value\',this.value)" style="width:110px"> <span style="font-size:12px;color:var(--text-secondary)">% of '+fmtAud(qTotal)+'</span>';
     else if(f.mode==='amount') input='<span style="font-size:12px;color:var(--text-secondary)">A$</span> <input class="form-input" type="number" step="0.01" min="0" placeholder="0.00" value="'+escHtml(f.value)+'" oninput="setPartialField(\'value\',this.value)" style="width:140px">';
-    else input='<div style="display:flex;flex-direction:column;gap:4px">'+(currentLineItems||[]).map(function(it,i){
-        return '<label style="font-size:12px;display:flex;align-items:center;gap:7px;cursor:pointer"><input type="checkbox" '+(f.items[i]?'checked':'')+' onchange="togglePartialItem('+i+',this.checked)" style="width:14px;height:14px;accent-color:var(--accent)"> '+escHtml(it.item_name||it.description||('Item '+(i+1)))+' &mdash; '+fmtAud(it.amount)+'</label>';
+    else{
+      var doneQty=invoicedQtyByLine();
+      input='<div style="display:flex;flex-direction:column;gap:6px">'+(currentLineItems||[]).map(function(it,i){
+        var totalQty=Number(it.quantity)||0,billed=doneQty[lineKey(it,i)]||0,rem=round2(totalQty-billed);
+        var on=f.items[i]!=null;
+        return '<div style="display:flex;align-items:center;gap:8px;font-size:12px;flex-wrap:wrap">'
+          +'<label style="display:flex;align-items:center;gap:7px;cursor:pointer;flex:1;min-width:170px">'
+          +'<input type="checkbox" '+(on?'checked':'')+' onchange="togglePartialItem('+i+',this.checked)" style="width:14px;height:14px;accent-color:var(--accent)">'
+          +'<span>'+escHtml(it.item_name||it.description||('Item '+(i+1)))+'</span></label>'
+          +'<input class="form-input" type="number" step="any" min="0" value="'+escHtml(on?String(f.items[i]):'')+'" '+(on?'':'disabled')+' oninput="setPartialItemQty('+i+',this.value)" style="width:78px;font-size:12px;text-align:right">'
+          +'<span style="color:var(--text-secondary);white-space:nowrap">of '+totalQty+' &#64; '+fmtAud(it.rate)+'</span>'
+          +(billed>0?'<span style="color:#b45309;white-space:nowrap;font-size:11px">'+billed+' invoiced &middot; '+rem+' left</span>':'')
+          +'</div>';
       }).join('')+'</div>';
+    }
     form='<div style="margin-top:12px;padding:12px;border:1px solid var(--accent);border-radius:var(--radius-md);background:var(--bg-secondary)">'
       +'<div style="display:flex;gap:6px;margin-bottom:10px">'+modeBtn('percent','Percentage')+modeBtn('amount','Deposit amount')+modeBtn('items','Specific materials')+'</div>'
       +'<div style="margin-bottom:10px">'+input+'</div>'
@@ -2570,7 +2649,11 @@ async function createPartialInvoice(){
     var row={quote_id:currentQuote.id,lead_id:currentLead.id,seq:seq,label:partialForm.label||'',
       basis:partialForm.mode,pct:partialForm.mode==='percent'?Number(partialForm.value)||null:null,
       amount:t.total,qb_invoice_id:String(data.invoice_id),qb_invoice_number:data.invoice_number||num,
-      invoice_date:todayLocalISO()};
+      invoice_date:todayLocalISO(),
+      /* Per-line record of what this stage billed, so a later materials stage knows
+         how many units of each line have already shipped. */
+      lines:lines.map(function(it,idx){return {sort_order:lineKey(it,idx),item_name:it.item_name||'',
+        quantity:Number(it.quantity)||0,rate:Number(it.rate)||0,amount:Number(it.amount)||0};})};
     var ins=await sbWrite('quote_invoices',{method:'POST',body:JSON.stringify(row),prefer:'return=representation'});
     var saved=await ins.json();
     currentQuoteInvoices.push(Array.isArray(saved)&&saved.length?saved[0]:row);

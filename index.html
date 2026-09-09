@@ -52,6 +52,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .login-logo-sub{font-size:12px;color:var(--text-secondary);margin-top:1px}
 .login-error{background:var(--danger-light);border:0.5px solid var(--danger);border-radius:var(--radius-md);padding:9px 12px;font-size:13px;color:var(--danger);margin-bottom:14px;display:none}
 .login-error.show{display:block}
+/* SET PASSWORD (invite / recovery) — reuses the login card styling */
+#setPasswordScreen{display:none;min-height:100vh;align-items:center;justify-content:center;background:var(--bg-tertiary)}
 #appScreen{display:none}
 
 /* TOPBAR */
@@ -249,6 +251,18 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" id="loginPassword" placeholder="&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;" onkeydown="if(event.key==='Enter')doLogin()"></div>
     <button class="btn btn-primary btn-full" id="loginBtn" onclick="doLogin()"><i class="ti ti-login"></i> Sign in</button>
     <div style="margin-top:14px;font-size:12px;color:var(--text-tertiary);text-align:center">Access by invitation only. Contact your administrator.</div>
+  </div>
+</div>
+
+<!-- SET PASSWORD (invite / recovery) -->
+<div id="setPasswordScreen">
+  <div class="login-card">
+    <div class="login-logo"><i class="ti ti-lock"></i><div><div class="login-logo-text" id="setPwTitle">Set your password</div><div class="login-logo-sub">Traverse CRM</div></div></div>
+    <div class="login-error" id="setPwError"></div>
+    <div class="form-group"><label class="form-label">New password</label><input class="form-input" type="password" id="setPw1" placeholder="At least 12 characters" onkeydown="if(event.key==='Enter')document.getElementById('setPw2').focus()"></div>
+    <div class="form-group"><label class="form-label">Confirm password</label><input class="form-input" type="password" id="setPw2" placeholder="Type it again" onkeydown="if(event.key==='Enter')doSetPassword()"></div>
+    <button class="btn btn-primary btn-full" id="setPwBtn" onclick="doSetPassword()"><i class="ti ti-check"></i> Set password and sign in</button>
+    <div style="margin-top:14px;font-size:12px;color:var(--text-tertiary);text-align:center">At least 12 characters. Three or four unrelated words works well.</div>
   </div>
 </div>
 
@@ -819,6 +833,103 @@ async function doLogin(){
   }catch(e){showLoginErr(e.message);btn.innerHTML='<i class="ti ti-login"></i> Sign in';btn.disabled=false;}
 }
 function showLoginErr(m){const e=document.getElementById('loginError');e.textContent=m;e.classList.add('show');}
+
+/* ── INVITE / PASSWORD RECOVERY ───────────────────────────────────────────
+   After an invite, magic link or password-reset link, Supabase sends the
+   session back in the URL fragment. There is no supabase-js in this app, so
+   we parse it ourselves. handleAuthRedirect() returns true when it has taken
+   over the page, so init() knows not to also restore a stored session. */
+var _pendingAuth=null;
+
+function parseAuthHash(){
+  var h=(window.location.hash||'').replace(/^#/,'');
+  if(!h) return null;
+  var p=new URLSearchParams(h);
+  if(!p.get('access_token')&&!p.get('error')&&!p.get('error_description')) return null;
+  return {
+    access_token:p.get('access_token'),
+    refresh_token:p.get('refresh_token'),
+    expires_in:parseInt(p.get('expires_in')||'3600',10),
+    type:p.get('type')||'',
+    error:p.get('error'),
+    error_description:(p.get('error_description')||'').replace(/\+/g,' ')
+  };
+}
+
+/* Strip the tokens out of the address bar so they aren't left in history. */
+function clearAuthHash(){
+  try{history.replaceState(null,'',window.location.pathname+window.location.search);}
+  catch(_){window.location.hash='';}
+}
+
+function storeSession(tok,rtok,expiresIn,user){
+  authToken=tok;refreshToken=rtok||null;
+  tokenExpiresAt=Date.now()+((expiresIn||3600)*1000);
+  if(user) currentUser=user;
+  localStorage.setItem('traverse_token',authToken);
+  localStorage.setItem('traverse_refresh',refreshToken||'');
+  localStorage.setItem('traverse_expires',String(tokenExpiresAt));
+  if(currentUser) localStorage.setItem('traverse_user',JSON.stringify(currentUser));
+  startTokenRefreshTimer();
+}
+
+async function fetchMe(){
+  try{
+    const r=await fetch(SB_URL+'/auth/v1/user',{headers:sbH(authToken)});
+    if(r.ok){currentUser=await r.json();localStorage.setItem('traverse_user',JSON.stringify(currentUser));}
+  }catch(_){}
+}
+
+function handleAuthRedirect(){
+  var a=parseAuthHash();
+  if(!a) return false;
+  clearAuthHash();
+  if(a.error||!a.access_token){
+    var m=a.error_description||'That link is no longer valid.';
+    if(/expired|invalid/i.test(m)) m='That link has expired or has already been used. Ask for a new one to be sent.';
+    showLoginErr(m);
+    return true;
+  }
+  if(a.type==='recovery'||a.type==='invite'||a.type==='signup'){
+    _pendingAuth=a;
+    document.getElementById('loginScreen').style.display='none';
+    document.getElementById('setPasswordScreen').style.display='flex';
+    var t=document.getElementById('setPwTitle');
+    if(t) t.textContent=(a.type==='recovery')?'Choose a new password':'Set your password';
+    setTimeout(function(){var f=document.getElementById('setPw1');if(f)f.focus();},50);
+    return true;
+  }
+  /* magiclink, or anything else carrying a valid session: sign straight in */
+  storeSession(a.access_token,a.refresh_token,a.expires_in,null);
+  fetchMe().then(showApp);
+  return true;
+}
+
+function showSetPwErr(m){const e=document.getElementById('setPwError');e.textContent=m;e.classList.add('show');}
+
+async function doSetPassword(){
+  const p1=document.getElementById('setPw1').value;
+  const p2=document.getElementById('setPw2').value;
+  const btn=document.getElementById('setPwBtn');
+  document.getElementById('setPwError').classList.remove('show');
+  if(p1.length<12){showSetPwErr('Password must be at least 12 characters.');return;}
+  if(p1!==p2){showSetPwErr('The two passwords do not match.');return;}
+  if(!_pendingAuth||!_pendingAuth.access_token){showSetPwErr('This link has expired. Ask for a new one to be sent.');return;}
+  btn.innerHTML='<i class="ti ti-loader"></i> Saving...';btn.disabled=true;
+  try{
+    const r=await fetch(SB_URL+'/auth/v1/user',{method:'PUT',headers:sbH(_pendingAuth.access_token),body:JSON.stringify({password:p1})});
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.msg||d.error_description||d.error||'Could not set your password.');
+    storeSession(_pendingAuth.access_token,_pendingAuth.refresh_token,_pendingAuth.expires_in,d);
+    _pendingAuth=null;
+    document.getElementById('setPasswordScreen').style.display='none';
+    showApp();
+    toast('Password set — you are signed in.');
+  }catch(e){
+    showSetPwErr(e.message);
+    btn.innerHTML='<i class="ti ti-check"></i> Set password and sign in';btn.disabled=false;
+  }
+}
 function showApp(){
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('appScreen').style.display='block';
@@ -3071,8 +3182,12 @@ function exportReportCSV(){
   if(pw) pw.addEventListener('keydown',function(e){if(e.key==='Enter')doLogin();});
   var em=document.getElementById('loginEmail');
   if(em) em.addEventListener('keydown',function(e){if(e.key==='Enter')doLogin();});
-  // Restore session if a valid token exists (async - refreshes if expired)
-  checkSession().catch(function(e){console.warn('Session restore failed:',e);});
+  // An invite / reset / magic link arrives with its session in the URL fragment.
+  // Handle that first; only fall back to a stored session if there was no link.
+  if(!handleAuthRedirect()){
+    // Restore session if a valid token exists (async - refreshes if expired)
+    checkSession().catch(function(e){console.warn('Session restore failed:',e);});
+  }
 })();
 </script>
 </body>

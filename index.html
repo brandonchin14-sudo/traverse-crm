@@ -1447,7 +1447,10 @@ async function renderDetailInfo(){
       }
       if((l.phase||0)===1){
         html+='<div style="margin-top:16px;padding:14px;background:var(--bg-secondary);border-radius:var(--radius-md);border:1px solid var(--border-t)">'
-          +'<div style="font-size:12px;font-weight:700;margin-bottom:8px"><i class="ti ti-truck"></i> Freight Type</div>'
+          +'<div style="font-size:12px;font-weight:700;margin-bottom:2px"><i class="ti ti-truck"></i> Expected freight type</div>'
+          /* Distinguished from the Freight tab, which records what actually shipped.
+             This one is the expectation captured while moving the lead along. */
+          +'<div style="font-size:11px;color:var(--text-secondary);margin-bottom:8px">How you expect this to travel. Record what actually ships &#8212; including air/sea splits &#8212; on the Freight tab.</div>'
           +'<select class="form-input" id="freight-type-sel" style="margin-bottom:8px" onchange="saveFreightType(this.value);renderCarrierDropdown(this.value)">'
           +'<option value="">-- Select freight type --</option>'
           +'<option value="sea"'+(l.freight_type==='sea'?' selected':'')+'>Sea Freight</option>'
@@ -2026,47 +2029,11 @@ function renderDetailFreight(){
   var el=document.getElementById('dtab-freight');
   if(!el) return;
 
-  var seaSel=l.freight_type==='sea';
-  var airSel=l.freight_type==='air';
-  var carrierName='';
-  if(l.freight_carrier&&FREIGHT_CARRIERS[l.freight_type||'']){
-    FREIGHT_CARRIERS[l.freight_type].forEach(function(c){if(c.id===l.freight_carrier)carrierName=c.name;});
-  }
-
+  /* A job rarely moves in one go, so shipments replaced the single freight
+     type/carrier choice that used to sit here. Rendered asynchronously into the
+     panel below so the document upload underneath keeps working untouched. */
   var html='<div style="padding:4px 0">'
-    +'<div style="font-size:13px;font-weight:700;margin-bottom:14px"><i class="ti ti-ship"></i> Freight Settings</div>'
-
-    // Freight type cards
-    +'<label class="form-label">Freight Type</label>'
-    +'<div style="display:flex;gap:10px;margin-bottom:16px">'
-    +'<div style="flex:1;display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:var(--radius-md);border:2px solid '+(seaSel?'#0369a1':'var(--border-t)')+';cursor:pointer;background:'+(seaSel?'rgba(3,105,161,0.06)':'var(--bg-secondary)')+'" onclick="setFreightType(String.fromCharCode(115,101,97))">'
-    +'<i class="ti ti-ship" style="font-size:18px;color:#0369a1"></i>'
-    +'<div><div style="font-size:13px;font-weight:600;color:#0369a1">Sea Freight</div>'
-    +'<div style="font-size:11px;color:var(--text-secondary)">Kalgin, PAC, Vanguard</div></div>'
-    +(seaSel?'<i class="ti ti-check" style="margin-left:auto;color:#0369a1"></i>':'')
-    +'</div>'
-    +'<div style="flex:1;display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:var(--radius-md);border:2px solid '+(airSel?'#7c3aed':'var(--border-t)')+';cursor:pointer;background:'+(airSel?'rgba(124,58,237,0.06)':'var(--bg-secondary)')+'" onclick="setFreightType(String.fromCharCode(97,105,114))">'
-    +'<i class="ti ti-plane" style="font-size:18px;color:#7c3aed"></i>'
-    +'<div><div style="font-size:13px;font-weight:600;color:#7c3aed">Air Freight</div>'
-    +'<div style="font-size:11px;color:var(--text-secondary)">Airways</div></div>'
-    +(airSel?'<i class="ti ti-check" style="margin-left:auto;color:#7c3aed"></i>':'')
-    +'</div>'
-    +'</div>';
-
-  // Carrier dropdown
-  if(l.freight_type){
-    var carriers=FREIGHT_CARRIERS[l.freight_type]||[];
-    if(carriers.length){
-      var opts=carriers.map(function(c){return '<option value="'+c.id+'"'+(l.freight_carrier===c.id?' selected':'')+'>'+c.name+'</option>';}).join('');
-      html+='<div style="margin-bottom:20px">'
-        +'<label class="form-label">Freight Carrier</label>'
-        +'<select class="form-input" onchange="saveFreightCarrier(this.value)">'
-        +'<option value="">-- Select carrier --</option>'+opts
-        +'</select></div>';
-    }
-  } else {
-    html+='<div style="font-size:12px;color:var(--text-secondary);margin-bottom:20px">Select a freight type above to choose a carrier</div>';
-  }
+    +'<div id="shipments-panel"><div style="font-size:12px;color:var(--text-secondary);padding:6px 0"><i class="ti ti-loader"></i> Loading shipments&hellip;</div></div>';
 
   // Divider
   html+='<div style="border-top:1px solid var(--border-t);padding-top:16px">'
@@ -2102,6 +2069,265 @@ function renderDetailFreight(){
     });
     fi.addEventListener('change',function(){if(fi.files.length) uploadFreightFiles(fi.files);});
   }
+  loadShipments();
+}
+
+/* ── SHIPMENTS ────────────────────────────────────────────────────────────
+   A job often moves in parts — the urgent items by air, the rest by sea, and
+   sometimes goods carried personally by the director on a flight. Shipments draw
+   their line items from the lead's goods quote: a freight quote's lines are
+   charges, not things that can be put in a container. */
+var SHIP_METHODS=[
+  {key:'sea',      label:'Sea Freight', icon:'ti-ship',  colour:'#0369a1', hasCarrier:true},
+  {key:'air',      label:'Air Freight', icon:'ti-plane', colour:'#7c3aed', hasCarrier:true},
+  {key:'personal', label:'Personal',    icon:'ti-user',  colour:'#b45309', hasCarrier:false}
+];
+function shipMethod(k){return SHIP_METHODS.find(function(m){return m.key===k;})||{key:k,label:k||'Shipment',icon:'ti-package',colour:'var(--text-secondary)',hasCarrier:false};}
+function shipCarrierName(method,id){
+  var list=FREIGHT_CARRIERS[method]||[];
+  for(var i=0;i<list.length;i++) if(list[i].id===id) return list[i].name;
+  return id||'';
+}
+var currentShipments=[],shipItems=[],shipForm=null;
+
+async function loadShipments(){
+  if(!currentLead) return;
+  try{
+    var r=await sb('lead_shipments?lead_id=eq.'+currentLead.id+'&order=seq.asc&select=*');
+    currentShipments=await r.json();
+    if(!Array.isArray(currentShipments)) currentShipments=[];
+    /* Goods quote only — freight quote lines are charges, not cargo. */
+    var qr=await sb('quotes?lead_id=eq.'+currentLead.id+'&quote_type=neq.freight&select=id&order=created_at.asc&limit=1');
+    var qs=await qr.json();
+    if(Array.isArray(qs)&&qs.length){
+      var lr=await sb('quote_line_items?quote_id=eq.'+qs[0].id+'&order=sort_order.asc&select=*');
+      shipItems=await lr.json();
+      if(!Array.isArray(shipItems)) shipItems=[];
+    } else shipItems=[];
+  }catch(e){currentShipments=[];shipItems=[];}
+  renderShipmentsPanel();
+}
+
+/* Units already shipped per line, across every shipment. */
+function shippedQtyByLine(){
+  var m={};
+  currentShipments.forEach(function(s){
+    var ls=s.lines;
+    if(typeof ls==='string'){try{ls=JSON.parse(ls);}catch(e){return;}}
+    if(!Array.isArray(ls)) return;
+    ls.forEach(function(x){
+      if(!x||x.sort_order==null) return;
+      m[x.sort_order]=(m[x.sort_order]||0)+(Number(x.quantity)||0);
+    });
+  });
+  return m;
+}
+function shipRemainingQty(it,i,done){return round2((Number(it.quantity)||0)-((done||{})[lineKey(it,i)]||0));}
+
+function shipmentLinesHtml(s){
+  var ls=s.lines;
+  if(typeof ls==='string'){try{ls=JSON.parse(ls);}catch(e){ls=null;}}
+  if(!Array.isArray(ls)||!ls.length) return '';
+  return '<div style="margin-top:6px;font-size:11px;color:var(--text-secondary)">'
+    +ls.map(function(x){return escHtml(x.item_name||('Item '+((x.sort_order||0)+1)))+' &times;'+(Number(x.quantity)||0);}).join(' &middot; ')
+    +'</div>';
+}
+
+function renderShipmentsPanel(){
+  var el=document.getElementById('shipments-panel');
+  if(!el||!currentLead) return;
+  var l=currentLead;
+  var done=shippedQtyByLine();
+  var outstanding=shipItems.filter(function(it,i){return shipRemainingQty(it,i,done)>0.0001;}).length;
+
+  var rows=currentShipments.map(function(s){
+    var m=shipMethod(s.method);
+    return '<div style="display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-top:1px solid var(--border-t)">'
+      +'<i class="ti '+m.icon+'" style="font-size:17px;color:'+m.colour+';margin-top:1px"></i>'
+      +'<div style="flex:1;min-width:0">'
+      +'<div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap">'
+      +'<span style="font-size:13px;font-weight:600;color:'+m.colour+'">'+escHtml(m.label)+'</span>'
+      +(s.carrier?'<span style="font-size:11px;padding:2px 8px;border-radius:99px;background:var(--bg-secondary);color:var(--text-secondary);font-weight:600">'+escHtml(shipCarrierName(s.method,s.carrier))+'</span>':'')
+      +(s.label?'<span style="font-size:12px">'+escHtml(s.label)+'</span>':'')
+      +'</div>'
+      +'<div style="font-size:11px;color:var(--text-tertiary);margin-top:2px">'
+      +(s.shipped_date?escHtml(String(s.shipped_date).slice(0,10)):'no date')
+      +(s.reference?' &middot; '+escHtml(s.reference):'')
+      +'</div>'
+      +shipmentLinesHtml(s)
+      +(s.notes?'<div style="font-size:11px;color:var(--text-secondary);margin-top:4px">'+escHtml(s.notes)+'</div>':'')
+      +'</div>'
+      +'<button class="btn btn-sm" title="Remove this shipment" onclick="deleteShipment(\''+s.id+'\')"><i class="ti ti-trash"></i></button>'
+      +'</div>';
+  }).join('');
+
+  /* The 9 leads that pre-date shipments keep their single freight choice visible
+     rather than having it rewritten. Read-only; adding a shipment supersedes it. */
+  var legacy='';
+  if(!currentShipments.length&&l.freight_type){
+    var lm=shipMethod(l.freight_type);
+    legacy='<div style="padding:10px 12px;border-top:1px solid var(--border-t);font-size:12px;color:var(--text-secondary)">'
+      +'<i class="ti '+lm.icon+'" style="color:'+lm.colour+'"></i> Previously recorded: <strong>'+escHtml(lm.label)+'</strong>'
+      +(l.freight_carrier?' &mdash; '+escHtml(shipCarrierName(l.freight_type,l.freight_carrier)):'')
+      +' <span style="color:var(--text-tertiary)">(before shipments were tracked separately)</span></div>';
+  }
+
+  el.innerHTML='<div style="margin-bottom:18px">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:10px;flex-wrap:wrap">'
+    +'<div style="font-size:13px;font-weight:700"><i class="ti ti-truck-delivery"></i> Shipments</div>'
+    +(shipForm?'':'<button class="btn btn-sm" onclick="openShipmentForm()"><i class="ti ti-plus"></i> Add shipment</button>')
+    +'</div>'
+    +(shipItems.length
+      ?'<div style="font-size:12px;color:var(--text-secondary);margin-bottom:'+(rows||legacy?'0':'8px')+'">'
+        +(outstanding
+          ?'<span style="color:#b45309;font-weight:600">'+outstanding+' line'+(outstanding===1?'':'s')+' still to ship</span>'
+          :'<span style="color:var(--green);font-weight:600"><i class="ti ti-check"></i> Everything on the quote has been shipped</span>')
+        +'</div>'
+      :'')
+    +'<div style="background:var(--bg-primary);border:1px solid var(--border-t);border-radius:var(--radius-md);margin-top:8px">'
+    +(rows||legacy||'<div style="padding:12px;font-size:12px;color:var(--text-tertiary)">No shipments recorded yet.</div>')
+    +'</div>'
+    +renderShipmentForm()
+    +'</div>';
+  if(shipForm) updateShipPreview();
+}
+
+function openShipmentForm(){
+  shipForm={method:'sea',carrier:'',label:'',shipped_date:todayLocalISO(),reference:'',notes:'',items:{}};
+  renderShipmentsPanel();
+}
+function closeShipmentForm(){shipForm=null;renderShipmentsPanel();}
+function setShipField(k,v){if(shipForm) shipForm[k]=v;}
+function setShipMethod(m){
+  if(!shipForm) return;
+  shipForm.method=m;
+  /* Personal has no carrier — clear it rather than carry a stale one through. */
+  if(!shipMethod(m).hasCarrier) shipForm.carrier='';
+  renderShipmentsPanel();
+}
+function toggleShipItem(i,on){
+  if(!shipForm) return;
+  if(on){
+    var it=shipItems[i]||{};
+    var rem=shipRemainingQty(it,i,shippedQtyByLine());
+    shipForm.items[i]=rem>0?rem:(Number(it.quantity)||1);
+  } else delete shipForm.items[i];
+  renderShipmentsPanel();
+}
+function setShipItemQty(i,v){if(shipForm){shipForm.items[i]=v;updateShipPreview();}}
+
+function shipSelectedLines(){
+  if(!shipForm) return [];
+  var out=[];
+  shipItems.forEach(function(it,i){
+    if(shipForm.items[i]==null) return;
+    var q=Number(shipForm.items[i])||0;
+    if(!(q>0)) return;
+    out.push({sort_order:lineKey(it,i),item_name:it.item_name||it.description||('Item '+(i+1)),quantity:q});
+  });
+  return out;
+}
+function updateShipPreview(){
+  var el=document.getElementById('ship-preview');
+  if(!el||!shipForm) return;
+  var lines=shipSelectedLines(),done=shippedQtyByLine(),over=[];
+  shipItems.forEach(function(it,i){
+    if(shipForm.items[i]==null) return;
+    var want=Number(shipForm.items[i])||0,rem=shipRemainingQty(it,i,done);
+    if(want>rem+0.0001) over.push(escHtml(it.item_name||('Item '+(i+1)))+': '+want+' of '+rem+' left');
+  });
+  el.innerHTML=(lines.length
+      ?'<div style="font-size:12px;color:var(--text-secondary)">Shipping '+lines.length+' line'+(lines.length===1?'':'s')+': '
+        +lines.map(function(x){return escHtml(x.item_name)+' &times;'+x.quantity;}).join(', ')+'</div>'
+      :'<div style="font-size:12px;color:var(--text-tertiary)">No items selected &#8212; the shipment will be recorded without a goods list.</div>')
+    +(over.length?'<div style="font-size:11px;color:#b45309;margin-top:5px"><i class="ti ti-alert-triangle"></i> More than remains to ship &#8212; '+over.join('; ')+'</div>':'');
+}
+
+function renderShipmentForm(){
+  if(!shipForm) return '';
+  var f=shipForm,m=shipMethod(f.method),done=shippedQtyByLine();
+  var card=function(sm){
+    var on=f.method===sm.key;
+    return '<div style="flex:1;min-width:130px;display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:var(--radius-md);border:2px solid '+(on?sm.colour:'var(--border-t)')+';cursor:pointer;background:'+(on?'var(--bg-secondary)':'var(--bg-primary)')+'" onclick="setShipMethod(\''+sm.key+'\')">'
+      +'<i class="ti '+sm.icon+'" style="font-size:17px;color:'+sm.colour+'"></i>'
+      +'<div style="font-size:12px;font-weight:600;color:'+sm.colour+'">'+sm.label+'</div>'
+      +(on?'<i class="ti ti-check" style="margin-left:auto;color:'+sm.colour+'"></i>':'')+'</div>';
+  };
+  var carriers=FREIGHT_CARRIERS[f.method]||[];
+  return '<div style="margin-top:12px;padding:13px;border:1px solid var(--accent);border-radius:var(--radius-md);background:var(--bg-secondary)">'
+    +'<div style="display:flex;gap:8px;margin-bottom:11px;flex-wrap:wrap">'+SHIP_METHODS.map(card).join('')+'</div>'
+    +(m.hasCarrier&&carriers.length
+      ?'<div style="margin-bottom:9px"><label class="form-label">Carrier</label>'
+        +'<select class="form-input" onchange="setShipField(\'carrier\',this.value)"><option value="">&#8212; Select carrier &#8212;</option>'
+        +carriers.map(function(c){return '<option value="'+c.id+'"'+(f.carrier===c.id?' selected':'')+'>'+escHtml(c.name)+'</option>';}).join('')
+        +'</select></div>'
+      :'')
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:9px">'
+    +'<div><label class="form-label">'+(f.method==='personal'?'Date carried':'Date shipped')+'</label>'
+    +'<input class="form-input" type="date" value="'+escHtml(f.shipped_date||'')+'" onchange="setShipField(\'shipped_date\',this.value)" style="width:150px"></div>'
+    +(m.hasCarrier?'<div style="flex:1;min-width:170px"><label class="form-label">Reference</label>'
+      +'<input class="form-input" placeholder="Vessel, AWB or booking ref" value="'+escHtml(f.reference||'')+'" oninput="setShipField(\'reference\',this.value)"></div>':'')
+    +'</div>'
+    +(shipItems.length
+      ?'<label class="form-label">What went on this shipment</label>'
+        +'<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:9px">'
+        +shipItems.map(function(it,i){
+          var total=Number(it.quantity)||0,shippedQ=done[lineKey(it,i)]||0,rem=round2(total-shippedQ);
+          var on=f.items[i]!=null;
+          return '<div style="display:flex;align-items:center;gap:8px;font-size:12px;flex-wrap:wrap">'
+            +'<label style="display:flex;align-items:center;gap:7px;cursor:pointer;flex:1;min-width:160px">'
+            +'<input type="checkbox" '+(on?'checked':'')+' onchange="toggleShipItem('+i+',this.checked)" style="width:14px;height:14px;accent-color:var(--accent)">'
+            +'<span'+(rem<=0?' style="color:var(--text-tertiary)"':'')+'>'+escHtml(it.item_name||it.description||('Item '+(i+1)))+'</span></label>'
+            +'<input class="form-input" type="number" step="any" min="0" value="'+escHtml(on?String(f.items[i]):'')+'" '+(on?'':'disabled')+' oninput="setShipItemQty('+i+',this.value)" style="width:76px;font-size:12px;text-align:right">'
+            +'<span style="color:var(--text-secondary);white-space:nowrap">of '+total+'</span>'
+            +(shippedQ>0?'<span style="color:#b45309;font-size:11px;white-space:nowrap">'+shippedQ+' shipped &middot; '+rem+' left</span>':'')
+            +'</div>';
+        }).join('')
+        +'</div>'
+      :'<div style="font-size:12px;color:var(--text-tertiary);margin-bottom:9px">No quote line items on this lead, so the shipment will just record how it travelled.</div>')
+    +'<input class="form-input" placeholder="'+(f.method==='personal'?'Note — what was carried, and by whom':'Note (optional)')+'" value="'+escHtml(f.notes||'')+'" oninput="setShipField(\'notes\',this.value)" style="font-size:12px;margin-bottom:9px">'
+    +'<div id="ship-preview"></div>'
+    +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">'
+    +'<button class="btn btn-sm" onclick="closeShipmentForm()">Cancel</button>'
+    +'<button class="btn btn-primary btn-sm" onclick="saveShipment()"><i class="ti ti-check"></i> Record shipment</button>'
+    +'</div></div>';
+}
+
+async function saveShipment(){
+  if(!shipForm||!currentLead) return;
+  var f=shipForm,m=shipMethod(f.method);
+  if(m.hasCarrier&&!f.carrier&&!confirm('No carrier selected for this '+m.label.toLowerCase()+'.\n\nRecord it anyway?')) return;
+  var lines=shipSelectedLines();
+  var seq=currentShipments.reduce(function(a,s){return Math.max(a,Number(s.seq)||0);},0)+1;
+  try{
+    var body={lead_id:currentLead.id,seq:seq,method:f.method,
+      carrier:m.hasCarrier?(f.carrier||null):null,
+      label:(f.label||'').trim(),shipped_date:f.shipped_date||null,
+      reference:m.hasCarrier?((f.reference||'').trim()||null):null,
+      notes:(f.notes||'').trim()||null,
+      lines:lines.length?lines:null};
+    var r=await sbWrite('lead_shipments',{method:'POST',prefer:'return=representation',body:JSON.stringify(body)});
+    var saved=await r.json();
+    currentShipments.push(Array.isArray(saved)&&saved.length?saved[0]:body);
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Shipment recorded',
+      detail:m.label+(f.carrier?' — '+shipCarrierName(f.method,f.carrier):'')+(lines.length?' — '+lines.length+' line(s)':'')+(f.shipped_date?' on '+f.shipped_date:'')})});
+    shipForm=null;
+    renderShipmentsPanel();
+    toast(m.label+' shipment recorded &#10003;');
+  }catch(e){toast('Could not record shipment: '+e.message,'error');}
+}
+
+async function deleteShipment(id){
+  var s=currentShipments.find(function(x){return x.id===id;});
+  if(!s) return;
+  if(!confirm('Remove this '+shipMethod(s.method).label.toLowerCase()+' shipment?\n\nThe goods on it go back to being unshipped.')) return;
+  try{
+    await sbWrite('lead_shipments?id=eq.'+id,{method:'DELETE'});
+    currentShipments=currentShipments.filter(function(x){return x.id!==id;});
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Shipment removed',detail:shipMethod(s.method).label+' shipment removed'})});
+    renderShipmentsPanel();
+    toast('Shipment removed');
+  }catch(e){toast('Could not remove shipment: '+e.message,'error');}
 }
 
 async function uploadFreightFiles(files){

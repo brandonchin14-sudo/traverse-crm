@@ -745,19 +745,7 @@ async function generateQBInvoice(){
        someone corrected by hand is never silently reduced.
        Wrapped so it can never fail the surrounding flow — by this point the invoice
        already exists in QuickBooks and must not be reported as failed. */
-    try{
-      var invRes=await sb('quotes?lead_id=eq.'+currentLead.id+'&status=eq.invoiced&select=total');
-      var invRows=await invRes.json();
-      var invSum=(Array.isArray(invRows)?invRows:[]).reduce(function(s,q){return s+(Number(q.total)||0);},0);
-      if(invSum>(Number(currentLead.invoice_total)||0)){
-        var invPatch={invoice_total:invSum,updated_at:new Date().toISOString()};
-        if(!currentLead.invoice_date) invPatch.invoice_date=todayLocalISO();
-        await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify(invPatch)});
-        Object.assign(currentLead,invPatch);
-        leads.forEach(function(l,i){if(l.id===currentLead.id)Object.assign(leads[i],invPatch);});
-        await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Invoice updated',detail:'Revenue recorded as A$'+invSum.toFixed(2)+' from invoiced quotes'})});
-      }
-    }catch(invTotErr){console.warn('Invoice total not recorded:',invTotErr);}
+    await applyLeadInvoiceTotal();
     currentQuote.status='invoiced';currentQuote.qb_invoice_id=data.invoice_id;
     currentLead.quote_status='invoiced';
     leads.forEach(function(l,i){if(l.id===currentLead.id)leads[i].quote_status='invoiced';});
@@ -2849,14 +2837,25 @@ async function applyLeadInvoiceTotal(){
     var qs=await qr.json(); if(!Array.isArray(qs)) qs=[];
     var fullSum=qs.reduce(function(s,q){return staged[q.id]?s:s+(Number(q.total)||0);},0);
     var total=round2(partSum+fullSum);
+    var patch={updated_at:new Date().toISOString()};
     if(total>(Number(currentLead.invoice_total)||0)){
-      var patch={invoice_total:total,updated_at:new Date().toISOString()};
+      patch.invoice_total=total;
       if(!currentLead.invoice_date) patch.invoice_date=todayLocalISO();
-      await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify(patch)});
-      Object.assign(currentLead,patch);
-      var i=leads.findIndex(function(l){return l.id===currentLead.id;});
-      if(i>-1) Object.assign(leads[i],patch);
     }
+    /* An invoice is never paid the moment it is issued, but leads.invoice_paid
+       DEFAULTS TO TRUE, so raising one used to book it as revenue already banked —
+       four invoices worth A$191,584.16 were reported as received in a single week
+       with nothing paid against them in QuickBooks. Mark it outstanding and let the
+       QuickBooks sync be the only thing that ever marks it paid. */
+    if(currentLead.invoice_paid!==false) patch.invoice_paid=false;
+    if(Object.keys(patch).length<2) return;
+    await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify(patch)});
+    Object.assign(currentLead,patch);
+    var i=leads.findIndex(function(l){return l.id===currentLead.id;});
+    if(i>-1) Object.assign(leads[i],patch);
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Invoice updated',
+      detail:(patch.invoice_total!=null?'Revenue recorded as '+fmtAud(patch.invoice_total):'Invoice raised')
+        +(patch.invoice_paid===false?' — marked outstanding until paid in QuickBooks':'')})});
   }catch(e){console.warn('Lead invoice total not updated:',e);}
 }
 
@@ -3102,8 +3101,12 @@ function renderReports(){
   el.innerHTML='<div style="max-width:1100px;margin:0 auto;padding:24px">'
     +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">'
     +'<h2 style="font-size:18px;font-weight:700;margin:0">Financial Reports</h2>'
+    +'<div style="display:flex;gap:8px">'
+    +'<button class="btn" onclick="syncPaidFromQB()" style="font-size:12px" title="Check every CRM-raised invoice against QuickBooks"><i class="ti ti-refresh"></i> Sync paid status from QuickBooks</button>'
     +'<button class="btn" onclick="exportReportCSV()" style="font-size:12px"><i class="ti ti-download"></i> Export CSV</button>'
     +'</div>'
+    +'</div>'
+    +'<div id="qbSyncPanel"></div>'
     +'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:16px">'
     +'<div class="metric" style="border-color:var(--green)"><div class="metric-label" style="color:var(--green)">Paid This Month</div><div class="metric-val" style="color:var(--green)">'+fmtMoney(paidThisMonth)+'</div><div class="metric-sub">'+monthName+' '+thisYear+'</div></div>'
     +'<div class="metric" style="border-color:var(--amber)"><div class="metric-label" style="color:#b45309">Outstanding</div><div class="metric-val" style="color:#b45309">'+fmtMoney(outstandingTotal)+'</div><div class="metric-sub">'+outstandingLeads.length+' unpaid invoice(s) raised in CRM</div></div>'
@@ -3165,6 +3168,9 @@ function renderReports(){
     +'<tbody id="rpt-tbody"></tbody>'
     +'</table></div></div>';
   renderReportTable();
+  /* The panel lives inside this view's markup, so re-render it here or a redraw
+     would wipe a sync result the user has not acted on yet. */
+  renderQBSyncPanel();
 }
 
 function clearReportFilters(){
@@ -3558,6 +3564,123 @@ function toggleBriefArchive(){
   var b=document.getElementById('briefArchiveBtn');
   if(b) b.innerHTML='<i class="ti ti-archive"></i> '+(briefShowArchive?'Hide archive':'Show archive');
   renderBrief();
+}
+
+/* ── QUICKBOOKS PAID-STATUS SYNC ──────────────────────────────────────────
+   leads.invoice_paid is what every revenue figure splits Paid from Pending on,
+   and nothing kept it in step with QuickBooks — it drifts silently and forever.
+   This reads the real Balance of every CRM-raised invoice and shows exactly what
+   would change before writing a thing. It is deliberately manual and previewed:
+   these figures are the business's revenue, not something to rewrite unattended. */
+var qbSyncState=null;
+
+function renderQBSyncPanel(){
+  var el=document.getElementById('qbSyncPanel');
+  if(!el) return;
+  var s=qbSyncState;
+  if(!s){el.innerHTML='';return;}
+  if(s.busy){
+    el.innerHTML='<div style="background:var(--bg-secondary);border:1px solid var(--border-t);border-radius:var(--radius-md);padding:12px 14px;margin-bottom:16px;font-size:13px">'
+      +'<i class="ti ti-loader"></i> Reading QuickBooks &#8212; invoice '+s.done+' of '+s.total+'&hellip;</div>';
+    return;
+  }
+  var rows=s.changes||[];
+  el.innerHTML='<div style="background:var(--bg-primary);border:1px solid '+(rows.length?'var(--accent)':'var(--border-t)')+';border-radius:var(--radius-md);padding:14px;margin-bottom:16px">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">'
+    +'<div style="font-size:13px;font-weight:700"><i class="ti ti-refresh"></i> QuickBooks payment check</div>'
+    +'<button class="btn btn-sm" onclick="qbSyncState=null;renderQBSyncPanel()">Close</button>'
+    +'</div>'
+    +'<div style="font-size:12px;color:var(--text-secondary);margin-top:6px">'
+    +'Checked '+s.checked+' invoice'+(s.checked===1?'':'s')+' across '+s.leadCount+' lead'+(s.leadCount===1?'':'s')+'.'
+    +(s.unreadable?' <span style="color:#b45309">'+s.unreadable+' could not be read and were left alone.</span>':'')
+    +'</div>'
+    +(rows.length
+      ?'<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:10px">'
+        +'<thead><tr style="background:var(--bg-secondary)">'
+        +'<th style="padding:6px 8px;text-align:left">Lead</th>'
+        +'<th style="padding:6px 8px;text-align:right">Amount</th>'
+        +'<th style="padding:6px 8px;text-align:center">CRM</th>'
+        +'<th style="padding:6px 8px;text-align:center">QuickBooks</th></tr></thead><tbody>'
+        +rows.map(function(c){
+          return '<tr style="border-top:1px solid var(--border-t)">'
+            +'<td style="padding:6px 8px">'+escHtml(c.name)+'</td>'
+            +'<td style="padding:6px 8px;text-align:right">'+fmtMoneyPlain(c.total)+'</td>'
+            +'<td style="padding:6px 8px;text-align:center;color:var(--text-tertiary)">'+(c.was?'Paid':'Pending')+'</td>'
+            +'<td style="padding:6px 8px;text-align:center;font-weight:700;color:'+(c.now?'var(--green)':'#b45309')+'">'+(c.now?'Paid':'Pending')+'</td></tr>';
+        }).join('')
+        +'</tbody></table>'
+        +'<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px">'
+        +'<button class="btn btn-primary btn-sm" onclick="applyQBSync()"><i class="ti ti-check"></i> Apply '+rows.length+' change'+(rows.length===1?'':'s')+'</button></div>'
+      :'<div style="font-size:12px;color:var(--green);margin-top:8px"><i class="ti ti-check"></i> Everything already matches QuickBooks. Nothing to change.</div>')
+    +'</div>';
+}
+function fmtMoneyPlain(n){return 'A$'+Number(n||0).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2});}
+
+async function syncPaidFromQB(){
+  qbSyncState={busy:true,done:0,total:0};
+  renderQBSyncPanel();
+  try{
+    /* Same rule the payments panel uses: a quote billed in stages is represented by
+       its stages, otherwise by its own single invoice. */
+    var qr=await sb('quotes?select=id,lead_id,qb_invoice_id');
+    var quotes=await qr.json(); if(!Array.isArray(quotes)) quotes=[];
+    var pr=await sb('quote_invoices?select=quote_id,lead_id,qb_invoice_id');
+    var parts=await pr.json(); if(!Array.isArray(parts)) parts=[];
+    var staged={};parts.forEach(function(p){staged[p.quote_id]=true;});
+    var byLead={};
+    parts.forEach(function(p){if(p.qb_invoice_id)(byLead[p.lead_id]=byLead[p.lead_id]||[]).push(String(p.qb_invoice_id));});
+    quotes.forEach(function(q){if(q.qb_invoice_id&&!staged[q.id])(byLead[q.lead_id]=byLead[q.lead_id]||[]).push(String(q.qb_invoice_id));});
+
+    var ids={};Object.keys(byLead).forEach(function(k){byLead[k].forEach(function(i){ids[i]=1;});});
+    var idList=Object.keys(ids);
+    qbSyncState.total=idList.length;renderQBSyncPanel();
+
+    var bal={},unreadable=0;
+    for(var i=0;i<idList.length;i++){
+      var d=await callQB('get_transaction',{query:'invoice',clientId:idList[i]});
+      if(d&&d.success&&d.txn&&d.txn.Invoice) bal[idList[i]]=Number(d.txn.Invoice.Balance)||0;
+      else unreadable++;
+      qbSyncState.done=i+1;renderQBSyncPanel();
+    }
+
+    var changes=[],leadCount=0;
+    Object.keys(byLead).forEach(function(leadId){
+      var lead=leads.find(function(l){return l.id===leadId;});
+      if(!lead) return;
+      var invs=byLead[leadId];
+      /* Skip any lead with an invoice we could not read: a deleted or unreachable
+         invoice must not be silently treated as paid. */
+      if(!invs.every(function(i){return bal[i]!=null;})) return;
+      leadCount++;
+      var paid=invs.every(function(i){return bal[i]<=0.005;});
+      var was=lead.invoice_paid!==false;
+      if(paid!==was) changes.push({id:leadId,name:(lead.name||'')+' / '+(lead.company||''),total:Number(lead.invoice_total)||0,was:was,now:paid});
+    });
+    qbSyncState={busy:false,checked:idList.length-unreadable,unreadable:unreadable,leadCount:leadCount,changes:changes};
+    renderQBSyncPanel();
+  }catch(e){
+    qbSyncState=null;renderQBSyncPanel();
+    toast('Could not reach QuickBooks: '+e.message,'error');
+  }
+}
+
+async function applyQBSync(){
+  if(!qbSyncState||!qbSyncState.changes) return;
+  var rows=qbSyncState.changes,ok=0;
+  for(var i=0;i<rows.length;i++){
+    var c=rows[i];
+    try{
+      await sbWrite('leads?id=eq.'+c.id,{method:'PATCH',body:JSON.stringify({invoice_paid:c.now,updated_at:new Date().toISOString()})});
+      var l=leads.find(function(x){return x.id===c.id;});
+      if(l) l.invoice_paid=c.now;
+      await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:c.id,action:'Invoice updated',
+        detail:'Payment status set to '+(c.now?'Paid':'Pending')+' from QuickBooks'})});
+      ok++;
+    }catch(e){}
+  }
+  qbSyncState=null;
+  renderReports();renderBoard();
+  toast(ok+' lead'+(ok===1?'':'s')+' updated from QuickBooks &#10003;'+(ok<rows.length?' ('+(rows.length-ok)+' failed)':''));
 }
 
 function exportReportCSV(){

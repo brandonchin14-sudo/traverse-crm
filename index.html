@@ -2509,15 +2509,59 @@ function packDefaults(){
     consigneeName:saved.name||'',consigneeAddr:saved.addr||''};
 }
 
+/* Shipment-level fields the SLI itself usually carries. Filled from the first
+   document that states one; a later document that disagrees is reported rather
+   than silently overwriting, because two different vessels almost certainly means
+   one of these SLIs is not going in this container. */
+var PACK_FROM_SLI=[
+  {key:'containerNo',from:'container',label:'Container #'},
+  {key:'sealNo',from:'seal',label:'Seal #'},
+  {key:'vessel',from:'vessel',label:'Vessel'},
+  {key:'voyage',from:'voyage',label:'Voyage no'},
+  {key:'date',from:'date',label:'Date'}
+];
+
 function openPackingList(){
-  packState={header:packDefaults(),docs:[]};
+  packState={header:packDefaults(),docs:[],filledFrom:{},touched:{},conflicts:[]};
   packPreview=false;
   document.getElementById('packOverlay').classList.add('open');
   renderPackDialog();
 }
+
+function absorbShipmentDetails(doc,data){
+  var h=packState.header,F=packState.filledFrom,T=packState.touched;
+  PACK_FROM_SLI.forEach(function(m){
+    var v=String(data[m.from]||'').trim();
+    if(!v) return;
+    var cur=String(h[m.key]||'').trim();
+    /* The date starts as today's date purely as a default, so it is fair game to
+       replace until either the user edits it or a document has supplied it. */
+    var stillDefault=(m.key==='date')&&!T.date&&!F.date;
+    if(!cur||stillDefault){h[m.key]=v;F[m.key]=doc.name;return;}
+    if(cur.toLowerCase()!==v.toLowerCase()){
+      packState.conflicts.push({key:m.key,label:m.label,current:cur,found:v,file:doc.name,
+        source:T[m.key]?'you entered':('from '+(F[m.key]||'an earlier document'))});
+    }
+  });
+}
+function acceptPackConflict(i){
+  var c=packState&&packState.conflicts[i];
+  if(!c) return;
+  packState.header[c.key]=c.found;
+  packState.filledFrom[c.key]=c.file;
+  packState.conflicts.splice(i,1);
+  renderPackDialog();
+}
+function dismissPackConflict(i){
+  if(!packState) return;
+  packState.conflicts.splice(i,1);
+  renderPackDialog();
+}
+
 function setPackHeader(k,v){
   if(!packState) return;
   packState.header[k]=v;
+  packState.touched[k]=true;
   /* Consignee is the same container after container, so remember it once entered
      rather than making someone retype the address every time. */
   if(k==='consigneeName'||k==='consigneeAddr'){
@@ -2558,6 +2602,7 @@ async function handlePackFiles(files){
       var data=await scanDocument(f,'scan_sli');
       doc.project=data.project||'';
       doc.reference=data.reference||'';
+      absorbShipmentDetails(doc,data);
       doc.items=(data.items||[]).map(function(it){
         return {description:it.description||'',quantity:Number(it.quantity)||1,
           height:Number(it.height)||0,length:Number(it.length)||0,width:Number(it.width)||0,
@@ -2580,7 +2625,15 @@ async function handlePackFiles(files){
 }
 function setPackDocLead(idx,id){if(packState&&packState.docs[idx]){packState.docs[idx].leadId=id;packState.docs[idx].heading='';renderPackDialog();}}
 function setPackDocHeading(idx,v){if(packState&&packState.docs[idx])packState.docs[idx].heading=v;}
-function removePackDoc(idx){if(packState){packState.docs.splice(idx,1);renderPackDialog();}}
+function removePackDoc(idx){
+  if(!packState) return;
+  var gone=packState.docs[idx];
+  packState.docs.splice(idx,1);
+  /* Drop any disagreement raised by the document being removed — it is no longer
+     part of this container, so its objection no longer stands. */
+  if(gone) packState.conflicts=packState.conflicts.filter(function(c){return c.file!==gone.name;});
+  renderPackDialog();
+}
 function setPackItem(di,ii,k,v){
   if(!packState||!packState.docs[di]||!packState.docs[di].items[ii]) return;
   packState.docs[di].items[ii][k]=(k==='description')?v:(Number(v)||0);
@@ -2611,9 +2664,28 @@ function renderPackDialog(){
   if(packPreview){el.innerHTML=packPreviewHtml();return;}
   var h=packState.header;
   var fld=function(k,label,ph,w){
+    var src=packState.filledFrom[k];
     return '<div style="flex:1;min-width:'+(w||140)+'px"><label class="form-label">'+label+'</label>'
-      +'<input class="form-input" style="font-size:12px" placeholder="'+ph+'" value="'+escHtml(h[k]||'')+'" oninput="setPackHeader(\''+k+'\',this.value)"></div>';
+      +'<input class="form-input" style="font-size:12px" placeholder="'+ph+'" value="'+escHtml(h[k]||'')+'" oninput="setPackHeader(\''+k+'\',this.value)">'
+      +(src?'<div style="font-size:10px;color:var(--text-tertiary);margin-top:2px"><i class="ti ti-file-text"></i> from '+escHtml(src)+'</div>':'')
+      +'</div>';
   };
+  /* Two SLIs disagreeing on the vessel or container is worth stopping for — it
+     usually means one of them is not going in this container at all. */
+  var conflictHtml=packState.conflicts.length
+    ? '<div style="background:rgba(180,83,9,0.07);border:1px solid rgba(180,83,9,0.45);border-radius:var(--radius-md);padding:11px 13px;margin-bottom:12px">'
+      +'<div style="font-size:12px;font-weight:700;color:#b45309;margin-bottom:6px"><i class="ti ti-alert-triangle"></i> These SLIs do not agree on the shipment details</div>'
+      +packState.conflicts.map(function(c,i){
+        return '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;padding:3px 0">'
+          +'<span style="flex:1;min-width:230px"><strong>'+escHtml(c.label)+'</strong>: '
+          +'&ldquo;'+escHtml(c.current)+'&rdquo; ('+escHtml(c.source)+') vs &ldquo;'+escHtml(c.found)+'&rdquo; in '+escHtml(c.file)+'</span>'
+          +'<button class="btn btn-sm" onclick="acceptPackConflict('+i+')">Use &ldquo;'+escHtml(c.found)+'&rdquo;</button>'
+          +'<button class="btn btn-sm" onclick="dismissPackConflict('+i+')">Keep mine</button>'
+          +'</div>';
+      }).join('')
+      +'<div style="font-size:11px;color:#b45309;margin-top:5px">If one of these belongs to a different container, remove it below.</div>'
+      +'</div>'
+    : '';
   var docsHtml=packState.docs.map(function(d,i){
     var badge=d.status==='scanning'?'<span style="font-size:11px;color:var(--text-secondary)"><i class="ti ti-loader"></i> reading&hellip;</span>'
       :d.status==='error'?'<span style="font-size:11px;color:var(--danger)"><i class="ti ti-alert-circle"></i> '+escHtml(d.error)+'</span>'
@@ -2657,6 +2729,7 @@ function renderPackDialog(){
     +fld('consigneeName','Consignee','Receiving business name',200)+'</div>'
     +'<div style="margin-bottom:14px"><label class="form-label">Consignee address</label>'
     +'<input class="form-input" style="font-size:12px" placeholder="Remembered after you enter it once" value="'+escHtml(h.consigneeAddr||'')+'" oninput="setPackHeader(\'consigneeAddr\',this.value)"></div>'
+    +conflictHtml
     +'<div id="pack-drop" style="border:2px dashed var(--border-t);border-radius:var(--radius-md);padding:18px;text-align:center;background:var(--bg-secondary);cursor:pointer;margin-bottom:14px">'
     +'<i class="ti ti-file-upload" style="font-size:24px;color:var(--purple);display:block;margin-bottom:6px"></i>'
     +'<div style="font-size:13px;font-weight:600">Drop the SLIs for this container</div>'

@@ -538,8 +538,26 @@ async function saveFreightCarrier(val){
 }
 var QB_API_URL='https://dwmpunbcwrprhhzwduyx.supabase.co/functions/v1/quickbooks-api';
 var qbCustomers=[];
-function connectQB(){
-  var win=window.open('https://dwmpunbcwrprhhzwduyx.supabase.co/functions/v1/quickbooks-auth?action=connect','_blank','width=600,height=700');
+/* Started server-side so the connection is tied to the signed-in user: quickbooks-auth
+   issues a one-time state that Intuit carries through sign-in, and refuses any return
+   without one it issued -- and any QuickBooks company other than Traverse's. Otherwise
+   anyone could connect their own company and receive every estimate and invoice the
+   CRM creates. The window opens synchronously on the click so pop-up blockers still
+   treat it as the user's action, then gets pointed at Intuit. */
+async function connectQB(){
+  var win=window.open('about:blank','_blank','width=600,height=700');
+  if(!win){toast('Allow pop-ups for this site to connect QuickBooks','error');return;}
+  try{
+    await ensureValidToken();
+    var sres=await fetch('https://dwmpunbcwrprhhzwduyx.supabase.co/functions/v1/quickbooks-auth?action=start',{method:'POST',headers:{'apikey':SB_KEY,'Authorization':'Bearer '+authToken}});
+    var sd=await sres.json().catch(function(){return {};});
+    if(!sres.ok||!sd.url) throw new Error(sd.error||('HTTP '+sres.status));
+    win.location.href=sd.url;
+  }catch(e){
+    try{win.close();}catch(_){}
+    toast('Could not start QuickBooks connection: '+e.message,'error');
+    return;
+  }
   // Poll until the popup closes (max ~5 min), then check connection
   var attempts=0,maxAttempts=375; // 375 * 800ms = 5 minutes
   var poll=setInterval(function(){
@@ -577,6 +595,10 @@ async function connectDrive(){
 async function callQB(action,extra){
   try{
     var body=Object.assign({action:action},extra||{});
+    /* quickbooks-api requires a signed-in user and this calls it directly rather than
+       through sb(), so refresh the session here — the 45-minute refresh timer does not
+       tick while a laptop sleeps, and a stale token would be refused. */
+    await ensureValidToken();
     var res=await fetch(QB_API_URL,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify(body)});
     if(!res.ok){
       var err=await res.json().catch(function(){return {};});

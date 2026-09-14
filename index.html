@@ -657,7 +657,7 @@ async function checkDriveConnection(){
   try{
     var data=await callDriveAPI('check_connection',{});
     if(data.success){
-      setStatus('driveDot','driveLabel',true,'Drive &#10003;');
+      setStatus('driveDot','driveLabel',true,'Drive \u2713');
       document.getElementById('driveDot').closest('.status-pill').title='Google Drive: '+( data.email||'Connected');
     } else {
       setStatus('driveDot','driveLabel',false,'Drive - click to connect');
@@ -671,14 +671,14 @@ async function checkQBConnection(){
   try{
     var data=await callQB('check_connection');
     if(data&&data.success){
-      setStatus('qbDot','qbLabel',true,'QB &#10003;'+(data.company?' ('+data.company+')':''));
+      setStatus('qbDot','qbLabel',true,'QB \u2713'+(data.company?' ('+data.company+')':''));
       qbConnected=true;
     } else {
-      setStatus('qbDot','qbLabel',false,'QB &#215;');
+      setStatus('qbDot','qbLabel',false,'QB \u00d7');
       qbConnected=false;
     }
   }catch(e){
-    setStatus('qbDot','qbLabel',false,'QB &#215;');
+    setStatus('qbDot','qbLabel',false,'QB \u00d7');
     qbConnected=false;
   }
 }
@@ -1034,8 +1034,10 @@ function showApp(){
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('appScreen').style.display='block';
   document.getElementById('userEmail').textContent=currentUser?.email||'';
-setStatus('driveDot','driveLabel',true,'Drive &#10003;');
-  setStatus('emailDot','emailLabel',true,'Email &#10003;');
+  /* Drive stays neutral until checkDriveConnection() has actually asked Drive; showing a
+     tick up front hid a broken connection during the Google secret rotation. */
+  setStatus('driveDot','driveLabel',null,'Drive \u2026');
+  setStatus('emailDot','emailLabel',true,'Email \u2713');
   loadLeads();
   checkDriveConnection();
   // QB checked lazily - only when user opens invoice/QB flow
@@ -1132,8 +1134,10 @@ function toast(msg,type='success'){
     _sendingTimer=setTimeout(()=>{if(t.classList.contains('sending'))t.classList.remove('show');},30000);
   }
 }
+/* live: true green, false amber, null grey (not checked yet). The label is set as text,
+   so write symbols as JS escapes ('\u2713'), not HTML entities. */
 function setStatus(dId,lId,live,label){
-  document.getElementById(dId).className='dot'+(live?' live':' warn');
+  document.getElementById(dId).className='dot'+(live===null?'':live?' live':' warn');
   document.getElementById(lId).textContent=label;
 }
 
@@ -1144,7 +1148,7 @@ async function loadLeads(){
     if(r.status===401){doLogout();return;}
     if(!r.ok) throw new Error();
     leads=await r.json();
-    setStatus('sbDot','sbLabel',true,'DB &#10003;');
+    setStatus('sbDot','sbLabel',true,'DB \u2713');
     await loadQuotesIndex();
     populateClientFilter();renderBoard();
   }catch(e){setStatus('sbDot','sbLabel',false,'DB error');toast('Cannot connect to database','error');leads=[];renderBoard();}
@@ -1887,7 +1891,7 @@ async function sendEmailViaFunction(to,subject,body,templateName,leadId){
       const idx=leads.findIndex(function(l){return l.id===currentLead.id;});
       if(idx>-1) leads[idx].emails_sent=emailsSent;
     }
-    setStatus('emailDot','emailLabel',true,'Email &#10003;');
+    setStatus('emailDot','emailLabel',true,'Email \u2713');
     document.getElementById('toast').classList.remove('show');
     toast('Email sent to '+to+' &#10003;');
     renderBoard();
@@ -1931,7 +1935,7 @@ async function createDriveFolderForLead(lead){
     if(idx>-1) leads[idx].drive_folder_id=folderId;
     if(currentLead&&currentLead.id===lead.id) currentLead.drive_folder_id=folderId;
     await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:lead.id,action:'Drive folder created',detail:folderName})});
-    setStatus('driveDot','driveLabel',true,'Drive &#10003;');
+    setStatus('driveDot','driveLabel',true,'Drive \u2713');
     toast('Drive folder created &#10003;');
     renderBoard();
     return folderId;

@@ -553,7 +553,26 @@ function connectQB(){
     }
   },800);
 }
-function connectDrive(){window.open(GOOGLE_AUTH_URL+'?action=connect','_blank','width=600,height=700');}
+/* The connection is started server-side so it is tied to the signed-in user:
+   google-auth issues a one-time state that Google carries through sign-in, and it
+   refuses any return that does not bring back a state it issued. Otherwise anyone
+   could build Google's sign-in link and make their own Google account the Drive
+   every upload goes to. The window is opened synchronously on the click so pop-up
+   blockers still treat it as the user's action, then pointed at Google. */
+async function connectDrive(){
+  var w=window.open('about:blank','_blank','width=600,height=700');
+  if(!w){toast('Allow pop-ups for this site to connect Google Drive','error');return;}
+  try{
+    await ensureValidToken();
+    var res=await fetch(GOOGLE_AUTH_URL+'?action=start',{method:'POST',headers:{'apikey':SB_KEY,'Authorization':'Bearer '+authToken}});
+    var d=await res.json().catch(function(){return {};});
+    if(!res.ok||!d.url) throw new Error(d.error||('HTTP '+res.status));
+    w.location.href=d.url;
+  }catch(e){
+    try{w.close();}catch(_){}
+    toast('Could not start Google Drive connection: '+e.message,'error');
+  }
+}
 
 async function callQB(action,extra){
   try{

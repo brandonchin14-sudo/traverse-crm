@@ -572,6 +572,10 @@ async function callQB(action,extra){
 }
 async function callDriveAPI(action, params) {
   var payload = Object.assign({action:action}, params||{});
+  /* drive-api requires a signed-in user and this calls it directly rather than
+     through sb(), so refresh the session here — the 45-minute refresh timer does not
+     tick while a laptop sleeps, and a stale token would be refused. */
+  await ensureValidToken();
   var res = await fetch(DRIVE_API_URL, {
     method:'POST',
     headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},

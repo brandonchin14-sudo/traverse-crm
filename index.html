@@ -1827,6 +1827,10 @@ async function sendEmailViaFunction(to,subject,body,templateName,leadId){
   if(!to){toast('No client email on this lead','error');return false;}
   toast('Sending...','sending');
   try{
+    /* send-email requires a signed-in user. This calls the function directly rather
+       than through sb(), so it must refresh the token itself — the 45-minute refresh
+       timer does not tick while a laptop sleeps, and a stale token would be refused. */
+    await ensureValidToken();
     const res=await fetch(EMAIL_FN,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify({to,subject,body})});
     const data=await res.json();
     if(!res.ok) throw new Error(data.error||'Send failed');
@@ -3195,6 +3199,7 @@ async function sendQuoteToClient(){
     var subject='Quote '+currentQuote.quote_number+' - Traverse Imports & Exports';
     var fn=(currentLead.name||'').split(' ')[0];
     var body='Hi '+fn+',\n\nPlease find your quote '+currentQuote.quote_number+' below.\n\nTotal: A$'+currentQuote.total.toFixed(2)+'\nExpiry: '+(currentQuote.expiry_date?new Date(currentQuote.expiry_date).toLocaleDateString('en-AU'):'-')+'\n\nPlease review and let us know if you would like to proceed.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au';
+    await ensureValidToken();
     var res=await fetch(EMAIL_FN,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify({to:currentLead.contact,subject:subject,body:body,pdfBase64:pdfB64,quoteNumber:currentQuote.quote_number})});
     var data=await res.json();
     if(!res.ok) throw new Error(data.error||'Send failed');

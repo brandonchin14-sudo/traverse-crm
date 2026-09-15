@@ -393,6 +393,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     </div>
     <div class="detail-tabs">
       <div class="detail-tab active" onclick="switchDetailTab('info',this)">Details</div>
+      <div class="detail-tab" id="detailTabProject" style="display:none" onclick="switchDetailTab('project',this)"><i class="ti ti-list-details" style="font-size:12px;color:var(--purple)"></i> Project</div>
       <div class="detail-tab" onclick="switchDetailTab('quote',this)"><i class="ti ti-file-invoice" style="font-size:12px;color:#633806"></i> Quote</div>
       <div class="detail-tab" onclick="switchDetailTab('emails',this)"><i class="ti ti-send" style="font-size:12px;color:var(--purple)"></i> Email</div>
       <div class="detail-tab" onclick="switchDetailTab('files',this)"><i class="ti ti-brand-google-drive" style="font-size:12px;color:var(--amber)"></i> Drive</div>
@@ -400,6 +401,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <div class="detail-tab" onclick="switchDetailTab('freight',this)"><i class="ti ti-ship" style="font-size:12px;color:#0369a1"></i> Freight</div>
     </div>
     <div class="detail-section active" id="dtab-info"></div>
+    <div class="detail-section" id="dtab-project"></div>
     <div class="detail-section" id="dtab-quote"></div>
     <div class="detail-section" id="dtab-emails"></div>
     <div class="detail-section" id="dtab-files"></div>
@@ -1294,6 +1296,10 @@ async function openDetail(id){
     renderDetailEmails();
     document.getElementById('dtab-files').innerHTML='';
     document.getElementById('dtab-quote').innerHTML='';
+    /* The Project tab (BOQ and tracker) only applies to project leads. */
+    document.getElementById('detailTabProject').style.display=currentLead.lead_type==='project'?'':'none';
+    document.getElementById('dtab-project').innerHTML='';
+    boqImport=null;
     await renderDetailActivity();
     document.getElementById('detailOverlay').classList.add('open');
   }catch(e){
@@ -2093,6 +2099,7 @@ function switchDetailTab(tab,el){
   if(tab==='files') renderDetailFiles();
   if(tab==='quote') renderQuoteTab().catch(function(e){console.error('Quote tab error:',e);});
   if(tab==='freight') renderDetailFreight();
+  if(tab==='project') renderProjectTab();
 }
 
 function renderDetailFreight(){
@@ -2544,6 +2551,373 @@ async function handleScanFile(file){
     el.innerHTML='<div style="padding:20px;font-size:13px;color:var(--danger);text-align:center"><i class="ti ti-alert-circle" style="font-size:24px;display:block;margin-bottom:8px"></i><strong>Scan failed:</strong> '+e.message+'<br><br><button class="btn" onclick="renderDocumentScan(document.getElementById(String.fromCharCode(100,116,97,98,45,113,117,111,116,101)))">Try again</button></div>';
     toast('Scan failed: '+e.message,'error');
   }
+}
+
+/* ── PROJECT BOQ ──────────────────────────────────────────────────────────
+   GEL tenders for and wins projects, and the bill of quantities lists everything
+   the job needs. The BOQ is uploaded once onto the project lead, and quotes,
+   invoices and shipments are raised against portions of it over the life of the
+   job, which can run for years, instead of opening a new lead for every stage.
+   Only items and quantities are imported. A BOQ's price and total columns are
+   GEL's contract rates with the end client, not what Traverse charges GEL, so they
+   are never read, stored or shown: header cells that look like money are dropped
+   before any column is mapped. */
+var boqItems=[],boqImport=null,boqProgress=null;
+var BOQ_MONEY_HEAD=/price|rate|cost|amount|total|value|sbd|aud|usd|\$/i;
+/* Item numbers look like 1, 12, 3.2, A4 or 2-1. Anything else in the item column
+   (Note:, Date:, a web link) marks a notes row rather than a BOQ line. */
+var BOQ_ITEM_NO=/^[A-Za-z]{0,2}\d+([.\-]\d+)*[A-Za-z]?$/;
+
+function boqText(v){return v==null?'':String(v).replace(/\s+/g,' ').trim();}
+function boqNumber(v){
+  if(typeof v==='number') return isFinite(v)?v:NaN;
+  var s=boqText(v).replace(/,/g,'');
+  return /^-?\d+(\.\d+)?$/.test(s)?Number(s):NaN;
+}
+function fmtQty(n){return String(round2(n));}
+
+/* The header row is the first one naming both a description and a quantity column. */
+function boqFindHeader(rows){
+  for(var r=0;r<Math.min(rows.length,60);r++){
+    var row=rows[r]||[],cols={desc:-1,qty:-1,unit:-1,item:-1,remarks:-1},ignored=[];
+    for(var c=0;c<row.length;c++){
+      var raw=boqText(row[c]),h=raw.toLowerCase().replace(/[:.]+$/,'');
+      if(!h) continue;
+      if(BOQ_MONEY_HEAD.test(h)){ignored.push(raw);continue;}
+      if(cols.desc<0&&/^desc/.test(h)) cols.desc=c;
+      else if(cols.qty<0&&/^(qty|quantity|quan|no\. of)/.test(h)) cols.qty=c;
+      else if(cols.unit<0&&/^(unit|units|uom)$/.test(h)) cols.unit=c;
+      else if(cols.item<0&&/^(item|item no|no|#|ref|code)$/.test(h)) cols.item=c;
+      else if(cols.remarks<0&&/remark|comment|note/.test(h)) cols.remarks=c;
+      else ignored.push(raw);
+    }
+    if(cols.desc>=0&&cols.qty>=0) return {row:r,cols:cols,ignored:ignored};
+  }
+  return null;
+}
+
+/* Names the BOQ from its own heading, e.g. "Quote LMCP-2602 ... Ref: Wharf Solar
+   Lighting" becomes "LMCP-2602 — Wharf Solar Lighting". */
+function boqTitle(rows,headerRow,fallback){
+  var ref='',title='';
+  for(var r=0;r<headerRow;r++){
+    var row=rows[r]||[];
+    for(var c=0;c<row.length;c++){
+      var h=boqText(row[c]).toLowerCase().replace(/[:.#]+$/,'').trim(),next='';
+      if(!h) continue;
+      for(var k=c+1;k<row.length;k++){var t=boqText(row[k]);if(t){next=t;break;}}
+      if(!ref&&/^(quote|quote no|quotation|boq|boq no|tender|tender no)$/.test(h)) ref=next;
+      else if(!title&&/^(ref|reference|re|subject|project)$/.test(h)) title=next;
+    }
+  }
+  return [ref,title].filter(Boolean).join(' — ')||fallback;
+}
+
+/* One sheet to one BOQ group. rows is an array of row arrays; rowOffset is the sheet's
+   first row number less one, so source_row matches the row number shown in Excel. */
+function boqParseSheet(rows,fallbackName,rowOffset){
+  var hdr=boqFindHeader(rows);
+  if(!hdr) return null;
+  var c=hdr.cols,items=[],section='',notes=0;
+  for(var r=hdr.row+1;r<rows.length;r++){
+    var row=rows[r]||[];
+    var desc=boqText(row[c.desc]),qty=boqNumber(row[c.qty]);
+    var itemNo=c.item>=0?boqText(row[c.item]):'';
+    if(!desc) continue;
+    var base={section:section,item_no:BOQ_ITEM_NO.test(itemNo)?itemNo:'',description:desc,
+      remarks:c.remarks>=0?boqText(row[c.remarks]):'',unit:c.unit>=0?boqText(row[c.unit]):'',
+      source_row:r+1+(rowOffset||0)};
+    if(isFinite(qty)&&qty>0){
+      items.push(Object.assign(base,{quantity:qty,include:true}));
+    }else if(BOQ_ITEM_NO.test(itemNo)){
+      /* Numbered like a BOQ line but no usable quantity: shown unticked so it is not
+         lost silently, and cannot be saved until a quantity is entered. */
+      items.push(Object.assign(base,{quantity:'',include:false,noQty:true}));
+    }else{
+      /* Unnumbered text with no quantity: a section heading if short and followed by
+         more lines, otherwise a note. Settled after the loop. */
+      items.push({heading:desc.slice(0,120),short:desc.length<=80&&!/^(sub ?-?total|total|carried|brought|note)/i.test(desc),source_row:base.source_row});
+    }
+  }
+  var out=[],lastReal=-1;
+  items.forEach(function(it,i){if(!it.heading) lastReal=i;});
+  items.forEach(function(it,i){
+    if(it.heading){
+      if(i<lastReal&&it.short) section=it.heading; else notes++;
+      return;
+    }
+    it.section=section;out.push(it);
+  });
+  return {name:boqTitle(rows,hdr.row,fallbackName),items:out,ignored:hdr.ignored,notes:notes,headerRow:hdr.row+1+(rowOffset||0)};
+}
+
+async function renderProjectTab(){
+  var el=document.getElementById('dtab-project');
+  if(!el||!currentLead) return;
+  if(boqImport){el.innerHTML=boqImportHtml();return;}
+  el.innerHTML='<div class="empty-state"><i class="ti ti-loader"></i> Loading project&hellip;</div>';
+  var leadId=currentLead.id;
+  try{
+    var r=await sb('boq_items?lead_id=eq.'+leadId+'&order=boq_ref.asc,sort_order.asc&select=*');
+    var rows=await r.json();
+    boqItems=Array.isArray(rows)?rows:[];
+    boqProgress=await loadBoqProgress(leadId);
+    if(!currentLead||currentLead.id!==leadId) return;
+    el.innerHTML=boqTrackerHtml();
+  }catch(e){
+    el.innerHTML='<div style="padding:20px;font-size:13px;color:var(--danger)">Could not load the project: '+escHtml(e.message)+'</div>';
+  }
+}
+
+/* Units quoted and invoiced per BOQ item, from quote lines that carry a boq_item_id.
+   Quoted counts sent, approved and invoiced quotes; drafts are work in progress.
+   Invoiced counts a quote's lines in full once it is invoiced outright, or once its
+   stages add up to the whole quote; before that only "specific materials" stages bill
+   identifiable units, so percentage and deposit stages count nothing until complete. */
+async function loadBoqProgress(leadId){
+  var prog={quoted:{},invoiced:{},partBilled:{}};
+  var qr=await sb('quotes?lead_id=eq.'+leadId+'&select=id,status,total');
+  var quotes=await qr.json(); if(!Array.isArray(quotes)||!quotes.length) return prog;
+  var ids=quotes.map(function(q){return q.id;});
+  var lr=await sb('quote_line_items?quote_id=in.('+ids.join(',')+')&boq_item_id=not.is.null&select=quote_id,boq_item_id,quantity,sort_order');
+  var lines=await lr.json(); if(!Array.isArray(lines)||!lines.length) return prog;
+  var ir=await sb('quote_invoices?lead_id=eq.'+leadId+'&select=quote_id,basis,amount,lines');
+  var stages=await ir.json(); if(!Array.isArray(stages)) stages=[];
+  var add=function(m,k,v){m[k]=round2((m[k]||0)+v);};
+  quotes.forEach(function(q){
+    var ql=lines.filter(function(l){return l.quote_id===q.id;});
+    if(!ql.length) return;
+    if(q.status==='sent'||q.status==='approved'||q.status==='invoiced') ql.forEach(function(l){add(prog.quoted,l.boq_item_id,Number(l.quantity)||0);});
+    var qs=stages.filter(function(s){return s.quote_id===q.id;});
+    var billed=qs.reduce(function(s,x){return s+(Number(x.amount)||0);},0);
+    if((q.status==='invoiced'&&!qs.length)||(qs.length&&billed>=(Number(q.total)||0)-0.005)){
+      ql.forEach(function(l){add(prog.invoiced,l.boq_item_id,Number(l.quantity)||0);});
+      return;
+    }
+    var bySort={};ql.forEach(function(l){bySort[l.sort_order]=l.boq_item_id;});
+    qs.forEach(function(s){
+      var ls=s.lines;
+      if(typeof ls==='string'){try{ls=JSON.parse(ls);}catch(e){ls=null;}}
+      if(!Array.isArray(ls)) return;
+      ls.forEach(function(x){
+        var id=x&&(x.boq_item_id||bySort[x.sort_order]);
+        if(!id) return;
+        if(s.basis==='items') add(prog.invoiced,id,Number(x.quantity)||0);
+        else prog.partBilled[id]=true;
+      });
+    });
+  });
+  return prog;
+}
+
+function boqGroups(items){
+  var g=[],by={};
+  items.forEach(function(it){
+    var k=it.boq_ref||'BOQ';
+    if(!by[k]){by[k]={name:k,items:[]};g.push(by[k]);}
+    by[k].items.push(it);
+  });
+  return g;
+}
+
+function boqTrackerHtml(){
+  var p=boqProgress||{quoted:{},invoiced:{},partBilled:{}};
+  var head='<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">'
+    +'<div><div style="font-size:14px;font-weight:700"><i class="ti ti-list-details"></i> Bill of quantities</div>'
+    +'<div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Items and quantities for the whole project. Quote, invoice and ship portions of it over time.</div></div>'
+    +'<label class="btn btn-primary btn-sm" style="cursor:pointer"><i class="ti ti-file-spreadsheet"></i> Upload BOQ (.xlsx)'
+    +'<input type="file" accept=".xlsx,.xlsm" style="display:none" onchange="if(this.files[0])handleBoqFile(this.files[0]);this.value=\'\'"></label>'
+    +'</div>';
+  if(!boqItems.length){
+    return head+'<div class="empty-state" style="padding:28px 12px">No BOQ on this project yet. Upload the BOQ spreadsheet to list every item the job needs.'
+      +'<div style="font-size:11px;color:var(--text-tertiary);margin-top:6px">Only items and quantities are imported. Price and total columns are ignored.</div></div>';
+  }
+  var groups=boqGroups(boqItems);
+  var cell='padding:6px 8px;text-align:right;white-space:nowrap';
+  var body=groups.map(function(g){
+    var section=null;
+    var rows=g.items.map(function(it){
+      var q=Number(it.quantity)||0,qd=p.quoted[it.id]||0,inv=p.invoiced[it.id]||0,left=round2(q-qd);
+      var leftCol=left<-0.0001?'var(--danger)':(left<=0.0001?'var(--green)':'#b45309');
+      var sec='';
+      if((it.section||'')!==section){section=it.section||'';if(section) sec='<tr><td colspan="9" style="padding:8px 8px 4px;font-size:11px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.03em">'+escHtml(section)+'</td></tr>';}
+      return sec+'<tr style="border-top:1px solid var(--border-t)">'
+        +'<td style="padding:6px 8px;color:var(--text-tertiary);white-space:nowrap">'+escHtml(it.item_no||'')+'</td>'
+        +'<td style="padding:6px 8px;min-width:200px"><div>'+escHtml(it.description||'')+'</div>'
+        +(it.remarks?'<div style="font-size:11px;color:var(--text-tertiary)">'+escHtml(it.remarks)+'</div>':'')+'</td>'
+        +'<td style="padding:6px 8px;color:var(--text-secondary)">'+escHtml(it.unit||'')+'</td>'
+        +'<td style="'+cell+';font-weight:600">'+fmtQty(q)+'</td>'
+        +'<td style="'+cell+'">'+(qd?fmtQty(qd):'<span style="color:var(--text-tertiary)">0</span>')+'</td>'
+        +'<td style="'+cell+'">'+(inv?fmtQty(inv):(p.partBilled[it.id]?'<span style="color:#b45309;font-size:11px" title="Billed by a percentage or deposit invoice, which does not bill specific units">part</span>':'<span style="color:var(--text-tertiary)">0</span>'))+'</td>'
+        +'<td style="'+cell+';color:var(--text-tertiary)">&#8212;</td>'
+        +'<td style="'+cell+';color:var(--text-tertiary)">&#8212;</td>'
+        +'<td style="'+cell+';font-weight:600;color:'+leftCol+'">'+(left<=0.0001&&left>=-0.0001?'<i class="ti ti-check"></i>':fmtQty(left))+'</td>'
+        +'</tr>';
+    }).join('');
+    var done=g.items.filter(function(it){return round2((Number(it.quantity)||0)-(p.quoted[it.id]||0))<=0.0001;}).length;
+    return '<div style="margin-bottom:16px;border:1px solid var(--border-t);border-radius:var(--radius-md);overflow:hidden">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 12px;background:var(--bg-secondary)">'
+      +'<div><div style="font-size:13px;font-weight:700">'+escHtml(g.name)+'</div>'
+      +'<div style="font-size:11px;color:var(--text-secondary)">'+g.items.length+' item'+(g.items.length===1?'':'s')+' &middot; '+done+' fully quoted'
+      +(g.items[0]&&g.items[0].source_file?' &middot; from '+escHtml(g.items[0].source_file):'')+'</div></div>'
+      +'<button class="btn btn-sm" title="Remove this BOQ" onclick="removeBoqGroup('+escHtml(JSON.stringify(g.name))+')"><i class="ti ti-trash"></i></button>'
+      +'</div>'
+      +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'
+      +'<thead><tr style="background:var(--bg-primary)">'
+      +'<th style="padding:6px 8px;text-align:left">#</th><th style="padding:6px 8px;text-align:left">Item</th><th style="padding:6px 8px;text-align:left">Unit</th>'
+      +'<th style="'+cell+'">BOQ</th><th style="'+cell+'">Quoted</th><th style="'+cell+'">Invoiced</th><th style="'+cell+'" title="Shipment tracking against the BOQ is the next phase">Shipped</th><th style="'+cell+'" title="Payment tracking against the BOQ is a later phase">Paid</th><th style="'+cell+'">Left to quote</th>'
+      +'</tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+  }).join('');
+  return head+body;
+}
+
+async function handleBoqFile(file){
+  if(!currentLead) return;
+  if(!/\.xls[xm]$/i.test(file.name||'')){toast('Please upload the BOQ as an Excel .xlsx file. An older .xls can be re-saved as .xlsx from Excel.','error');return;}
+  if(!file.size){toast('This file is empty. If it is in iCloud or OneDrive, open it once so it downloads, then try again.','error');return;}
+  if(typeof XLSX==='undefined'){toast('The spreadsheet reader did not load. Reload the page and try again.','error');return;}
+  try{
+    var wb=XLSX.read(await file.arrayBuffer(),{type:'array'});
+    var groups=[];
+    wb.SheetNames.forEach(function(name,i){
+      var meta=(wb.Workbook&&wb.Workbook.Sheets&&wb.Workbook.Sheets[i])||{};
+      if(meta.Hidden) return;
+      var ws=wb.Sheets[name];
+      if(!ws||!ws['!ref']) return;
+      var offset=XLSX.utils.decode_range(ws['!ref']).s.r;
+      var rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:true,blankrows:true});
+      var g=boqParseSheet(rows,file.name.replace(/\.xls[xm]$/i,'')+(wb.SheetNames.length>1?' — '+name:''),offset);
+      if(g&&g.items.length) groups.push(g);
+    });
+    if(!groups.length){toast('No BOQ lines found. The sheet needs a header row with Description and Qty columns.','error');return;}
+    boqImport={fileName:file.name,file:file,groups:groups};
+    renderProjectTab();
+  }catch(e){toast('Could not read this spreadsheet: '+e.message,'error');}
+}
+
+function boqImportHtml(){
+  var imp=boqImport,existing={};
+  boqItems.forEach(function(it){existing[it.boq_ref||'BOQ']=true;});
+  var total=0;
+  var groups=imp.groups.map(function(g,gi){
+    var inc=g.items.filter(function(it){return it.include;}).length;total+=inc;
+    var clash=existing[g.name];
+    var rows=g.items.map(function(it,ii){
+      var bad=it.include&&!(Number(it.quantity)>0);
+      return '<tr style="border-top:1px solid var(--border-t)'+(it.include?'':';opacity:.55')+'">'
+        +'<td style="padding:5px 6px"><input type="checkbox" '+(it.include?'checked':'')+' onchange="setBoqImport('+gi+','+ii+',\'include\',this.checked)" style="accent-color:var(--accent)"></td>'
+        +'<td style="padding:5px 6px;color:var(--text-tertiary);white-space:nowrap">'+escHtml(it.item_no)+'</td>'
+        +'<td style="padding:5px 6px;min-width:220px"><textarea class="form-input" rows="2" style="font-size:12px;resize:vertical" oninput="setBoqImport('+gi+','+ii+',\'description\',this.value)">'+escHtml(it.description)+'</textarea>'
+        +(it.section?'<div style="font-size:10px;color:var(--text-tertiary);margin-top:2px">Section: '+escHtml(it.section)+'</div>':'')
+        +(it.noQty?'<div style="font-size:11px;color:#b45309;margin-top:2px">No quantity in the spreadsheet</div>':'')+'</td>'
+        +'<td style="padding:5px 6px"><input class="form-input" style="font-size:12px;min-width:110px" value="'+escHtml(it.remarks)+'" oninput="setBoqImport('+gi+','+ii+',\'remarks\',this.value)"></td>'
+        +'<td style="padding:5px 6px"><input class="form-input" type="number" step="any" min="0" style="font-size:12px;width:80px;text-align:right'+(bad?';border-color:var(--danger)':'')+'" value="'+escHtml(String(it.quantity))+'" oninput="setBoqImport('+gi+','+ii+',\'quantity\',this.value)"></td>'
+        +'<td style="padding:5px 6px"><input class="form-input" style="font-size:12px;width:70px" value="'+escHtml(it.unit)+'" oninput="setBoqImport('+gi+','+ii+',\'unit\',this.value)"></td>'
+        +'<td style="padding:5px 6px;color:var(--text-tertiary);font-size:11px;text-align:right">'+it.source_row+'</td>'
+        +'</tr>';
+    }).join('');
+    return '<div style="margin-bottom:14px;border:1px solid var(--border-t);border-radius:var(--radius-md);overflow:hidden">'
+      +'<div style="padding:9px 12px;background:var(--bg-secondary)">'
+      +'<label class="form-label" style="margin-bottom:4px">BOQ name</label>'
+      +'<input class="form-input" style="font-weight:600" value="'+escHtml(g.name)+'" oninput="setBoqImportName('+gi+',this.value)">'
+      +(clash?'<div style="font-size:11px;color:#b45309;margin-top:4px"><i class="ti ti-alert-triangle"></i> This project already has a BOQ with this name. Rename it if this is a different BOQ; if it is the same one, cancel instead of importing it twice.</div>':'')
+      +'<div style="font-size:11px;color:var(--text-secondary);margin-top:6px">'+inc+' of '+g.items.length+' line'+(g.items.length===1?'':'s')+' selected'
+      +' &middot; header on row '+g.headerRow
+      +(g.notes?' &middot; '+g.notes+' note row'+(g.notes===1?'':'s')+' skipped':'')+'</div>'
+      +(g.ignored.length?'<div style="font-size:11px;color:var(--text-tertiary);margin-top:2px"><i class="ti ti-eye-off"></i> Not imported: '+g.ignored.map(escHtml).join(', ')+'</div>':'')
+      +'</div>'
+      +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:var(--bg-primary)">'
+      +'<th></th><th style="padding:5px 6px;text-align:left">#</th><th style="padding:5px 6px;text-align:left">Description</th><th style="padding:5px 6px;text-align:left">Remarks</th>'
+      +'<th style="padding:5px 6px;text-align:right">Qty</th><th style="padding:5px 6px;text-align:left">Unit</th><th style="padding:5px 6px;text-align:right" title="Row in the spreadsheet">Row</th>'
+      +'</tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+  }).join('');
+  return '<div style="font-size:14px;font-weight:700;margin-bottom:2px"><i class="ti ti-file-spreadsheet"></i> Check the BOQ before saving</div>'
+    +'<div style="font-size:12px;color:var(--text-secondary);margin-bottom:12px">From <strong>'+escHtml(imp.fileName)+'</strong>. Only items and quantities are saved; prices in the spreadsheet are never read.</div>'
+    +groups
+    +'<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px">'
+    +'<button class="btn btn-sm" onclick="cancelBoqImport()">Cancel</button>'
+    +'<button class="btn btn-primary btn-sm" id="boq-save-btn" onclick="saveBoqImport()"><i class="ti ti-check"></i> Save '+total+' item'+(total===1?'':'s')+' to project</button>'
+    +'</div>';
+}
+
+/* Text edits update state without re-rendering, so typing never loses focus; only the
+   tick box, which changes counts and greying, redraws the preview. */
+function setBoqImport(gi,ii,k,v){
+  var it=boqImport&&boqImport.groups[gi]&&boqImport.groups[gi].items[ii];
+  if(!it) return;
+  if(k==='include'){it.include=!!v;renderProjectTab();return;}
+  it[k]=v;
+}
+function setBoqImportName(gi,v){if(boqImport&&boqImport.groups[gi]) boqImport.groups[gi].name=v;}
+function cancelBoqImport(){boqImport=null;renderProjectTab();}
+
+async function saveBoqImport(){
+  if(!boqImport||!currentLead) return;
+  var imp=boqImport,leadId=currentLead.id,payload=[],problems=[];
+  var names={};
+  boqItems.forEach(function(it){names[it.boq_ref||'BOQ']=true;});
+  for(var gi=0;gi<imp.groups.length;gi++){
+    var g=imp.groups[gi],name=boqText(g.name);
+    var picked=g.items.filter(function(it){return it.include;});
+    if(!picked.length) continue;
+    if(!name){problems.push('Every BOQ needs a name.');continue;}
+    if(names[name]&&!confirm('This project already has a BOQ called "'+name+'". Import these '+picked.length+' lines as well?')) return;
+    names[name]=true;
+    picked.forEach(function(it,i){
+      var q=Number(it.quantity),d=boqText(it.description);
+      if(!d) problems.push(name+', row '+it.source_row+': description is empty');
+      if(!(q>0)) problems.push(name+', row '+it.source_row+': enter a quantity or untick it');
+      payload.push({lead_id:leadId,boq_ref:name,sort_order:i,item_no:it.item_no||null,description:d,
+        remarks:boqText(it.remarks)||null,unit:boqText(it.unit)||null,quantity:q,
+        source_file:imp.fileName,source_row:it.source_row});
+    });
+  }
+  if(problems.length){toast(problems.slice(0,3).join(' &middot; ')+(problems.length>3?' &middot; and '+(problems.length-3)+' more':''),'error');return;}
+  if(!payload.length){toast('Nothing selected to import','error');return;}
+  var btn=document.getElementById('boq-save-btn');
+  if(btn){btn.disabled=true;btn.innerHTML='<i class="ti ti-loader"></i> Saving&hellip;';}
+  try{
+    /* One request with every line, so a BOQ lands complete or not at all. */
+    await sbWrite('boq_items',{method:'POST',body:JSON.stringify(payload)});
+    var refs=[];payload.forEach(function(p){if(refs.indexOf(p.boq_ref)<0) refs.push(p.boq_ref);});
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:leadId,action:'BOQ uploaded',
+      detail:payload.length+' item'+(payload.length===1?'':'s')+' from '+imp.fileName+' ('+refs.join(', ')+')'})});
+    boqImport=null;
+    toast('BOQ saved: '+payload.length+' item'+(payload.length===1?'':'s')+' &#10003;');
+    /* Keep the original spreadsheet with the project. Best effort: the BOQ is already
+       saved, so a Drive problem should not look like the import failed. */
+    if(currentLead&&currentLead.id===leadId&&currentLead.drive_folder_id){
+      try{
+        var b64=await fileToBase64(imp.file);
+        var d=await callDriveAPI('save_file',{folderId:currentLead.drive_folder_id,fileName:imp.fileName,fileBase64:b64,
+          mimeType:imp.file.type||'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',subfolder:'BOQ',leadId:leadId});
+        if(d&&d.success) await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:leadId,action:'File saved to Drive',detail:imp.fileName+' saved to Drive'})});
+        else toast('BOQ saved, but the spreadsheet could not be copied to Drive','error');
+      }catch(e){toast('BOQ saved, but the spreadsheet could not be copied to Drive','error');}
+    }
+    if(currentLead&&currentLead.id===leadId) renderProjectTab();
+  }catch(e){
+    if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-check"></i> Save to project';}
+    toast('Could not save the BOQ: '+e.message,'error');
+  }
+}
+
+/* A BOQ can be removed only while nothing has been quoted from it. Deleting items that
+   quote lines point at would silently unlink those lines from the project tracker. */
+async function removeBoqGroup(name){
+  if(!currentLead) return;
+  var ids=boqItems.filter(function(it){return (it.boq_ref||'BOQ')===name;}).map(function(it){return it.id;});
+  if(!ids.length) return;
+  try{
+    var lr=await sb('quote_line_items?boq_item_id=in.('+ids.join(',')+')&select=id&limit=1');
+    var used=await lr.json();
+    if(Array.isArray(used)&&used.length){toast('"'+name+'" has been quoted from, so it cannot be removed','error');return;}
+    if(!confirm('Remove the BOQ "'+name+'" ('+ids.length+' item'+(ids.length===1?'':'s')+') from this project?')) return;
+    await sbWrite('boq_items?lead_id=eq.'+currentLead.id+'&id=in.('+ids.join(',')+')',{method:'DELETE'});
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'BOQ removed',detail:name+' ('+ids.length+' items)'})});
+    toast('BOQ removed');
+    renderProjectTab();
+  }catch(e){toast('Could not remove the BOQ: '+e.message,'error');}
 }
 
 /* ── CONTAINER PACKING LIST ───────────────────────────────────────────────

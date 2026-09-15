@@ -802,6 +802,24 @@ async function generateQBInvoice(){
     await sb('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({status:'invoiced',qb_invoice_id:data.invoice_id,updated_at:new Date().toISOString()})});
     await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({quote_status:'invoiced',updated_at:new Date().toISOString()})});
     await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'QB Invoice created',detail:'Invoice '+data.invoice_number+' created (A$'+data.total+')'+(estimateId?' — linked to estimate '+(currentQuote.qb_estimate_number||estimateId):' — not linked to an estimate')})});
+    /* A project job is invoiced many times over its life, so its reports need every
+       invoice's own date and amount. Staged invoices already record one; record the
+       full invoice the same way. Before applyLeadInvoiceTotal, which then counts this
+       quote through the record instead of its total: the same figure either way.
+       Never fatal: the invoice already exists in QuickBooks. */
+    if(isProjectLead()){
+      try{
+        var fullRow={quote_id:currentQuote.id,lead_id:currentLead.id,seq:nextPartialSeq(),label:'Full invoice',basis:'full',pct:null,
+          amount:round2(Number(data.total)||Number(currentQuote.total)||0),qb_invoice_id:String(data.invoice_id),
+          qb_invoice_number:data.invoice_number||currentQuote.quote_number,invoice_date:todayLocalISO(),
+          lines:(currentLineItems||[]).map(function(it,idx){var x={sort_order:lineKey(it,idx),item_name:it.item_name||'',
+            quantity:Number(it.quantity)||0,rate:Number(it.rate)||0,amount:Number(it.amount)||0};
+            if(it.boq_item_id) x.boq_item_id=it.boq_item_id;return x;})};
+        var fr=await sbWrite('quote_invoices',{method:'POST',body:JSON.stringify(fullRow),prefer:'return=representation'});
+        var fs=await fr.json();
+        currentQuoteInvoices.push(Array.isArray(fs)&&fs.length?fs[0]:fullRow);
+      }catch(fe){console.warn('Full invoice record not saved:',fe);}
+    }
 
     /* Record the money on the lead. Until now this step only wrote quote_status, so
        every report — which sums leads.invoice_total — missed the invoice entirely:
@@ -812,6 +830,8 @@ async function generateQBInvoice(){
        Wrapped so it can never fail the surrounding flow — by this point the invoice
        already exists in QuickBooks and must not be reported as failed. */
     await applyLeadInvoiceTotal();
+    /* Keep the per-invoice report data current for a BOQ project. */
+    if(ledgerLeads[currentLead.id]) loadInvoiceLedger();
     currentQuote.status='invoiced';currentQuote.qb_invoice_id=data.invoice_id;
     currentLead.quote_status='invoiced';
     leads.forEach(function(l,i){if(l.id===currentLead.id)leads[i].quote_status='invoiced';});
@@ -1159,6 +1179,7 @@ async function loadLeads(){
     leads=await r.json();
     setStatus('sbDot','sbLabel',true,'DB \u2713');
     await loadQuotesIndex();
+    await loadInvoiceLedger();
     populateClientFilter();renderBoard();
   }catch(e){setStatus('sbDot','sbLabel',false,'DB error');toast('Cannot connect to database','error');leads=[];renderBoard();}
 }
@@ -1167,9 +1188,84 @@ async function loadLeads(){
    denormalised onto leads: a copied status would need keeping in sync on every quote
    write, and the whole table is a couple of dozen rows. A failure here leaves the
    index empty and cards fall back to the single leads.quote_status badge. */
+/* ── PER-INVOICE REPORTING FOR BOQ PROJECTS ──────────────────────────────
+   Reports normally treat a lead as one invoice: leads.invoice_total, dated by
+   leads.invoice_date, paid or not by leads.invoice_paid. That is right for a
+   wholesale order and wrong for a job invoiced over years, which would book all its
+   revenue in the month of its first invoice and read as unpaid until the last dollar
+   arrives. So a project with a BOQ reports each of its invoices separately: its own
+   date, amount and QuickBooks balance.
+   Only leads with a BOQ switch. Every other lead, including the older project leads
+   that were set up one stage per lead, reports exactly as before.
+   ledgerLeads: lead_id -> true. ledgerInvoices: lead_id -> quote_invoices rows. */
+var ledgerLeads={},ledgerInvoices={};
+async function loadInvoiceLedger(){
+  try{
+    /* Every BOQ group has a sort_order 0 line, so this returns one row per BOQ rather
+       than every item on it. */
+    var r=await sb('boq_items?select=lead_id&sort_order=eq.0');
+    var rows=await r.json(),set={};
+    (Array.isArray(rows)?rows:[]).forEach(function(x){if(x.lead_id) set[x.lead_id]=true;});
+    var ids=Object.keys(set),by={};
+    if(ids.length){
+      var ir=await sb('quote_invoices?lead_id=in.('+ids.join(',')+')&select=id,quote_id,lead_id,seq,label,basis,amount,qb_invoice_id,qb_invoice_number,invoice_date,qb_balance,created_at&order=invoice_date.asc');
+      var inv=await ir.json();
+      (Array.isArray(inv)?inv:[]).forEach(function(x){(by[x.lead_id]=by[x.lead_id]||[]).push(x);});
+    }
+    ledgerLeads=set;ledgerInvoices=by;
+  }catch(e){
+    /* On failure the project falls back to lead-level reporting, which undercounts
+       nothing: leads.invoice_total still holds everything it has invoiced. */
+    ledgerLeads={};ledgerInvoices={};
+  }
+}
+
+function invoicePaidState(amount,balance){
+  if(balance==null||balance==='') return 'unknown';
+  var b=Number(balance)||0;
+  if(b<=0.005) return 'paid';
+  return b<(Number(amount)||0)-0.005?'part':'pending';
+}
+
+/* One entry per thing the reports count. Wholesale and older leads give one entry per
+   lead, built exactly as the reports always read them. BOQ projects give one entry per
+   invoice. A project quote invoiced before invoices were recorded individually has no
+   row, so it is added from the quote, dated like the lead, rather than dropped. */
+function reportEntries(){
+  var out=[];
+  leads.forEach(function(l){
+    var qs=quotesByLead[l.id]||[];
+    if(!ledgerLeads[l.id]){
+      if(!(l.invoice_total>0||l.phase===5)) return;
+      var unpaid=l.invoice_paid===false;
+      out.push({lead:l,ledger:false,date:l.invoice_date?new Date(l.invoice_date):new Date(l.created_at),
+        amount:Number(l.invoice_total)||0,paid:!unpaid,state:unpaid?'pending':'paid',label:l.project||'',
+        outstanding:(unpaid&&(Number(l.invoice_total)||0)>0&&qs.some(function(q){return !!q.qb_invoice_id;}))?(Number(l.invoice_total)||0):0});
+      return;
+    }
+    var rows=ledgerInvoices[l.id]||[],hasRow={};
+    rows.forEach(function(x){
+      hasRow[x.quote_id]=true;
+      var amt=Number(x.amount)||0,st=invoicePaidState(amt,x.qb_balance);
+      out.push({lead:l,ledger:true,invoice:x,date:x.invoice_date?new Date(x.invoice_date):new Date(x.created_at),
+        amount:amt,paid:st==='paid',state:st==='unknown'?'pending':st,
+        label:(x.qb_invoice_number||'')+(x.label?' · '+x.label:''),
+        outstanding:(st!=='paid'&&x.qb_invoice_id)?(st==='part'?Number(x.qb_balance)||0:amt):0});
+    });
+    qs.forEach(function(q){
+      if(q.status!=='invoiced'||!q.qb_invoice_id||hasRow[q.id]) return;
+      var unpaid=l.invoice_paid===false;
+      out.push({lead:l,ledger:true,date:l.invoice_date?new Date(l.invoice_date):new Date(l.created_at),
+        amount:Number(q.total)||0,paid:!unpaid,state:unpaid?'pending':'paid',label:(q.quote_number||'')+' · invoiced before per-invoice records',
+        outstanding:unpaid?(Number(q.total)||0):0});
+    });
+  });
+  return out;
+}
+
 async function loadQuotesIndex(){
   try{
-    var r=await sb('quotes?select=lead_id,quote_type,status,total,qb_invoice_id');
+    var r=await sb('quotes?select=id,lead_id,quote_number,quote_type,status,total,qb_invoice_id');
     var rows=await r.json();
     var map={};
     (Array.isArray(rows)?rows:[]).forEach(function(q){
@@ -1236,7 +1332,7 @@ function syncQuoteIndex(){
   quotesByLead[currentLead.id]=currentQuotes.map(function(q){
     /* qb_invoice_id must be carried: the Outstanding card keys on it, so dropping it
        here would make the open lead vanish from that total while its detail is open. */
-    return {lead_id:currentLead.id,quote_type:q.quote_type||'goods',status:q.status,total:q.total,qb_invoice_id:q.qb_invoice_id||null};
+    return {id:q.id,lead_id:currentLead.id,quote_number:q.quote_number,quote_type:q.quote_type||'goods',status:q.status,total:q.total,qb_invoice_id:q.qb_invoice_id||null};
   });
 }
 
@@ -2773,7 +2869,8 @@ async function loadBoqData(){
 }
 
 async function loadBoqProgress(leadId){
-  var prog={quoted:{},drafted:{},ordered:{},invoiced:{},partBilled:{},shipped:{}};
+  var prog={quoted:{},drafted:{},ordered:{},invoiced:{},partBilled:{},shipped:{},paid:{},partPaid:{},
+    money:{quoted:0,invoiced:0,paid:0,outstanding:0,unchecked:0,lastChecked:null,invoices:0}};
   var add=function(m,k,v){m[k]=round2((m[k]||0)+v);};
   /* Shipped comes from shipments on the project, which record BOQ items directly. */
   var sr=await sb('lead_shipments?lead_id=eq.'+leadId+'&select=lines');
@@ -2784,13 +2881,34 @@ async function loadBoqProgress(leadId){
     if(!Array.isArray(ls)) return;
     ls.forEach(function(x){if(x&&x.boq_item_id) add(prog.shipped,x.boq_item_id,Number(x.quantity)||0);});
   });
-  var qr=await sb('quotes?lead_id=eq.'+leadId+'&select=id,status,total');
+  var qr=await sb('quotes?lead_id=eq.'+leadId+'&select=id,status,total,qb_invoice_id');
   var quotes=await qr.json(); if(!Array.isArray(quotes)||!quotes.length) return prog;
+  var ir=await sb('quote_invoices?lead_id=eq.'+leadId+'&select=id,quote_id,basis,amount,lines,qb_invoice_id,qb_balance,qb_balance_checked_at');
+  var stages=await ir.json(); if(!Array.isArray(stages)) stages=[];
+  var isPaid=function(s){return s.qb_balance!=null&&(Number(s.qb_balance)||0)<=0.005;};
+
+  /* Dollar totals for the whole project, including work quoted before the BOQ was
+     linked. Paid is only what QuickBooks has confirmed through a refresh; an invoice
+     never checked counts as outstanding, never as paid. */
+  var m=prog.money,staged={};
+  stages.forEach(function(s){
+    staged[s.quote_id]=true;
+    var amt=Number(s.amount)||0;
+    m.invoiced+=amt;m.invoices++;
+    if(s.qb_balance!=null){m.paid+=Math.max(0,amt-(Number(s.qb_balance)||0));}
+    else if(s.qb_invoice_id) m.unchecked++;
+    if(s.qb_balance_checked_at&&(!m.lastChecked||s.qb_balance_checked_at>m.lastChecked)) m.lastChecked=s.qb_balance_checked_at;
+  });
+  quotes.forEach(function(q){
+    if(q.status==='sent'||q.status==='approved'||q.status==='invoiced') m.quoted+=Number(q.total)||0;
+    if(q.status==='invoiced'&&!staged[q.id]){m.invoiced+=Number(q.total)||0;m.invoices++;if(q.qb_invoice_id) m.unchecked++;}
+  });
+  ['quoted','invoiced','paid'].forEach(function(k){m[k]=round2(m[k]);});
+  m.outstanding=round2(Math.max(0,m.invoiced-m.paid));
+
   var ids=quotes.map(function(q){return q.id;});
   var lr=await sb('quote_line_items?quote_id=in.('+ids.join(',')+')&boq_item_id=not.is.null&select=quote_id,boq_item_id,quantity,sort_order');
   var lines=await lr.json(); if(!Array.isArray(lines)||!lines.length) return prog;
-  var ir=await sb('quote_invoices?lead_id=eq.'+leadId+'&select=quote_id,basis,amount,lines');
-  var stages=await ir.json(); if(!Array.isArray(stages)) stages=[];
   quotes.forEach(function(q){
     var ql=lines.filter(function(l){return l.quote_id===q.id;});
     if(!ql.length) return;
@@ -2800,8 +2918,11 @@ async function loadBoqProgress(leadId){
     if(q.status==='approved'||q.status==='invoiced') ql.forEach(function(l){add(prog.ordered,l.boq_item_id,Number(l.quantity)||0);});
     var qs=stages.filter(function(s){return s.quote_id===q.id;});
     var billed=qs.reduce(function(s,x){return s+(Number(x.amount)||0);},0);
-    if((q.status==='invoiced'&&!qs.length)||(qs.length&&billed>=(Number(q.total)||0)-0.005)){
-      ql.forEach(function(l){add(prog.invoiced,l.boq_item_id,Number(l.quantity)||0);});
+    var fullyBilled=(q.status==='invoiced'&&!qs.length)||(qs.length&&billed>=(Number(q.total)||0)-0.005);
+    if(fullyBilled) ql.forEach(function(l){add(prog.invoiced,l.boq_item_id,Number(l.quantity)||0);});
+    /* Paid in full once every invoice on a fully billed quote has a zero balance. */
+    if(fullyBilled&&qs.length&&qs.every(isPaid)){
+      ql.forEach(function(l){add(prog.paid,l.boq_item_id,Number(l.quantity)||0);});
       return;
     }
     var bySort={};ql.forEach(function(l){bySort[l.sort_order]=l.boq_item_id;});
@@ -2809,15 +2930,64 @@ async function loadBoqProgress(leadId){
       var ls=s.lines;
       if(typeof ls==='string'){try{ls=JSON.parse(ls);}catch(e){ls=null;}}
       if(!Array.isArray(ls)) return;
+      var byUnits=s.basis==='items'||s.basis==='full';
       ls.forEach(function(x){
         var id=x&&(x.boq_item_id||bySort[x.sort_order]);
         if(!id) return;
-        if(s.basis==='items') add(prog.invoiced,id,Number(x.quantity)||0);
-        else prog.partBilled[id]=true;
+        if(!fullyBilled){if(byUnits) add(prog.invoiced,id,Number(x.quantity)||0); else prog.partBilled[id]=true;}
+        if(isPaid(s)){if(byUnits) add(prog.paid,id,Number(x.quantity)||0); else prog.partPaid[id]=true;}
       });
     });
   });
   return prog;
+}
+
+/* Project totals in dollars, with the refresh that reads each invoice's balance. */
+function projectMoneyHtml(m){
+  if(!m) return '';
+  var box=function(label,val,col,sub){
+    return '<div style="flex:1;min-width:120px;padding:9px 12px;background:var(--bg-secondary);border:1px solid var(--border-t);border-radius:var(--radius-md)">'
+      +'<div style="font-size:11px;color:var(--text-secondary)">'+label+'</div>'
+      +'<div style="font-size:15px;font-weight:700;color:'+col+'">'+fmtAud(val)+'</div>'
+      +(sub?'<div style="font-size:10px;color:var(--text-tertiary)">'+sub+'</div>':'')+'</div>';
+  };
+  var checked=m.lastChecked?'Checked '+new Date(m.lastChecked).toLocaleString('en-AU',{day:'numeric',month:'short',hour:'numeric',minute:'2-digit'}):'Not checked yet';
+  return '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px">'
+    +box('Quoted',m.quoted,'var(--text-primary)','sent, approved or invoiced')
+    +box('Invoiced',m.invoiced,'var(--accent-dark)',m.invoices+' invoice'+(m.invoices===1?'':'s'))
+    +box('Paid',m.paid,'var(--green)',checked)
+    +box('Outstanding',m.outstanding,'#b45309',m.unchecked?m.unchecked+' not checked with QuickBooks':'')
+    +'</div>'
+    +'<div style="display:flex;justify-content:flex-end;margin-bottom:14px">'
+    +(m.invoices?'<button class="btn btn-sm" id="proj-pay-btn" onclick="refreshProjectPayments()"><i class="ti ti-refresh"></i> Refresh from QuickBooks</button>':'')
+    +'</div>';
+}
+
+/* Reads the QuickBooks balance of each invoice on this project and saves it. An
+   explicit button, like the Reports sync: these figures feed revenue reporting. An
+   invoice QuickBooks does not answer for is left as it was. */
+async function refreshProjectPayments(){
+  if(!currentLead) return;
+  var leadId=currentLead.id,btn=document.getElementById('proj-pay-btn');
+  if(btn){btn.disabled=true;btn.innerHTML='<i class="ti ti-loader"></i> Reading QuickBooks&hellip;';}
+  try{
+    var r=await sb('quote_invoices?lead_id=eq.'+leadId+'&qb_invoice_id=not.is.null&select=id,qb_invoice_id,qb_invoice_number,qb_balance');
+    var rows=await r.json(); if(!Array.isArray(rows)) rows=[];
+    var saved=0,failed=0,stamp=new Date().toISOString();
+    for(var i=0;i<rows.length;i++){
+      var d=await callQB('get_transaction',{query:'invoice',clientId:String(rows[i].qb_invoice_id)});
+      if(!d||!d.success||!d.txn||!d.txn.Invoice){failed++;continue;}
+      await sbWrite('quote_invoices?id=eq.'+rows[i].id,{method:'PATCH',body:JSON.stringify({qb_balance:Number(d.txn.Invoice.Balance)||0,qb_balance_checked_at:stamp})});
+      saved++;
+    }
+    _qbPayCache={};
+    await loadInvoiceLedger();
+    if(currentLead&&currentLead.id===leadId) await renderProjectTab();
+    toast(rows.length?(saved+' invoice'+(saved===1?'':'s')+' checked with QuickBooks &#10003;'+(failed?' ('+failed+' could not be read)':'')):'No invoices on this project to check',failed?'error':undefined);
+  }catch(e){
+    if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-refresh"></i> Refresh from QuickBooks';}
+    toast('Could not check QuickBooks: '+e.message,'error');
+  }
 }
 
 function boqGroups(items){
@@ -2846,6 +3016,7 @@ function boqTrackerHtml(){
   }
   var groups=boqGroups(boqItems);
   var cell='padding:6px 8px;text-align:right;white-space:nowrap';
+  head+=projectMoneyHtml(p.money);
   var body=groups.map(function(g){
     var section=null;
     var rows=g.items.map(function(it){
@@ -2863,7 +3034,8 @@ function boqTrackerHtml(){
         +(p.drafted&&p.drafted[it.id]?'<div style="font-size:10px;color:var(--text-tertiary)">+'+fmtQty(p.drafted[it.id])+' in draft</div>':'')+'</td>'
         +'<td style="'+cell+'">'+(inv?fmtQty(inv):(p.partBilled[it.id]?'<span style="color:#b45309;font-size:11px" title="Billed by a percentage or deposit invoice, which does not bill specific units">part</span>':'<span style="color:var(--text-tertiary)">0</span>'))+'</td>'
         +'<td style="'+cell+'">'+(p.shipped&&p.shipped[it.id]?fmtQty(p.shipped[it.id]):'<span style="color:var(--text-tertiary)">0</span>')+'</td>'
-        +'<td style="'+cell+';color:var(--text-tertiary)">&#8212;</td>'
+        +'<td style="'+cell+'">'+(p.paid&&p.paid[it.id]?'<span style="color:var(--green);font-weight:600">'+fmtQty(p.paid[it.id])+'</span>'
+          :(p.partPaid&&p.partPaid[it.id]?'<span style="color:#b45309;font-size:11px" title="Paid through a percentage or deposit invoice, which does not pay for specific units">part</span>':'<span style="color:var(--text-tertiary)">0</span>'))+'</td>'
         +'<td style="'+cell+';font-weight:600;color:'+leftCol+'">'+(left<=0.0001&&left>=-0.0001?'<i class="ti ti-check"></i>':fmtQty(left))+'</td>'
         +'</tr>';
     }).join('');
@@ -2878,7 +3050,7 @@ function boqTrackerHtml(){
       +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'
       +'<thead><tr style="background:var(--bg-primary)">'
       +'<th style="padding:6px 8px;text-align:left">#</th><th style="padding:6px 8px;text-align:left">Item</th><th style="padding:6px 8px;text-align:left">Unit</th>'
-      +'<th style="'+cell+'">BOQ</th><th style="'+cell+'">Quoted</th><th style="'+cell+'">Invoiced</th><th style="'+cell+'" title="Recorded on the Freight tab">Shipped</th><th style="'+cell+'" title="Payment tracking against the BOQ is a later phase">Paid</th><th style="'+cell+'">Left to quote</th>'
+      +'<th style="'+cell+'">BOQ</th><th style="'+cell+'">Quoted</th><th style="'+cell+'">Invoiced</th><th style="'+cell+'" title="Recorded on the Freight tab">Shipped</th><th style="'+cell+'" title="Units on invoices QuickBooks shows as paid in full">Paid</th><th style="'+cell+'">Left to quote</th>'
       +'</tr></thead><tbody>'+rows+'</tbody></table></div></div>';
   }).join('');
   return head+body;
@@ -2996,6 +3168,8 @@ async function saveBoqImport(){
     await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:leadId,action:'BOQ uploaded',
       detail:payload.length+' item'+(payload.length===1?'':'s')+' from '+imp.fileName+' ('+refs.join(', ')+')'})});
     boqImport=null;
+    /* The project now reports per invoice. */
+    loadInvoiceLedger();
     toast('BOQ saved: '+payload.length+' item'+(payload.length===1?'':'s')+' &#10003;');
     /* Keep the original spreadsheet with the project. Best effort: the BOQ is already
        saved, so a Drive problem should not look like the import failed. */
@@ -3964,7 +4138,7 @@ function lineKey(it,i){return it&&it.sort_order!=null?it.sort_order:i;}
 function invoicedQtyByLine(){
   var m={};
   (currentQuoteInvoices||[]).forEach(function(r){
-    if(r.basis!=='items'||!r.lines) return;
+    if((r.basis!=='items'&&r.basis!=='full')||!r.lines) return;
     var ls=r.lines;
     if(typeof ls==='string'){try{ls=JSON.parse(ls);}catch(e){return;}}
     if(!Array.isArray(ls)) return;
@@ -4196,6 +4370,8 @@ async function createPartialInvoice(){
       currentQuote.qb_invoice_id=String(data.invoice_id);
     }
     await applyLeadInvoiceTotal();
+    /* Keep the per-invoice report data current for a BOQ project. */
+    if(ledgerLeads[currentLead.id]) loadInvoiceLedger();
     partialForm=null;
     _qbPayCache={};
     renderBoard();renderQuoteReview(document.getElementById('dtab-quote'));
@@ -4356,7 +4532,9 @@ function renderWholesaleCard(title,filterFn,invoiced,fmtMoney){
     {l:'Pt Cruz',fn:function(l){return l.lead_type!=='project'&&l.invoice_total>0&&(l.name||'').toLowerCase().includes('point cruz');},c:'#0369a1'},
     {l:'Ranadi',fn:function(l){return l.lead_type!=='project'&&l.invoice_total>0&&(l.name||'').toLowerCase().includes('ranadi');},c:'#7c3aed'}
   ];
-  var totals=shops.map(function(s){return {l:s.l,c:s.c,v:invoiced.filter(function(l){return s.fn(l)&&filterFn(l);}).reduce(function(sum,l){return sum+(l.invoice_total||0);},0)};});
+  /* invoiced is report entries; the shop test reads the entry's lead. Shops are
+     wholesale-only, so a BOQ project's per-invoice entries never land here. */
+  var totals=shops.map(function(s){return {l:s.l,c:s.c,v:invoiced.filter(function(e){return s.fn(e.lead)&&filterFn(e);}).reduce(function(sum,e){return sum+e.amount;},0)};});
   var max=Math.max.apply(null,totals.map(function(t){return t.v;}).concat([1]));
   return '<div class="metric"><div class="metric-label" style="margin-bottom:10px">'+title+'</div>'
     +'<div style="display:flex;gap:10px;align-items:flex-end;height:80px">'
@@ -4449,9 +4627,13 @@ function renderReports(){
   function invDate(l){return l.invoice_date?new Date(l.invoice_date):new Date(l.created_at);}
   function fmtMoney(n){return 'A$'+Number(n||0).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2});}
   function sameMonth(d,m,y){return d.getFullYear()===y&&d.getMonth()===m;}
-  var invoiced=leads.filter(function(l){return l.invoice_total>0||l.phase===5;});
-  var thisMonthLeads=invoiced.filter(function(l){return sameMonth(invDate(l),thisMonth,thisYear);});
-  var paidThisMonth=thisMonthLeads.filter(function(l){return l.invoice_paid!==false;}).reduce(function(s,l){return s+(l.invoice_total||0);},0);
+  /* Every figure below is built from reportEntries(): one entry per lead as before, or
+     one per invoice for a BOQ project. e.date, e.amount, e.paid and e.outstanding are
+     what invDate(l), l.invoice_total, invoice_paid and the Outstanding rule used to
+     give for a whole lead. */
+  var invoiced=reportEntries();
+  var thisMonthLeads=invoiced.filter(function(e){return sameMonth(e.date,thisMonth,thisYear);});
+  var paidThisMonth=thisMonthLeads.filter(function(e){return e.paid;}).reduce(function(s,e){return s+e.amount;},0);
   /* Outstanding is a running balance, not a monthly flow. Scoping it to the current
      calendar month made it read A$0 for most of every month — on 2026-09-03 it showed
      nothing while A$1,124,569.17 was unpaid, because every open invoice was dated
@@ -4463,19 +4645,17 @@ function renderReports(){
      in some cases — 28 such leads carried A$888,785.35 that nobody could vouch for.
      Everything is raised through the CRM from now on, so new invoices qualify
      automatically and this stays correct without maintenance. */
-  var outstandingLeads=leads.filter(function(l){
-    if(l.invoice_paid!==false||!((Number(l.invoice_total)||0)>0)) return false;
-    var qs=quotesByLead[l.id];
-    return !!(qs&&qs.some(function(q){return !!q.qb_invoice_id;}));
-  });
-  var outstandingTotal=outstandingLeads.reduce(function(s,l){return s+(Number(l.invoice_total)||0);},0);
-  var wholesaleMonth=thisMonthLeads.filter(function(l){return l.lead_type!=='project';}).reduce(function(s,l){return s+(l.invoice_total||0);},0);
-  var projectMonth=thisMonthLeads.filter(function(l){return l.lead_type==='project';}).reduce(function(s,l){return s+(l.invoice_total||0);},0);
+  /* A BOQ project's invoices count one by one, at their QuickBooks balance when a
+     refresh has read one, otherwise at their full amount. */
+  var outstandingLeads=invoiced.filter(function(e){return e.outstanding>0;});
+  var outstandingTotal=outstandingLeads.reduce(function(s,e){return s+e.outstanding;},0);
+  var wholesaleMonth=thisMonthLeads.filter(function(e){return e.lead.lead_type!=='project';}).reduce(function(s,e){return s+e.amount;},0);
+  var projectMonth=thisMonthLeads.filter(function(e){return e.lead.lead_type==='project';}).reduce(function(s,e){return s+e.amount;},0);
   var monthlyTarget=parseFloat(localStorage.getItem('monthly_target')||'100000');
   var targetPct=Math.min(Math.round((paidThisMonth/monthlyTarget)*100),100);
   var monthName=now.toLocaleString('default',{month:'long'});
   var prevYears=[thisYear-1,thisYear-2,thisYear-3].map(function(yr){
-    return {year:yr,total:invoiced.filter(function(l){return sameMonth(invDate(l),thisMonth,yr);}).reduce(function(s,l){return s+(l.invoice_total||0);},0)};
+    return {year:yr,total:invoiced.filter(function(e){return sameMonth(e.date,thisMonth,yr);}).reduce(function(s,e){return s+e.amount;},0)};
   });
   var el=document.getElementById('view-reports');
   if(!el) return;
@@ -4498,13 +4678,13 @@ function renderReports(){
     +'</div>'
     +'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:16px">'
     +renderWvsPCard('W vs P &mdash; This Month',wholesaleMonth,projectMonth)
-    +(function(){var qStart=new Date(now.getFullYear(),Math.floor(now.getMonth()/3)*3,1);var wQ=invoiced.filter(function(l){return invDate(l)>=qStart&&l.lead_type!=='project';}).reduce(function(s,l){return s+(l.invoice_total||0);},0);var pQ=invoiced.filter(function(l){return invDate(l)>=qStart&&l.lead_type==='project';}).reduce(function(s,l){return s+(l.invoice_total||0);},0);return renderWvsPCard('W vs P &mdash; This Quarter',wQ,pQ);})()
-    +(function(){var fyStart=new Date(now.getMonth()>=6?now.getFullYear():now.getFullYear()-1,6,1);var wY=invoiced.filter(function(l){return invDate(l)>=fyStart&&l.lead_type!=='project';}).reduce(function(s,l){return s+(l.invoice_total||0);},0);var pY=invoiced.filter(function(l){return invDate(l)>=fyStart&&l.lead_type==='project';}).reduce(function(s,l){return s+(l.invoice_total||0);},0);return renderWvsPCard('W vs P &mdash; FY YTD (Jul-Jun)',wY,pY);})()
+    +(function(){var qStart=new Date(now.getFullYear(),Math.floor(now.getMonth()/3)*3,1);var wQ=invoiced.filter(function(e){return e.date>=qStart&&e.lead.lead_type!=='project';}).reduce(function(s,e){return s+e.amount;},0);var pQ=invoiced.filter(function(e){return e.date>=qStart&&e.lead.lead_type==='project';}).reduce(function(s,e){return s+e.amount;},0);return renderWvsPCard('W vs P &mdash; This Quarter',wQ,pQ);})()
+    +(function(){var fyStart=new Date(now.getMonth()>=6?now.getFullYear():now.getFullYear()-1,6,1);var wY=invoiced.filter(function(e){return e.date>=fyStart&&e.lead.lead_type!=='project';}).reduce(function(s,e){return s+e.amount;},0);var pY=invoiced.filter(function(e){return e.date>=fyStart&&e.lead.lead_type==='project';}).reduce(function(s,e){return s+e.amount;},0);return renderWvsPCard('W vs P &mdash; FY YTD (Jul-Jun)',wY,pY);})()
     +'</div>'
     +'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:20px">'
-    +renderWholesaleCard('Wholesale &mdash; This Month',function(l){return sameMonth(invDate(l),thisMonth,thisYear);},invoiced,fmtMoney)
-    +(function(){var qStart=new Date(now.getFullYear(),Math.floor(now.getMonth()/3)*3,1);return renderWholesaleCard('Wholesale &mdash; This Quarter',function(l){return invDate(l)>=qStart;},invoiced,fmtMoney);})()
-    +(function(){var fyStart=new Date(now.getMonth()>=6?now.getFullYear():now.getFullYear()-1,6,1);return renderWholesaleCard('Wholesale &mdash; FY YTD (Jul-Jun)',function(l){return invDate(l)>=fyStart;},invoiced,fmtMoney);})()
+    +renderWholesaleCard('Wholesale &mdash; This Month',function(e){return sameMonth(e.date,thisMonth,thisYear);},invoiced,fmtMoney)
+    +(function(){var qStart=new Date(now.getFullYear(),Math.floor(now.getMonth()/3)*3,1);return renderWholesaleCard('Wholesale &mdash; This Quarter',function(e){return e.date>=qStart;},invoiced,fmtMoney);})()
+    +(function(){var fyStart=new Date(now.getMonth()>=6?now.getFullYear():now.getFullYear()-1,6,1);return renderWholesaleCard('Wholesale &mdash; FY YTD (Jul-Jun)',function(e){return e.date>=fyStart;},invoiced,fmtMoney);})()
     +'</div>'
     +(function(){
       var fo=leads.filter(function(l){return l.freight_only===true;});
@@ -4568,33 +4748,38 @@ function renderReportTable(){
   var fromF=document.getElementById('rpt-from')&&document.getElementById('rpt-from').value||'';
   var toF=document.getElementById('rpt-to')&&document.getElementById('rpt-to').value||'';
   var paidF=document.getElementById('rpt-paid')&&document.getElementById('rpt-paid').value||'';
-  var rows=leads.filter(function(l){
-    if(l.invoice_total<=0&&l.phase!==5) return false;
+  /* Rows are report entries: one per lead, or one per invoice on a BOQ project. */
+  var rows=reportEntries().filter(function(e){
+    var l=e.lead;
     if(clientF&&!(l.name||'').toLowerCase().includes(clientF)&&!(l.company||'').toLowerCase().includes(clientF)) return false;
-    if(projectF&&!(l.project||'').toLowerCase().includes(projectF)) return false;
+    if(projectF&&!(l.project||'').toLowerCase().includes(projectF)&&!(e.ledger&&(e.label||'').toLowerCase().includes(projectF))) return false;
     if(typeF&&(l.lead_type||'wholesale')!==typeF) return false;
-    var d=invDate(l);
+    var d=e.date;
     if(fromF&&d<new Date(fromF)) return false;
     if(toF&&d>new Date(toF)) return false;
-    if(paidF==='paid'&&l.invoice_paid===false) return false;
-    if(paidF==='pending'&&l.invoice_paid!==false) return false;
+    if(paidF==='paid'&&!e.paid) return false;
+    if(paidF==='pending'&&e.paid) return false;
     return true;
-  }).sort(function(a,b){return invDate(b)-invDate(a);});
-  var total=rows.reduce(function(s,l){return s+(l.invoice_total||0);},0);
+  }).sort(function(a,b){return b.date-a.date;});
+  var total=rows.reduce(function(s,e){return s+e.amount;},0);
   var summaryEl=document.getElementById('rpt-summary');
   if(summaryEl) summaryEl.innerHTML='<div style="font-size:12px;color:var(--text-secondary);padding:6px 10px;background:var(--bg-secondary);border-radius:6px;border:1px solid var(--border-t)">'+rows.length+' result(s) &nbsp;|&nbsp; Total: <strong>'+fmtMoney(total)+'</strong></div>';
   var tbody=document.getElementById('rpt-tbody');
   if(!tbody) return;
-  tbody.innerHTML=rows.map(function(l){
-    var d=invDate(l).toLocaleDateString('en-AU');
+  tbody.innerHTML=rows.map(function(e){
+    var l=e.lead;
+    var d=e.date.toLocaleDateString('en-AU');
     var type=l.lead_type==='project'?'<span style="font-size:11px;padding:1px 6px;border-radius:4px;background:rgba(124,58,237,0.1);color:var(--purple)">Project</span>':'<span style="font-size:11px;padding:1px 6px;border-radius:4px;background:rgba(180,83,9,0.1);color:#b45309">Wholesale</span>';
-    var status=l.invoice_paid===false?'<span style="font-size:11px;padding:1px 6px;border-radius:4px;background:#FAEEDA;color:#b45309">Pending</span>':'<span style="font-size:11px;padding:1px 6px;border-radius:4px;background:#EAF3DE;color:var(--green)">Paid</span>';
+    var status=e.state==='part'
+      ?'<span style="font-size:11px;padding:1px 6px;border-radius:4px;background:#FAEEDA;color:#b45309" title="'+fmtMoney(e.outstanding)+' still owed">Part paid</span>'
+      :(!e.paid?'<span style="font-size:11px;padding:1px 6px;border-radius:4px;background:#FAEEDA;color:#b45309">Pending</span>':'<span style="font-size:11px;padding:1px 6px;border-radius:4px;background:#EAF3DE;color:var(--green)">Paid</span>');
     return '<tr style="border-bottom:1px solid var(--border-t);cursor:pointer" onclick="openDetail(this.dataset.id)" data-id="'+l.id+'">'
       +'<td style="padding:8px 12px;white-space:nowrap">'+d+'</td>'
       +'<td style="padding:8px 12px;font-weight:600">'+escHtml(l.name||'')+'</td>'
-      +'<td style="padding:8px 12px;color:var(--text-secondary)">'+escHtml(l.project||'')+'</td>'
+      +'<td style="padding:8px 12px;color:var(--text-secondary)">'+escHtml(l.project||'')
+      +(e.ledger&&e.label?'<div style="font-size:11px;color:var(--text-tertiary)">'+escHtml(e.label)+'</div>':'')+'</td>'
       +'<td style="padding:8px 12px">'+type+'</td>'
-      +'<td style="padding:8px 12px;text-align:right;font-weight:600">'+fmtMoney(l.invoice_total||0)+'</td>'
+      +'<td style="padding:8px 12px;text-align:right;font-weight:600">'+fmtMoney(e.amount)+'</td>'
       +'<td style="padding:8px 12px;text-align:center">'+status+'</td>'
       +'</tr>';
   }).join('')+(rows.length===0?'<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--text-secondary)">No results</td></tr>':'');
@@ -4965,8 +5150,9 @@ function renderQBSyncPanel(){
       +'<i class="ti ti-loader"></i> Reading QuickBooks &#8212; invoice '+s.done+' of '+s.total+'&hellip;</div>';
     return;
   }
-  var rows=s.changes||[];
-  el.innerHTML='<div style="background:var(--bg-primary);border:1px solid '+(rows.length?'var(--accent)':'var(--border-t)')+';border-radius:var(--radius-md);padding:14px;margin-bottom:16px">'
+  var rows=s.changes||[],bu=(s.balanceUpdates||[]).length;
+  var balNote=bu?'<div style="font-size:12px;color:var(--text-secondary);margin-top:8px"><i class="ti ti-receipt"></i> '+bu+' staged or project invoice balance'+(bu===1?'':'s')+' will also be saved, which BOQ projects report paid and outstanding amounts from.</div>':'';
+  el.innerHTML='<div style="background:var(--bg-primary);border:1px solid '+(rows.length||bu?'var(--accent)':'var(--border-t)')+';border-radius:var(--radius-md);padding:14px;margin-bottom:16px">'
     +'<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">'
     +'<div style="font-size:13px;font-weight:700"><i class="ti ti-refresh"></i> QuickBooks payment check</div>'
     +'<button class="btn btn-sm" onclick="qbSyncState=null;renderQBSyncPanel()">Close</button>'
@@ -4990,9 +5176,13 @@ function renderQBSyncPanel(){
             +'<td style="padding:6px 8px;text-align:center;font-weight:700;color:'+(c.now?'var(--green)':'#b45309')+'">'+(c.now?'Paid':'Pending')+'</td></tr>';
         }).join('')
         +'</tbody></table>'
+        +balNote
         +'<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px">'
         +'<button class="btn btn-primary btn-sm" onclick="applyQBSync()"><i class="ti ti-check"></i> Apply '+rows.length+' change'+(rows.length===1?'':'s')+'</button></div>'
-      :'<div style="font-size:12px;color:var(--green);margin-top:8px"><i class="ti ti-check"></i> Everything already matches QuickBooks. Nothing to change.</div>')
+      :(bu
+        ?'<div style="font-size:12px;color:var(--green);margin-top:8px"><i class="ti ti-check"></i> Every lead\'s paid status already matches QuickBooks.</div>'+balNote
+          +'<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px"><button class="btn btn-primary btn-sm" onclick="applyQBSync()"><i class="ti ti-check"></i> Save '+bu+' invoice balance'+(bu===1?'':'s')+'</button></div>'
+        :'<div style="font-size:12px;color:var(--green);margin-top:8px"><i class="ti ti-check"></i> Everything already matches QuickBooks. Nothing to change.</div>'))
     +'</div>';
 }
 function fmtMoneyPlain(n){return 'A$'+Number(n||0).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2});}
@@ -5005,7 +5195,7 @@ async function syncPaidFromQB(){
        its stages, otherwise by its own single invoice. */
     var qr=await sb('quotes?select=id,lead_id,qb_invoice_id');
     var quotes=await qr.json(); if(!Array.isArray(quotes)) quotes=[];
-    var pr=await sb('quote_invoices?select=quote_id,lead_id,qb_invoice_id');
+    var pr=await sb('quote_invoices?select=id,quote_id,lead_id,qb_invoice_id,qb_balance,amount');
     var parts=await pr.json(); if(!Array.isArray(parts)) parts=[];
     var staged={};parts.forEach(function(p){staged[p.quote_id]=true;});
     var byLead={};
@@ -5037,7 +5227,16 @@ async function syncPaidFromQB(){
       var was=lead.invoice_paid!==false;
       if(paid!==was) changes.push({id:leadId,name:(lead.name||'')+' / '+(lead.company||''),total:Number(lead.invoice_total)||0,was:was,now:paid});
     });
-    qbSyncState={busy:false,checked:idList.length-unreadable,unreadable:unreadable,leadCount:leadCount,changes:changes};
+    /* Per-invoice balances, which BOQ projects report from. Stored only for invoices
+       QuickBooks actually answered for, and only where the figure has moved. */
+    var balanceUpdates=[];
+    parts.forEach(function(p){
+      if(!p.qb_invoice_id) return;
+      var b=bal[String(p.qb_invoice_id)];
+      if(b==null) return;
+      if(p.qb_balance==null||Math.abs((Number(p.qb_balance)||0)-b)>0.005) balanceUpdates.push({id:p.id,lead_id:p.lead_id,balance:b});
+    });
+    qbSyncState={busy:false,checked:idList.length-unreadable,unreadable:unreadable,leadCount:leadCount,changes:changes,balanceUpdates:balanceUpdates};
     renderQBSyncPanel();
   }catch(e){
     qbSyncState=null;renderQBSyncPanel();
@@ -5047,7 +5246,15 @@ async function syncPaidFromQB(){
 
 async function applyQBSync(){
   if(!qbSyncState||!qbSyncState.changes) return;
-  var rows=qbSyncState.changes,ok=0;
+  var rows=qbSyncState.changes,ok=0,balOk=0,bu=qbSyncState.balanceUpdates||[];
+  var stamp=new Date().toISOString();
+  for(var j=0;j<bu.length;j++){
+    try{
+      await sbWrite('quote_invoices?id=eq.'+bu[j].id,{method:'PATCH',body:JSON.stringify({qb_balance:bu[j].balance,qb_balance_checked_at:stamp})});
+      balOk++;
+    }catch(e){}
+  }
+  if(bu.length) await loadInvoiceLedger();
   for(var i=0;i<rows.length;i++){
     var c=rows[i];
     try{
@@ -5061,14 +5268,19 @@ async function applyQBSync(){
   }
   qbSyncState=null;
   renderReports();renderBoard();
-  toast(ok+' lead'+(ok===1?'':'s')+' updated from QuickBooks &#10003;'+(ok<rows.length?' ('+(rows.length-ok)+' failed)':''));
+  var balMsg=bu.length?balOk+' invoice balance'+(balOk===1?'':'s')+' saved'+(balOk<bu.length?' ('+(bu.length-balOk)+' failed)':''):'';
+  toast(rows.length
+    ?ok+' lead'+(ok===1?'':'s')+' updated from QuickBooks &#10003;'+(ok<rows.length?' ('+(rows.length-ok)+' failed)':'')+(balMsg?' &middot; '+balMsg:'')
+    :balMsg+' &#10003;');
 }
 
 function exportReportCSV(){
   function invDate(l){return l.invoice_date?new Date(l.invoice_date):new Date(l.created_at);}
   var rows=[['Date','Client','Company','Project','Type','Amount','Status']];
-  leads.filter(function(l){return l.invoice_total>0||l.phase===5;}).sort(function(a,b){return invDate(b)-invDate(a);}).forEach(function(l){
-    rows.push([invDate(l).toLocaleDateString('en-AU'),l.name||'',l.company||'',l.project||'',l.lead_type||'wholesale','A$'+(l.invoice_total||0).toFixed(2),l.invoice_paid===false?'Pending':'Paid']);
+  reportEntries().sort(function(a,b){return b.date-a.date;}).forEach(function(e){
+    var l=e.lead;
+    rows.push([e.date.toLocaleDateString('en-AU'),l.name||'',l.company||'',(l.project||'')+(e.ledger&&e.label?(l.project?' — ':'')+e.label:''),l.lead_type||'wholesale','A$'+e.amount.toFixed(2),
+      e.state==='part'?'Part paid (A$'+e.outstanding.toFixed(2)+' owed)':(e.paid?'Paid':'Pending')]);
   });
   var csv=rows.map(function(r){return r.map(function(c){return '"'+String(c).replace(/"/g,'""')+'"';}).join(',');}).join('\n');
   var blob=new Blob([csv],{type:'text/csv'});

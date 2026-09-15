@@ -1341,7 +1341,10 @@ function renderBoard(){
   const search=document.getElementById('searchInput').value.toLowerCase();
   const cf=document.getElementById('clientFilter').value;
   const tf=document.getElementById('typeFilter')?.value||'';
+  /* Leads attached to a project live inside it (Project tab), not on the board. A search
+     still finds them, so an old quote or invoice can always be looked up directly. */
   const filtered=leads.filter(l=>
+    (!l.parent_lead_id||search)&&
     (!search||[l.name,l.company,l.client,l.project].some(v=>(v||'').toLowerCase().includes(search)))&&
     (!cf||l.client===cf)&&
     (!tf||l.lead_type===tf)
@@ -1388,12 +1391,17 @@ function renderBoard(){
 }
 
 /* &#9472;&#9472; DETAIL &#9472;&#9472; */
+/* Written as text, so a real bullet rather than an HTML entity (which showed literally). */
+function detailSubText(l){
+  var parent=l.parent_lead_id?leads.find(function(x){return x.id===l.parent_lead_id;}):null;
+  return (l.company||'')+(l.project?' • '+l.project:'')+(parent?' • part of '+(parent.name||'a project'):'');
+}
 async function openDetail(id){
   try{
     currentLead=leads.find(l=>l.id===id);
     if(!currentLead){console.error('Lead not found:',id);return;}
     document.getElementById('detailName').textContent=currentLead.name||'';
-    document.getElementById('detailSub').textContent=(currentLead.company||'')+(currentLead.project?' &#8226; '+currentLead.project:'');
+    document.getElementById('detailSub').textContent=detailSubText(currentLead);
     var ps=document.getElementById('detailPhaseSelect');
     /* Legacy phase-4 leads show as Completed without being rewritten — the value is
        only persisted if someone actually changes the dropdown. */
@@ -1765,7 +1773,7 @@ async function saveDetailEdits(){
     var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
     if(idx>-1) Object.assign(leads[idx],patch);
     document.getElementById('detailName').textContent=currentLead.name;
-    document.getElementById('detailSub').textContent=(currentLead.company||'')+(currentLead.project?' &#8226; '+currentLead.project:'');
+    document.getElementById('detailSub').textContent=detailSubText(currentLead);
     renderBoard();
     toast('Changes saved &#10003;');
   }catch(e){toast('Save failed: '+e.message,'error');}
@@ -2868,12 +2876,23 @@ async function loadBoqData(){
   boqProgress=prog;
 }
 
+/* Leads attached to a project: its own id first, then any older leads that were set
+   up one stage per lead before the project had a BOQ. */
+function projectLeadIds(leadId){
+  return [leadId].concat(leads.filter(function(l){return l.parent_lead_id===leadId;}).map(function(l){return l.id;}));
+}
+/* BOQ units a quote line counts as. boq_qty covers a line bought in other units
+   (20 m of rod = 15 sets of anchor bolts); otherwise it is the line's own quantity. */
+function boqUnits(line){return line&&line.boq_qty!=null?Number(line.boq_qty)||0:Number(line&&line.quantity)||0;}
+
 async function loadBoqProgress(leadId){
   var prog={quoted:{},drafted:{},ordered:{},invoiced:{},partBilled:{},shipped:{},paid:{},partPaid:{},
     money:{quoted:0,invoiced:0,paid:0,outstanding:0,unchecked:0,lastChecked:null,invoices:0}};
   var add=function(m,k,v){m[k]=round2((m[k]||0)+v);};
+  var ids=projectLeadIds(leadId),inIds='in.('+ids.join(',')+')';
+  var leadById={};leads.forEach(function(l){leadById[l.id]=l;});
   /* Shipped comes from shipments on the project, which record BOQ items directly. */
-  var sr=await sb('lead_shipments?lead_id=eq.'+leadId+'&select=lines');
+  var sr=await sb('lead_shipments?lead_id='+inIds+'&select=lines');
   var ships=await sr.json();
   (Array.isArray(ships)?ships:[]).forEach(function(s){
     var ls=s.lines;
@@ -2881,15 +2900,19 @@ async function loadBoqProgress(leadId){
     if(!Array.isArray(ls)) return;
     ls.forEach(function(x){if(x&&x.boq_item_id) add(prog.shipped,x.boq_item_id,Number(x.quantity)||0);});
   });
-  var qr=await sb('quotes?lead_id=eq.'+leadId+'&select=id,status,total,qb_invoice_id');
+  var qr=await sb('quotes?lead_id='+inIds+'&select=id,lead_id,status,total,qb_invoice_id');
   var quotes=await qr.json(); if(!Array.isArray(quotes)||!quotes.length) return prog;
-  var ir=await sb('quote_invoices?lead_id=eq.'+leadId+'&select=id,quote_id,basis,amount,lines,qb_invoice_id,qb_balance,qb_balance_checked_at');
+  var ir=await sb('quote_invoices?lead_id='+inIds+'&select=id,quote_id,basis,pct,amount,lines,qb_invoice_id,qb_balance,qb_balance_checked_at');
   var stages=await ir.json(); if(!Array.isArray(stages)) stages=[];
   var isPaid=function(s){return s.qb_balance!=null&&(Number(s.qb_balance)||0)<=0.005;};
+  /* A quote invoiced outright before invoices were recorded one by one has no row to
+     hold a balance, so its paid state is its lead's paid flag, which the Reports sync
+     keeps in step with QuickBooks. */
+  var legacyPaid=function(q){var l=leadById[q.lead_id];return !!(l&&l.invoice_paid===true);};
 
-  /* Dollar totals for the whole project, including work quoted before the BOQ was
-     linked. Paid is only what QuickBooks has confirmed through a refresh; an invoice
-     never checked counts as outstanding, never as paid. */
+  /* Dollar totals for the whole project, including the older leads attached to it.
+     Paid is only what QuickBooks has confirmed; an invoice never checked counts as
+     outstanding, never as paid. */
   var m=prog.money,staged={};
   stages.forEach(function(s){
     staged[s.quote_id]=true;
@@ -2901,45 +2924,102 @@ async function loadBoqProgress(leadId){
   });
   quotes.forEach(function(q){
     if(q.status==='sent'||q.status==='approved'||q.status==='invoiced') m.quoted+=Number(q.total)||0;
-    if(q.status==='invoiced'&&!staged[q.id]){m.invoiced+=Number(q.total)||0;m.invoices++;if(q.qb_invoice_id) m.unchecked++;}
+    if(q.status==='invoiced'&&!staged[q.id]){
+      m.invoiced+=Number(q.total)||0;m.invoices++;
+      if(legacyPaid(q)) m.paid+=Number(q.total)||0;
+      else if(q.qb_invoice_id) m.unchecked++;
+    }
   });
   ['quoted','invoiced','paid'].forEach(function(k){m[k]=round2(m[k]);});
   m.outstanding=round2(Math.max(0,m.invoiced-m.paid));
 
-  var ids=quotes.map(function(q){return q.id;});
-  var lr=await sb('quote_line_items?quote_id=in.('+ids.join(',')+')&boq_item_id=not.is.null&select=quote_id,boq_item_id,quantity,sort_order');
+  var qids=quotes.map(function(q){return q.id;});
+  var lr=await sb('quote_line_items?quote_id=in.('+qids.join(',')+')&boq_item_id=not.is.null&select=quote_id,boq_item_id,quantity,boq_qty,sort_order');
   var lines=await lr.json(); if(!Array.isArray(lines)||!lines.length) return prog;
   quotes.forEach(function(q){
     var ql=lines.filter(function(l){return l.quote_id===q.id;});
     if(!ql.length) return;
-    if(q.status==='sent'||q.status==='approved'||q.status==='invoiced') ql.forEach(function(l){add(prog.quoted,l.boq_item_id,Number(l.quantity)||0);});
-    else ql.forEach(function(l){add(prog.drafted,l.boq_item_id,Number(l.quantity)||0);});
+    if(q.status==='sent'||q.status==='approved'||q.status==='invoiced') ql.forEach(function(l){add(prog.quoted,l.boq_item_id,boqUnits(l));});
+    else ql.forEach(function(l){add(prog.drafted,l.boq_item_id,boqUnits(l));});
     /* Ordered = the client has approved it, so it is what can be sent next. */
-    if(q.status==='approved'||q.status==='invoiced') ql.forEach(function(l){add(prog.ordered,l.boq_item_id,Number(l.quantity)||0);});
+    if(q.status==='approved'||q.status==='invoiced') ql.forEach(function(l){add(prog.ordered,l.boq_item_id,boqUnits(l));});
     var qs=stages.filter(function(s){return s.quote_id===q.id;});
     var billed=qs.reduce(function(s,x){return s+(Number(x.amount)||0);},0);
-    var fullyBilled=(q.status==='invoiced'&&!qs.length)||(qs.length&&billed>=(Number(q.total)||0)-0.005);
-    if(fullyBilled) ql.forEach(function(l){add(prog.invoiced,l.boq_item_id,Number(l.quantity)||0);});
+    /* Staged percentages round each line to the cent, so stages that bill the whole
+       quote can land a few cents short: TIE-2608-3656 is 30% + 70% = A$115,139.00 of
+       A$115,139.15. Treat 100% of percentages, or within A$1 / 0.05%, as fully billed. */
+    var pctSum=qs.reduce(function(s,x){return s+(x.basis==='percent'?(Number(x.pct)||0):0);},0);
+    var qTot=Number(q.total)||0;
+    var fullyBilled=(q.status==='invoiced'&&!qs.length)
+      ||(qs.length&&(pctSum>=99.999||billed>=qTot-Math.max(1,qTot*0.0005)));
+    if(fullyBilled) ql.forEach(function(l){add(prog.invoiced,l.boq_item_id,boqUnits(l));});
     /* Paid in full once every invoice on a fully billed quote has a zero balance. */
-    if(fullyBilled&&qs.length&&qs.every(isPaid)){
-      ql.forEach(function(l){add(prog.paid,l.boq_item_id,Number(l.quantity)||0);});
+    if(fullyBilled&&((qs.length&&qs.every(isPaid))||(!qs.length&&legacyPaid(q)))){
+      ql.forEach(function(l){add(prog.paid,l.boq_item_id,boqUnits(l));});
       return;
     }
-    var bySort={};ql.forEach(function(l){bySort[l.sort_order]=l.boq_item_id;});
+    /* Stage lines are in quote units; scale by the quote line's BOQ ratio. */
+    var bySort={};ql.forEach(function(l){bySort[l.sort_order]=l;});
     qs.forEach(function(s){
       var ls=s.lines;
       if(typeof ls==='string'){try{ls=JSON.parse(ls);}catch(e){ls=null;}}
-      if(!Array.isArray(ls)) return;
       var byUnits=s.basis==='items'||s.basis==='full';
+      /* Older percentage stages were saved without lines; a paid one still means part of
+         every line on its quote has been paid. */
+      if(!Array.isArray(ls)){
+        if(!byUnits&&isPaid(s)) ql.forEach(function(l){prog.partPaid[l.boq_item_id]=true;});
+        if(!byUnits&&!fullyBilled) ql.forEach(function(l){prog.partBilled[l.boq_item_id]=true;});
+        return;
+      }
       ls.forEach(function(x){
-        var id=x&&(x.boq_item_id||bySort[x.sort_order]);
+        if(!x) return;
+        var ql0=bySort[x.sort_order],id=x.boq_item_id||(ql0&&ql0.boq_item_id);
         if(!id) return;
-        if(!fullyBilled){if(byUnits) add(prog.invoiced,id,Number(x.quantity)||0); else prog.partBilled[id]=true;}
-        if(isPaid(s)){if(byUnits) add(prog.paid,id,Number(x.quantity)||0); else prog.partPaid[id]=true;}
+        var ratio=ql0&&Number(ql0.quantity)?boqUnits(ql0)/Number(ql0.quantity):1;
+        var units=round2((Number(x.quantity)||0)*ratio);
+        if(!fullyBilled){if(byUnits) add(prog.invoiced,id,units); else prog.partBilled[id]=true;}
+        if(isPaid(s)){if(byUnits) add(prog.paid,id,units); else prog.partPaid[id]=true;}
       });
     });
   });
   return prog;
+}
+
+/* On an older lead attached to a project, point to the project where its BOQ,
+   tracker and newer quotes live. */
+function parentProjectBannerHtml(){
+  if(!currentLead||!currentLead.parent_lead_id) return '';
+  var parent=leads.find(function(x){return x.id===currentLead.parent_lead_id;});
+  return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;margin-bottom:12px;background:var(--accent-light);border:1px solid var(--accent);border-radius:var(--radius-md);font-size:12px">'
+    +'<span><i class="ti ti-link"></i> This lead is part of <strong>'+escHtml(parent?parent.name||'a project':'a project')+'</strong>. Its quotes and invoices count in that project\'s tracker.</span>'
+    +(parent?'<button class="btn btn-sm" onclick="openDetail(\''+parent.id+'\').then(function(){var t=document.getElementById(\'detailTabProject\');if(t) switchDetailTab(\'project\',t);})">Open project</button>':'')
+    +'</div>';
+}
+
+/* The older leads attached to this project: each stage used to be its own lead. They
+   keep their own quotes, invoices and reported revenue; here they are listed so the
+   whole job is visible from one place. */
+function earlierLeadsHtml(){
+  if(!currentLead) return '';
+  var kids=leads.filter(function(l){return l.parent_lead_id===currentLead.id;});
+  if(!kids.length) return '';
+  var rows=kids.sort(function(a,b){return String(a.created_at).localeCompare(String(b.created_at));}).map(function(l){
+    var qs=(quotesByLead[l.id]||[]).map(function(q){
+      return escHtml(q.quote_number||'')+' <span style="color:var(--text-tertiary);text-transform:capitalize">'+escHtml(q.status||'')+'</span> '+fmtAud(q.total);
+    }).join(' &middot; ');
+    return '<tr style="border-top:1px solid var(--border-t);cursor:pointer" onclick="openDetail(\''+l.id+'\')">'
+      +'<td style="padding:6px 8px;white-space:nowrap">'+escHtml(String(l.created_at||'').slice(0,10))+'</td>'
+      +'<td style="padding:6px 8px;font-weight:600">'+escHtml(l.name||'')+'<div style="font-size:11px;color:var(--text-tertiary);font-weight:400">'+escHtml(l.company||'')+'</div></td>'
+      +'<td style="padding:6px 8px;font-size:11px">'+(qs||'<span style="color:var(--text-tertiary)">No quotes</span>')+'</td>'
+      +'<td style="padding:6px 8px;text-align:right;white-space:nowrap">'+fmtAud(l.invoice_total)+'</td>'
+      +'</tr>';
+  }).join('');
+  return '<div style="margin-top:6px;border:1px solid var(--border-t);border-radius:var(--radius-md);overflow:hidden">'
+    +'<div style="padding:9px 12px;background:var(--bg-secondary)"><div style="font-size:13px;font-weight:700"><i class="ti ti-history"></i> Earlier leads on this project</div>'
+    +'<div style="font-size:11px;color:var(--text-secondary)">Stages quoted as separate leads before the project had a BOQ. Their lines are counted above where they match a BOQ item.</div></div>'
+    +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:var(--bg-primary)">'
+    +'<th style="padding:6px 8px;text-align:left">Created</th><th style="padding:6px 8px;text-align:left">Lead</th><th style="padding:6px 8px;text-align:left">Quotes</th><th style="padding:6px 8px;text-align:right">Invoiced</th>'
+    +'</tr></thead><tbody>'+rows+'</tbody></table></div></div>';
 }
 
 /* Project totals in dollars, with the refresh that reads each invoice's balance. */
@@ -2971,7 +3051,7 @@ async function refreshProjectPayments(){
   var leadId=currentLead.id,btn=document.getElementById('proj-pay-btn');
   if(btn){btn.disabled=true;btn.innerHTML='<i class="ti ti-loader"></i> Reading QuickBooks&hellip;';}
   try{
-    var r=await sb('quote_invoices?lead_id=eq.'+leadId+'&qb_invoice_id=not.is.null&select=id,qb_invoice_id,qb_invoice_number,qb_balance');
+    var r=await sb('quote_invoices?lead_id=in.('+projectLeadIds(leadId).join(',')+')&qb_invoice_id=not.is.null&select=id,qb_invoice_id,qb_invoice_number,qb_balance');
     var rows=await r.json(); if(!Array.isArray(rows)) rows=[];
     var saved=0,failed=0,stamp=new Date().toISOString();
     for(var i=0;i<rows.length;i++){
@@ -3002,7 +3082,7 @@ function boqGroups(items){
 
 function boqTrackerHtml(){
   var p=boqProgress||{quoted:{},drafted:{},invoiced:{},partBilled:{},shipped:{}};
-  var head='<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">'
+  var head=parentProjectBannerHtml()+'<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">'
     +'<div><div style="font-size:14px;font-weight:700"><i class="ti ti-list-details"></i> Bill of quantities</div>'
     +'<div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Items and quantities for the whole project. Quote, invoice and ship portions of it over time.</div></div>'
     +'<div style="display:flex;gap:8px;flex-wrap:wrap">'
@@ -3012,7 +3092,8 @@ function boqTrackerHtml(){
     +'</div></div>';
   if(!boqItems.length){
     return head+'<div class="empty-state" style="padding:28px 12px">No BOQ on this project yet. Upload the BOQ spreadsheet to list every item the job needs.'
-      +'<div style="font-size:11px;color:var(--text-tertiary);margin-top:6px">Only items and quantities are imported. Price and total columns are ignored.</div></div>';
+      +'<div style="font-size:11px;color:var(--text-tertiary);margin-top:6px">Only items and quantities are imported. Price and total columns are ignored.</div></div>'
+      +earlierLeadsHtml();
   }
   var groups=boqGroups(boqItems);
   var cell='padding:6px 8px;text-align:right;white-space:nowrap';
@@ -3021,7 +3102,9 @@ function boqTrackerHtml(){
     var section=null;
     var rows=g.items.map(function(it){
       var q=Number(it.quantity)||0,qd=p.quoted[it.id]||0,inv=p.invoiced[it.id]||0,left=round2(q-qd);
-      var leftCol=left<-0.0001?'var(--danger)':(left<=0.0001?'var(--green)':'#b45309');
+      /* Quoting past the BOQ is usually a pack size (12 twin packs for 23 tubes), so it
+         reads as "1 over" in amber rather than as an error. */
+      var leftCol=left<-0.0001?'#b45309':(left<=0.0001?'var(--green)':'#b45309');
       var sec='';
       if((it.section||'')!==section){section=it.section||'';if(section) sec='<tr><td colspan="9" style="padding:8px 8px 4px;font-size:11px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.03em">'+escHtml(section)+'</td></tr>';}
       return sec+'<tr style="border-top:1px solid var(--border-t)">'
@@ -3036,7 +3119,7 @@ function boqTrackerHtml(){
         +'<td style="'+cell+'">'+(p.shipped&&p.shipped[it.id]?fmtQty(p.shipped[it.id]):'<span style="color:var(--text-tertiary)">0</span>')+'</td>'
         +'<td style="'+cell+'">'+(p.paid&&p.paid[it.id]?'<span style="color:var(--green);font-weight:600">'+fmtQty(p.paid[it.id])+'</span>'
           :(p.partPaid&&p.partPaid[it.id]?'<span style="color:#b45309;font-size:11px" title="Paid through a percentage or deposit invoice, which does not pay for specific units">part</span>':'<span style="color:var(--text-tertiary)">0</span>'))+'</td>'
-        +'<td style="'+cell+';font-weight:600;color:'+leftCol+'">'+(left<=0.0001&&left>=-0.0001?'<i class="ti ti-check"></i>':fmtQty(left))+'</td>'
+        +'<td style="'+cell+';font-weight:600;color:'+leftCol+'">'+(left<=0.0001&&left>=-0.0001?'<i class="ti ti-check"></i>':(left<0?'<span title="More quoted than the BOQ quantity">'+fmtQty(-left)+' over</span>':fmtQty(left)))+'</td>'
         +'</tr>';
     }).join('');
     var done=g.items.filter(function(it){return round2((Number(it.quantity)||0)-(p.quoted[it.id]||0))<=0.0001;}).length;
@@ -3053,7 +3136,7 @@ function boqTrackerHtml(){
       +'<th style="'+cell+'">BOQ</th><th style="'+cell+'">Quoted</th><th style="'+cell+'">Invoiced</th><th style="'+cell+'" title="Recorded on the Freight tab">Shipped</th><th style="'+cell+'" title="Units on invoices QuickBooks shows as paid in full">Paid</th><th style="'+cell+'">Left to quote</th>'
       +'</tr></thead><tbody>'+rows+'</tbody></table></div></div>';
   }).join('');
-  return head+body;
+  return head+body+earlierLeadsHtml();
 }
 
 async function handleBoqFile(file){
@@ -4090,9 +4173,9 @@ async function sendQuoteToClient(){
     await sbWrite('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({client_name:currentQuote.client_name,client_address:currentQuote.client_address,expiry_date:currentQuote.expiry_date||null,subtotal:currentQuote.subtotal,gst_total:currentQuote.gst_total,total:currentQuote.total,markup_pct:Number(currentQuote.markup_pct)||0,status:'sent',updated_at:new Date().toISOString()})});
     await sbWrite('quote_line_items?quote_id=eq.'+currentQuote.id,{method:'DELETE'});
     if(currentLineItems.length>0){
-      /* Lines are rewritten on every send, so boq_item_id must be carried or a project
-         quote would silently lose its link to the BOQ the first time it is sent. */
-      var ins=currentLineItems.map(function(item,i){return {quote_id:currentQuote.id,item_name:item.item_name||'',description:item.description||'',quantity:Number(item.quantity)||1,cost:Number(item.cost)||0,rate:Number(item.rate)||0,gst_applicable:item.gst_applicable===true,manual:item.manual===true,amount:(Number(item.quantity)||1)*(Number(item.rate)||0),sort_order:i,boq_item_id:item.boq_item_id||null};});
+      /* Lines are rewritten on every send, so boq_item_id and boq_qty must be carried or a
+         project quote would silently lose its link to the BOQ the first time it is sent. */
+      var ins=currentLineItems.map(function(item,i){return {quote_id:currentQuote.id,item_name:item.item_name||'',description:item.description||'',quantity:Number(item.quantity)||1,cost:Number(item.cost)||0,rate:Number(item.rate)||0,gst_applicable:item.gst_applicable===true,manual:item.manual===true,amount:(Number(item.quantity)||1)*(Number(item.rate)||0),sort_order:i,boq_item_id:item.boq_item_id||null,boq_qty:item.boq_item_id&&item.boq_qty!=null?Number(item.boq_qty):null};});
       await sbWrite('quote_line_items',{method:'POST',body:JSON.stringify(ins)});
     }
     if(btn) btn.innerHTML='<i class="ti ti-loader"></i> Sending...';

@@ -4,6 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Traverse CRM</title>
+<link rel="icon" type="image/png" href="assets/traverse-mark.png">
+<script>
+/* Apply the saved theme before anything paints, so a dark-theme user never sees a
+   flash of the light one. Stored per browser; light is the default. */
+try{if(localStorage.getItem('traverse_theme')==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(e){}
+</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css" onerror="this.onerror=null;this.href='https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/tabler-icons.min.css'">
@@ -30,18 +36,69 @@ window.addEventListener('load', function() {
 </script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
+/* Traverse brand: charcoal #1a1a1a, gold #b8972e, steel blue #4a7c8e, cream #f5f0e8
+   (the same values the PDF rebrand uses). Light theme below; dark theme overrides the
+   same variables further down, so anything built on the variables follows both. */
 :root{
-  --bg-primary:#ffffff;--bg-secondary:#f8f8f7;--bg-tertiary:#f3f2f0;
-  --text-primary:#1a1a1a;--text-secondary:#6b6b6b;--text-tertiary:#9b9b9b;
-  --border-t:rgba(0,0,0,0.1);--border-s:rgba(0,0,0,0.18);--border-p:rgba(0,0,0,0.28);
-  --accent:#185FA5;--accent-light:#E6F1FB;--accent-dark:#0C447C;
+  --bg-primary:#ffffff;--bg-secondary:#faf8f4;--bg-tertiary:#f4f1ea;
+  --text-primary:#1a1a1a;--text-secondary:#66615a;--text-tertiary:#9a948a;
+  --border-t:rgba(26,26,26,0.1);--border-s:rgba(26,26,26,0.18);--border-p:rgba(26,26,26,0.28);
+  --accent:#4a7c8e;--accent-light:#e5eef1;--accent-dark:#2f5a69;
+  --gold:#b8972e;--gold-light:#f6efd8;
+  --topbar-bg:#ffffff;--on-accent:#ffffff;
   --green:#3B6D11;--green-light:#EAF3DE;
   --purple:#533AB7;--purple-light:#EEEDFE;
   --amber:#EF9F27;--amber-light:#FAEEDA;
   --danger:#A32D2D;--danger-light:#FCEBEB;
   --radius-md:8px;--radius-lg:12px;
 }
+[data-theme="dark"]{
+  color-scheme:dark;
+  --bg-primary:#232323;--bg-secondary:#2b2b2b;--bg-tertiary:#1a1a1a;
+  --text-primary:#ececea;--text-secondary:#b3aea5;--text-tertiary:#86817a;
+  --border-t:rgba(255,255,255,0.1);--border-s:rgba(255,255,255,0.18);--border-p:rgba(255,255,255,0.3);
+  --accent:#5d93a6;--accent-light:rgba(74,124,142,0.24);--accent-dark:#9ccadb;
+  --gold:#d0ad4a;--gold-light:rgba(184,151,46,0.2);
+  --green:#8fc46a;--green-light:rgba(59,109,17,0.3);
+  --purple:#a996f2;--purple-light:rgba(83,58,183,0.3);
+  --amber:#f0b04a;--amber-light:rgba(239,159,39,0.18);
+  --danger:#f08a8a;--danger-light:rgba(163,45,45,0.3);
+  --topbar-bg:#141414;--on-accent:#ffffff;
+}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg-tertiary);color:var(--text-primary);min-height:100vh}
+/* Dark theme: colours written directly into markup (pastel badges, amber and brown
+   text) are remapped here rather than edited in dozens of places. Documents that
+   print or email (quote and invoice previews) deliberately stay white. */
+[data-theme="dark"] [style*="color:#b45309"]{color:#e8a562!important}
+[data-theme="dark"] [style*="color:#633806"]{color:#e8b77a!important}
+[data-theme="dark"] [style*="background:#FAEEDA"]{background:rgba(239,159,39,0.18)!important}
+[data-theme="dark"] [style*="background:#EAF3DE"]{background:rgba(99,153,34,0.22)!important}
+[data-theme="dark"] [style*="background:#E6F1FB"]{background:rgba(74,124,142,0.24)!important}
+[data-theme="dark"] [style*="background:#f3f2f0"]{background:rgba(255,255,255,0.08)!important}
+[data-theme="dark"] [style*="background:rgba(180,83,9,0.06)"]{background:rgba(239,159,39,0.12)!important}
+[data-theme="dark"] .ph1{background:rgba(74,124,142,0.28);color:#a9d2e0}
+[data-theme="dark"] .ph2{background:rgba(239,159,39,0.2);color:#f0c27a}
+[data-theme="dark"] .ph3{background:rgba(99,153,34,0.24);color:#b5dc8f}
+[data-theme="dark"] .ph4{background:rgba(29,158,117,0.22);color:#8fd9bd}
+[data-theme="dark"] .ph5{background:rgba(255,255,255,0.1);color:#cfcac2}
+[data-theme="dark"] .ph6{background:rgba(145,95,205,0.24);color:#cdb2ee}
+[data-theme="dark"] .qs-draft{background:rgba(255,255,255,0.1);color:#cfcac2}
+[data-theme="dark"] .qs-sent{background:rgba(239,159,39,0.2);color:#f0c27a}
+[data-theme="dark"] .qs-approved{background:rgba(99,153,34,0.24);color:#b5dc8f}
+[data-theme="dark"] .qs-invoiced{background:rgba(74,124,142,0.28);color:#a9d2e0}
+[data-theme="dark"] .indicator.amber,[data-theme="dark"] .act-icon.quote-i i{color:#e8b77a}
+[data-theme="dark"] .toast.success{border-color:#8fc46a;color:#8fc46a}
+[data-theme="dark"] .card:hover{box-shadow:0 2px 10px rgba(0,0,0,0.4)}
+[data-theme="dark"] .overlay{background:rgba(0,0,0,0.6)}
+[data-theme="dark"] .bar{background:rgba(74,124,142,0.45)}
+[data-theme="dark"] .btn-amber{background:#8a5a1c;border-color:#8a5a1c}
+[data-theme="dark"] .quote-preview,[data-theme="dark"] #quotePreviewContent{color:#1a1a1a}
+/* Brand logo: one image per theme, swapped by CSS so no script is needed. */
+.brand-logo{display:block;height:36px;width:auto}
+.brand-logo.dark{display:none}
+[data-theme="dark"] .brand-logo.light{display:none}
+[data-theme="dark"] .brand-logo.dark{display:block}
+.theme-toggle{width:32px;height:32px;padding:0;justify-content:center;border-radius:99px}
 
 /* LOGIN */
 #loginScreen{min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg-tertiary)}
@@ -87,14 +144,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .brief-sum-nums{display:flex;gap:12px;font-size:12px;color:var(--text-secondary)}
 
 /* TOPBAR */
-.topbar{background:var(--bg-primary);border-bottom:0.5px solid var(--border-t);padding:0 24px;display:flex;align-items:center;height:56px;position:sticky;top:0;z-index:50;gap:0}
+.topbar{background:var(--topbar-bg);border-bottom:2px solid var(--gold);padding:0 24px;display:flex;align-items:center;height:56px;position:sticky;top:0;z-index:50;gap:0}
 .topbar-brand{font-size:15px;font-weight:600;margin-right:24px;display:flex;align-items:center;gap:8px}
 .status-pill{font-size:11px;padding:3px 8px;border-radius:99px;border:0.5px solid var(--border-t);display:flex;align-items:center;gap:4px;margin-right:4px;background:var(--bg-secondary)}
 .dot{width:6px;height:6px;border-radius:50%;background:#ccc;flex-shrink:0;transition:background .3s}
 .dot.live{background:#639922}.dot.warn{background:#EF9F27}
 .nav-tab{padding:0 13px;height:56px;display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s}
 .nav-tab:hover{color:var(--text-primary)}
-.nav-tab.active{color:var(--text-primary);border-bottom-color:var(--text-primary)}
+.nav-tab.active{color:var(--text-primary);border-bottom-color:var(--gold)}
 .user-pill{display:flex;align-items:center;gap:8px;padding:4px 10px;border-radius:99px;border:0.5px solid var(--border-t);font-size:12px;color:var(--text-secondary);background:var(--bg-secondary);cursor:pointer}
 .user-pill:hover{background:var(--bg-tertiary)}
 .main{padding:24px;max-width:1400px;margin:0 auto}
@@ -104,7 +161,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .btn{padding:8px 14px;font-size:13px;border-radius:var(--radius-md);border:0.5px solid var(--border-s);background:var(--bg-primary);color:var(--text-primary);cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:all .15s;font-family:inherit}
 .btn:hover{background:var(--bg-secondary)}
 .btn:disabled{opacity:.5;cursor:not-allowed}
-.btn-primary{background:var(--accent);border-color:var(--accent);color:#E6F1FB}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
 .btn-primary:hover{background:var(--accent-dark)}
 .btn-green{background:var(--green);border-color:var(--green);color:var(--green-light)}
 .btn-green:hover{background:#27500A}
@@ -173,7 +230,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .detail-tabs{display:flex;border-bottom:0.5px solid var(--border-t);margin-bottom:16px;overflow-x:auto}
 .detail-tab{padding:9px 14px;font-size:13px;color:var(--text-secondary);cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;display:flex;align-items:center;gap:5px;transition:all .15s}
 .detail-tab:hover{color:var(--text-primary)}
-.detail-tab.active{color:var(--text-primary);border-bottom-color:var(--text-primary)}
+.detail-tab.active{color:var(--text-primary);border-bottom-color:var(--gold)}
 .detail-section{display:none}.detail-section.active{display:block}
 .info-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
 .info-item label{font-size:11px;color:var(--text-secondary);display:block;margin-bottom:3px;font-weight:500}
@@ -275,7 +332,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <!-- LOGIN -->
 <div id="loginScreen">
   <div class="login-card">
-    <div class="login-logo"><i class="ti ti-briefcase"></i><div><div class="login-logo-text">Traverse CRM</div><div class="login-logo-sub">Sign in to continue</div></div></div>
+    <div class="login-logo" style="flex-direction:column;align-items:flex-start;gap:14px"><img class="brand-logo light" style="height:48px" src="assets/traverse-logo-light.png" alt="Traverse Imports &amp; Exports"><img class="brand-logo dark" style="height:48px" src="assets/traverse-logo-dark.png" alt="Traverse Imports &amp; Exports"><div><div class="login-logo-text">Traverse CRM</div><div class="login-logo-sub">Sign in to continue</div></div></div>
     <div class="login-error" id="loginError"></div>
     <div class="form-group"><label class="form-label">Email</label><input class="form-input" type="email" id="loginEmail" placeholder="you@traverse-exports.com.au" onkeydown="if(event.key==='Enter')doLogin()"></div>
     <div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" id="loginPassword" placeholder="&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;" onkeydown="if(event.key==='Enter')doLogin()"></div>
@@ -299,7 +356,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <!-- APP -->
 <div id="appScreen">
 <div class="topbar">
-  <div class="topbar-brand"><i class="ti ti-briefcase" style="font-size:20px;color:var(--accent)"></i> Traverse CRM</div>
+  <div class="topbar-brand" title="Traverse CRM"><img class="brand-logo light" src="assets/traverse-logo-light.png" alt="Traverse Imports &amp; Exports"><img class="brand-logo dark" src="assets/traverse-logo-dark.png" alt="Traverse Imports &amp; Exports"></div>
   <div class="status-pill"><div class="dot" id="sbDot"></div><span id="sbLabel" style="color:var(--text-secondary)">DB</span></div>
   <div class="status-pill" style="cursor:pointer" onclick="connectDrive()" title="Click to connect Google Drive"><div class="dot" id="driveDot"></div><span id="driveLabel" style="color:var(--text-secondary)">Drive</span></div>
   <div class="status-pill"><div class="dot" id="emailDot"></div><span id="emailLabel" style="color:var(--text-secondary)">Email</span></div>
@@ -311,6 +368,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <div style="margin-left:auto;display:flex;align-items:center;gap:10px">
     <button class="btn" onclick="openPackingList()" title="Build a container packing list from several leads' SLIs"><i class="ti ti-clipboard-list"></i> Packing list</button>
     <button class="btn btn-primary" onclick="openNewLead()"><i class="ti ti-plus"></i> New lead</button>
+    <button class="btn theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Switch to dark theme"><i class="ti ti-moon"></i></button>
     <div class="user-pill" onclick="doLogout()"><i class="ti ti-user"></i><span id="userEmail"></span><i class="ti ti-logout" style="font-size:13px"></i></div>
   </div>
 </div>
@@ -1578,6 +1636,22 @@ function openNewLead(){openNewLeadPhase(0);}
 
 
 
+/* Light theme uses the white logo, dark theme the black one. Remembered per browser. */
+function toggleTheme(){
+  var dark=document.documentElement.getAttribute('data-theme')!=='dark';
+  if(dark) document.documentElement.setAttribute('data-theme','dark');
+  else document.documentElement.removeAttribute('data-theme');
+  try{localStorage.setItem('traverse_theme',dark?'dark':'light');}catch(e){}
+  syncThemeToggle();
+}
+function syncThemeToggle(){
+  var b=document.getElementById('themeToggle');
+  if(!b) return;
+  var dark=document.documentElement.getAttribute('data-theme')==='dark';
+  b.innerHTML='<i class="ti ti-'+(dark?'sun':'moon')+'"></i>';
+  b.title=dark?'Switch to light theme':'Switch to dark theme';
+}
+document.addEventListener('DOMContentLoaded',syncThemeToggle);
 function switchView(view,el){
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
   document.querySelectorAll('.nav-tab').forEach(t=>t.classList.remove('active'));

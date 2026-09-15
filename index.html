@@ -866,6 +866,13 @@ let leads=[],currentLead=null,currentQuote=null,currentLineItems=[],authToken=nu
    invoicing path unchanged. */
 const QUOTE_TYPES=[{key:'goods',label:'Goods',short:'G',icon:'ti-package'},{key:'freight',label:'Freight',short:'F',icon:'ti-ship'}];
 let currentQuotes=[],selectedQuoteType='goods';
+/* Project leads are the exception to one-quote-per-type: a job that runs for years is
+   quoted in portions of its BOQ, so a project lead holds any number of goods and
+   freight quotes and the Quote tab selects by id. selectedQuoteId is a quote id, 'new'
+   for the create screen, or null to open on the latest quote. Wholesale leads never
+   read it. */
+let selectedQuoteId=null;
+function isProjectLead(){return !!(currentLead&&currentLead.lead_type==='project');}
 /* Invoices raised against the selected quote. A job is quoted once and can be billed
    in stages (30% advance, then the balance), so one quote carries many invoices.
    partialForm holds the in-progress "invoice a part" form, or null when it is shut. */
@@ -1180,6 +1187,15 @@ function quoteBadgesForLead(l){
   var qs=quotesByLead[l.id];
   if(!qs||!qs.length) return (l.quote_status&&l.quote_status!=='none')?quoteStatusBadge(l.quote_status):'';
   if(qs.length===1) return quoteStatusBadge(qs[0].status);
+  /* A project can carry many quotes of each type, so one badge per type would show only
+     the first. Count by status instead: "2 Invoiced", "1 Sent". */
+  if(l.lead_type==='project'){
+    var cnt={};
+    qs.forEach(function(q){var s=q.status||'draft';cnt[s]=(cnt[s]||0)+1;});
+    return ['draft','sent','approved','invoiced'].filter(function(s){return cnt[s];}).map(function(s){
+      return quoteStatusBadge(s).replace('">','">'+cnt[s]+' ');
+    }).join('');
+  }
   return QUOTE_TYPES.map(function(t){
     var q=qs.find(function(x){return (x.quote_type||'goods')===t.key;});
     return q?quoteStatusBadge(q.status,t.short):'';
@@ -1290,7 +1306,7 @@ async function openDetail(id){
     document.querySelectorAll('.detail-section').forEach((s,i)=>s.classList.toggle('active',i===0));
     /* Clear the type selection so each lead opens on its own most relevant quote
        rather than inheriting the type left selected on the previous lead. */
-    selectedQuoteType=null;currentQuotes=[];
+    selectedQuoteType=null;currentQuotes=[];selectedQuoteId=null;boqPick=null;
     await loadCurrentQuote();
     await renderDetailInfo();
     renderDetailEmails();
@@ -1320,11 +1336,24 @@ async function loadCurrentQuote(){
     /* null means "just opened this lead" — auto-pick. Once the user has clicked a
        type we honour it strictly, so choosing Freight on a lead with no freight quote
        shows an empty Freight tab to create one, rather than bouncing back to Goods. */
+    if(isProjectLead()){
+      /* Open on the latest quote unless one was picked; 'new' keeps the create screen. */
+      if(selectedQuoteId==='new'){
+        currentQuote=null;
+        if(!selectedQuoteType) selectedQuoteType='goods';
+      }else{
+        currentQuote=(selectedQuoteId&&currentQuotes.find(function(q){return q.id===selectedQuoteId;}))
+          ||(currentQuotes.length?currentQuotes[currentQuotes.length-1]:null);
+        if(currentQuote){selectedQuoteId=currentQuote.id;selectedQuoteType=currentQuote.quote_type||'goods';}
+        else{selectedQuoteId='new';selectedQuoteType=selectedQuoteType||'goods';}
+      }
+    }else{
     if(selectedQuoteType===null){
       var auto=quoteOfType('goods')||currentQuotes[0]||null;
       selectedQuoteType=auto?(auto.quote_type||'goods'):'goods';
     }
     currentQuote=quoteOfType(selectedQuoteType);
+    }
     partialForm=null;
     if(currentQuote){
       const lr=await sb('quote_line_items?quote_id=eq.'+currentQuote.id+'&order=sort_order.asc&select=*');
@@ -2459,6 +2488,7 @@ async function uploadFreightFiles(files){
    are called directly from a dozen places (recalc, save, revise) that each overwrite
    dtab-quote wholesale, and a wrapper would be wiped by every one of them. */
 function quoteSwitcherHtml(){
+  if(isProjectLead()) return projectQuoteSwitcherHtml();
   return '<div style="display:flex;gap:8px;margin-bottom:14px">'
     +QUOTE_TYPES.map(function(t){
       var q=quoteOfType(t.key);
@@ -2478,6 +2508,9 @@ async function renderQuoteTab(){
   el.innerHTML='<div class="empty-state"><i class="ti ti-loader"></i> Loading...</div>';
   try{
     await loadCurrentQuote();
+    /* Project quotes show which BOQ item each line came from, so the BOQ is loaded
+       before any quote screen draws. */
+    if(isProjectLead()) await loadBoqData();
     if(!currentQuote){renderDocumentScan(el);return;}
     if(currentQuote.status==='sent'||currentQuote.status==='approved'||currentQuote.status==='invoiced'){renderQuoteReview(el);return;}
     if(currentQuote&&currentQuote.status==='draft'){renderPricingStep(el);return;}
@@ -2487,7 +2520,15 @@ async function renderQuoteTab(){
 
 function renderDocumentScan(el){
   var isFreight=selectedQuoteType==='freight';
+  /* A project's goods quote normally starts from its BOQ; the supplier-quote scan and
+     blank quote stay underneath for anything the BOQ does not cover. */
+  var fromBoq='';
+  if(isProjectLead()&&!isFreight){
+    if(!boqPick||boqPick.mode!=='new') boqPick={mode:'new',qty:{}};
+    fromBoq='<div id="boq-picker" style="margin-bottom:16px">'+boqPickerHtml()+'</div>';
+  }
   var html=quoteSwitcherHtml()
+    +fromBoq
     +'<div style="padding:4px 0">'
     +'<div id="scan-dropzone" style="border:2px dashed var(--border-t);border-radius:var(--radius-md);padding:24px;text-align:center;background:var(--bg-secondary);cursor:pointer;margin-bottom:16px">'
     +'<i class="ti ti-scan" style="font-size:32px;color:var(--purple);margin-bottom:8px;display:block"></i>'
@@ -2524,6 +2565,10 @@ async function handleScanFile(file){
   if(!currentLead){toast('No lead selected','error');return;}
   var el=document.getElementById('dtab-quote');
   if(!el) return;
+  /* A scan replaces every line on the quote. Lines taken from the BOQ would lose their
+     link and drop out of the project tracker, so say so before it happens. */
+  if(currentQuote&&(currentLineItems||[]).some(function(l){return l.boq_item_id;})
+    &&!confirm('Scanning a supplier quote replaces every line on this quote, including the lines taken from the BOQ, which would then no longer count in the project tracker.\n\nReplace them?')) return;
   el.innerHTML='<div style="padding:20px;text-align:center"><i class="ti ti-loader" style="font-size:24px;color:var(--purple)"></i><div style="margin-top:8px;font-size:13px">Scanning document with AI...</div></div>';
   try{
     var data=await scanDocument(file);
@@ -2537,6 +2582,7 @@ async function handleScanFile(file){
       var rows=await res.json();
       currentQuote=rows[0];
       currentQuotes.push(rows[0]);
+      if(isProjectLead()){selectedQuoteId=rows[0].id;boqPick=null;}
     }
     // Populate line items from scan
     currentLineItems=(data.line_items||[]).map(function(item,i){
@@ -2562,7 +2608,7 @@ async function handleScanFile(file){
    GEL's contract rates with the end client, not what Traverse charges GEL, so they
    are never read, stored or shown: header cells that look like money are dropped
    before any column is mapped. */
-var boqItems=[],boqImport=null,boqProgress=null;
+var boqItems=[],boqImport=null,boqProgress=null,boqPick=null;
 var BOQ_MONEY_HEAD=/price|rate|cost|amount|total|value|sbd|aud|usd|\$/i;
 /* Item numbers look like 1, 12, 3.2, A4 or 2-1. Anything else in the item column
    (Note:, Date:, a web link) marks a notes row rather than a BOQ line. */
@@ -2658,10 +2704,7 @@ async function renderProjectTab(){
   el.innerHTML='<div class="empty-state"><i class="ti ti-loader"></i> Loading project&hellip;</div>';
   var leadId=currentLead.id;
   try{
-    var r=await sb('boq_items?lead_id=eq.'+leadId+'&order=boq_ref.asc,sort_order.asc&select=*');
-    var rows=await r.json();
-    boqItems=Array.isArray(rows)?rows:[];
-    boqProgress=await loadBoqProgress(leadId);
+    await loadBoqData();
     if(!currentLead||currentLead.id!==leadId) return;
     el.innerHTML=boqTrackerHtml();
   }catch(e){
@@ -2674,8 +2717,19 @@ async function renderProjectTab(){
    Invoiced counts a quote's lines in full once it is invoiced outright, or once its
    stages add up to the whole quote; before that only "specific materials" stages bill
    identifiable units, so percentage and deposit stages count nothing until complete. */
+async function loadBoqData(){
+  if(!currentLead) return;
+  var leadId=currentLead.id;
+  var r=await sb('boq_items?lead_id=eq.'+leadId+'&order=boq_ref.asc,sort_order.asc&select=*');
+  var rows=await r.json();
+  var prog=await loadBoqProgress(leadId);
+  if(!currentLead||currentLead.id!==leadId) return;
+  boqItems=Array.isArray(rows)?rows:[];
+  boqProgress=prog;
+}
+
 async function loadBoqProgress(leadId){
-  var prog={quoted:{},invoiced:{},partBilled:{}};
+  var prog={quoted:{},drafted:{},invoiced:{},partBilled:{}};
   var qr=await sb('quotes?lead_id=eq.'+leadId+'&select=id,status,total');
   var quotes=await qr.json(); if(!Array.isArray(quotes)||!quotes.length) return prog;
   var ids=quotes.map(function(q){return q.id;});
@@ -2688,6 +2742,7 @@ async function loadBoqProgress(leadId){
     var ql=lines.filter(function(l){return l.quote_id===q.id;});
     if(!ql.length) return;
     if(q.status==='sent'||q.status==='approved'||q.status==='invoiced') ql.forEach(function(l){add(prog.quoted,l.boq_item_id,Number(l.quantity)||0);});
+    else ql.forEach(function(l){add(prog.drafted,l.boq_item_id,Number(l.quantity)||0);});
     var qs=stages.filter(function(s){return s.quote_id===q.id;});
     var billed=qs.reduce(function(s,x){return s+(Number(x.amount)||0);},0);
     if((q.status==='invoiced'&&!qs.length)||(qs.length&&billed>=(Number(q.total)||0)-0.005)){
@@ -2725,9 +2780,11 @@ function boqTrackerHtml(){
   var head='<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">'
     +'<div><div style="font-size:14px;font-weight:700"><i class="ti ti-list-details"></i> Bill of quantities</div>'
     +'<div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Items and quantities for the whole project. Quote, invoice and ship portions of it over time.</div></div>'
-    +'<label class="btn btn-primary btn-sm" style="cursor:pointer"><i class="ti ti-file-spreadsheet"></i> Upload BOQ (.xlsx)'
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap">'
+    +(boqItems.length?'<button class="btn btn-primary btn-sm" onclick="quoteFromBoq()"><i class="ti ti-file-invoice"></i> New quote from BOQ</button>':'')
+    +'<label class="btn btn-sm'+(boqItems.length?'':' btn-primary')+'" style="cursor:pointer"><i class="ti ti-file-spreadsheet"></i> Upload BOQ (.xlsx)'
     +'<input type="file" accept=".xlsx,.xlsm" style="display:none" onchange="if(this.files[0])handleBoqFile(this.files[0]);this.value=\'\'"></label>'
-    +'</div>';
+    +'</div></div>';
   if(!boqItems.length){
     return head+'<div class="empty-state" style="padding:28px 12px">No BOQ on this project yet. Upload the BOQ spreadsheet to list every item the job needs.'
       +'<div style="font-size:11px;color:var(--text-tertiary);margin-top:6px">Only items and quantities are imported. Price and total columns are ignored.</div></div>';
@@ -2747,7 +2804,8 @@ function boqTrackerHtml(){
         +(it.remarks?'<div style="font-size:11px;color:var(--text-tertiary)">'+escHtml(it.remarks)+'</div>':'')+'</td>'
         +'<td style="padding:6px 8px;color:var(--text-secondary)">'+escHtml(it.unit||'')+'</td>'
         +'<td style="'+cell+';font-weight:600">'+fmtQty(q)+'</td>'
-        +'<td style="'+cell+'">'+(qd?fmtQty(qd):'<span style="color:var(--text-tertiary)">0</span>')+'</td>'
+        +'<td style="'+cell+'">'+(qd?fmtQty(qd):'<span style="color:var(--text-tertiary)">0</span>')
+        +(p.drafted&&p.drafted[it.id]?'<div style="font-size:10px;color:var(--text-tertiary)">+'+fmtQty(p.drafted[it.id])+' in draft</div>':'')+'</td>'
         +'<td style="'+cell+'">'+(inv?fmtQty(inv):(p.partBilled[it.id]?'<span style="color:#b45309;font-size:11px" title="Billed by a percentage or deposit invoice, which does not bill specific units">part</span>':'<span style="color:var(--text-tertiary)">0</span>'))+'</td>'
         +'<td style="'+cell+';color:var(--text-tertiary)">&#8212;</td>'
         +'<td style="'+cell+';color:var(--text-tertiary)">&#8212;</td>'
@@ -2918,6 +2976,188 @@ async function removeBoqGroup(name){
     toast('BOQ removed');
     renderProjectTab();
   }catch(e){toast('Could not remove the BOQ: '+e.message,'error');}
+}
+
+/* ── QUOTING FROM THE BOQ ─────────────────────────────────────────────────
+   A project quote is built by ticking BOQ items and the quantity to quote now. Each
+   line keeps boq_item_id, which is how the tracker knows what has been quoted,
+   invoiced and shipped against the BOQ. Lines start unpriced: Traverse's price is set
+   on the quote as usual, never taken from the BOQ.
+   boqPick is the open picker: mode 'new' creates a quote, 'append' adds lines to the
+   draft being priced. qty maps boq_item_id -> quantity typed for each ticked item. */
+
+function projectQuoteSwitcherHtml(){
+  var chips=currentQuotes.map(function(q){
+    var on=selectedQuoteId===q.id,fr=(q.quote_type||'goods')==='freight';
+    return '<button type="button" onclick="selectQuoteById(\''+q.id+'\')" style="text-align:left;cursor:pointer;padding:7px 11px;border-radius:var(--radius-md);border:1px solid '+(on?'var(--accent)':'var(--border-t)')+';background:'+(on?'var(--accent-light)':'var(--bg-secondary)')+'">'
+      +'<div style="font-size:12px;font-weight:700;display:flex;align-items:center;gap:5px"><i class="ti '+(fr?'ti-ship':'ti-package')+'"></i> '+escHtml(q.quote_number||'')+'</div>'
+      +'<div style="font-size:11px;color:var(--text-secondary);text-transform:capitalize;margin-top:2px">'+escHtml(q.status||'draft')
+      +(Number(q.total)>0?' &middot; '+fmtAud(q.total):'')+'</div></button>';
+  }).join('');
+  var newBtn=function(t,label,icon){
+    var on=selectedQuoteId==='new'&&selectedQuoteType===t;
+    return '<button type="button" onclick="startProjectQuote(\''+t+'\')" style="cursor:pointer;padding:7px 11px;border-radius:var(--radius-md);border:1px dashed '+(on?'var(--accent)':'var(--border-t)')+';background:'+(on?'var(--accent-light)':'transparent')+';font-size:12px;font-weight:600;color:var(--text-secondary)"><i class="ti '+icon+'"></i> '+label+'</button>';
+  };
+  return '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">'+chips
+    +newBtn('goods','New goods quote','ti-plus')+newBtn('freight','New freight quote','ti-plus')+'</div>';
+}
+
+async function selectQuoteById(id){
+  selectedQuoteId=id;boqPick=null;
+  currentQuote=null;currentLineItems=[];
+  await renderQuoteTab();
+}
+async function startProjectQuote(type){
+  selectedQuoteId='new';selectedQuoteType=type==='freight'?'freight':'goods';
+  boqPick=selectedQuoteType==='goods'?{mode:'new',qty:{}}:null;
+  currentQuote=null;currentLineItems=[];
+  await renderQuoteTab();
+}
+/* From the Project tab straight into a new quote with the BOQ picker open. */
+function quoteFromBoq(){
+  var tab=document.querySelector('.detail-tab[onclick*="\'quote\'"]');
+  selectedQuoteId='new';selectedQuoteType='goods';boqPick={mode:'new',qty:{}};
+  if(tab) switchDetailTab('quote',tab);
+}
+function openBoqAppend(){boqPick={mode:'append',qty:{}};renderPricingStep(document.getElementById('dtab-quote'));}
+function closeBoqPick(){
+  if(boqPick&&boqPick.mode==='append'){boqPick=null;renderPricingStep(document.getElementById('dtab-quote'));return;}
+  boqPick={mode:'new',qty:{}};redrawBoqPicker();
+}
+function redrawBoqPicker(){var el=document.getElementById('boq-picker');if(el) el.innerHTML=boqPickerHtml();}
+
+/* The BOQ code for a line, e.g. "LMCP-2602 #1": the customer's own reference, so GEL
+   can match each quote and invoice line to their BOQ. */
+function boqLineName(it){
+  var code=boqText((it.boq_ref||'').split(' — ')[0]);
+  if(it.item_no) return code?code+' #'+it.item_no:'#'+it.item_no;
+  return code;
+}
+function boqLineTagHtml(item){
+  if(!item||!item.boq_item_id) return '';
+  var b=boqItems.find(function(x){return x.id===item.boq_item_id;});
+  if(!b) return '<div style="font-size:10px;color:var(--text-tertiary);margin-top:2px"><i class="ti ti-list-details"></i> BOQ item</div>';
+  return '<div style="font-size:10px;color:var(--purple);margin-top:2px" title="'+escHtml(b.description||'')+'"><i class="ti ti-list-details"></i> BOQ '+escHtml(boqLineName(b))+' &middot; '+fmtQty(b.quantity)+(b.unit?' '+escHtml(b.unit):'')+' in BOQ</div>';
+}
+
+function boqPickerHtml(){
+  var f=boqPick;
+  if(!f) return '';
+  var append=f.mode==='append';
+  var title='<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px">'
+    +'<div><div style="font-size:13px;font-weight:700"><i class="ti ti-list-details"></i> '+(append?'Add items from the BOQ':'Quote from the BOQ')+'</div>'
+    +'<div style="font-size:11px;color:var(--text-secondary)">Tick what to quote now and how many. Prices are set on the quote next.</div></div>'
+    +(append?'<button class="btn btn-sm" onclick="closeBoqPick()">Cancel</button>':'')+'</div>';
+  if(!boqItems.length){
+    return '<div style="padding:12px;border:1px solid var(--border-t);border-radius:var(--radius-md);background:var(--bg-secondary)">'+title
+      +'<div style="font-size:12px;color:var(--text-secondary)">This project has no BOQ yet. Upload it on the <strong>Project</strong> tab to quote from it.</div></div>';
+  }
+  var p=boqProgress||{quoted:{},drafted:{}};
+  /* Items already on the draft being priced are changed in its table, not added twice. */
+  var onQuote={};
+  if(append) (currentLineItems||[]).forEach(function(l){if(l.boq_item_id) onQuote[l.boq_item_id]=true;});
+  var cell='padding:5px 7px;text-align:right;white-space:nowrap';
+  var picked=0;
+  var groups=boqGroups(boqItems).map(function(g){
+    var rows=g.items.map(function(it){
+      var q=Number(it.quantity)||0,qd=p.quoted[it.id]||0,dr=p.drafted[it.id]||0,left=round2(q-qd);
+      var on=f.qty[it.id]!=null,already=onQuote[it.id];
+      if(on) picked++;
+      var want=on?Number(f.qty[it.id]):0;
+      return '<tr style="border-top:1px solid var(--border-t)'+(already?';opacity:.5':'')+'">'
+        +'<td style="padding:5px 7px"><input type="checkbox" '+(on?'checked ':'')+(already?'disabled ':'')+'onchange="toggleBoqPick(\''+it.id+'\',this.checked)" style="accent-color:var(--accent)"></td>'
+        +'<td style="padding:5px 7px;color:var(--text-tertiary)">'+escHtml(it.item_no||'')+'</td>'
+        +'<td style="padding:5px 7px;min-width:180px">'+escHtml(it.description||'')
+        +(already?'<div style="font-size:10px;color:var(--text-tertiary)">Already on this quote</div>':'')+'</td>'
+        +'<td style="'+cell+'">'+fmtQty(q)+(it.unit?' <span style="color:var(--text-tertiary)">'+escHtml(it.unit)+'</span>':'')+'</td>'
+        +'<td style="'+cell+'">'+(qd?fmtQty(qd):'<span style="color:var(--text-tertiary)">0</span>')
+        +(dr?'<div style="font-size:10px;color:var(--text-tertiary)">+'+fmtQty(dr)+' in draft</div>':'')+'</td>'
+        +'<td style="'+cell+';font-weight:600;color:'+(left>0.0001?'#b45309':'var(--green)')+'">'+fmtQty(Math.max(left,0))+'</td>'
+        +'<td style="'+cell+'"><input class="form-input" type="number" step="any" min="0" '+(on?'':'disabled ')+'value="'+(on?escHtml(String(f.qty[it.id])):'')+'" oninput="setBoqPickQty(\''+it.id+'\',this.value)" style="width:76px;font-size:12px;text-align:right">'
+        +'<div id="bp-warn-'+it.id+'" style="font-size:10px;color:#b45309">'+(on&&want>left+0.0001?'more than left':'')+'</div></td>'
+        +'</tr>';
+    }).join('');
+    return '<div style="font-size:12px;font-weight:700;margin:10px 0 4px">'+escHtml(g.name)+'</div>'
+      +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:var(--bg-primary)">'
+      +'<th></th><th style="padding:5px 7px;text-align:left">#</th><th style="padding:5px 7px;text-align:left">Item</th>'
+      +'<th style="'+cell+'">BOQ</th><th style="'+cell+'">Quoted</th><th style="'+cell+'">Left</th><th style="'+cell+'">Quote now</th>'
+      +'</tr></thead><tbody>'+rows+'</tbody></table></div>';
+  }).join('');
+  return '<div style="padding:12px;border:1px solid var(--accent);border-radius:var(--radius-md);background:var(--bg-secondary)">'+title+groups
+    +'<div style="display:flex;justify-content:flex-end;margin-top:10px">'
+    +'<button class="btn btn-primary btn-sm" id="boq-pick-btn" '+(picked?'':'disabled ')+'onclick="createQuoteFromBoq()"><i class="ti ti-check"></i> '
+    +(append?'Add '+picked+' item'+(picked===1?'':'s')+' to this quote':(picked?'Create quote with '+picked+' item'+(picked===1?'':'s'):'Tick items to quote'))+'</button>'
+    +'</div></div>';
+}
+
+/* Ticking defaults the quantity to what is left to quote, the usual next portion. */
+function toggleBoqPick(id,on){
+  if(!boqPick) return;
+  if(on){
+    var it=boqItems.find(function(x){return x.id===id;});
+    var p=boqProgress||{quoted:{}};
+    var left=it?round2((Number(it.quantity)||0)-(p.quoted[id]||0)):0;
+    boqPick.qty[id]=left>0?left:(it?Number(it.quantity)||0:0);
+  }else delete boqPick.qty[id];
+  redrawBoqPicker();
+}
+/* Typing only updates state and the over-quantity note, so the box keeps focus. */
+function setBoqPickQty(id,v){
+  if(!boqPick||boqPick.qty[id]==null) return;
+  boqPick.qty[id]=v;
+  var it=boqItems.find(function(x){return x.id===id;});
+  var p=boqProgress||{quoted:{}};
+  var left=it?round2((Number(it.quantity)||0)-(p.quoted[id]||0)):0;
+  var w=document.getElementById('bp-warn-'+id);
+  if(w) w.textContent=Number(v)>left+0.0001?'more than left':'';
+}
+
+async function createQuoteFromBoq(){
+  if(!boqPick||!currentLead) return;
+  var f=boqPick,chosen=[];
+  boqItems.forEach(function(it){if(f.qty[it.id]!=null) chosen.push({it:it,qty:Number(f.qty[it.id])});});
+  if(!chosen.length){toast('Tick at least one BOQ item','error');return;}
+  var bad=chosen.filter(function(c){return !(c.qty>0);});
+  if(bad.length){toast('Enter a quantity for '+escHtml(boqLineName(bad[0].it)||bad[0].it.description),'error');return;}
+  var lineFor=function(c,i){
+    return {item_name:boqLineName(c.it),description:c.it.description||'',quantity:c.qty,cost:0,rate:0,
+      gst_applicable:false,manual:false,amount:0,sort_order:i,boq_item_id:c.it.id};
+  };
+  if(f.mode==='append'){
+    var start=currentLineItems.length;
+    chosen.forEach(function(c,i){currentLineItems.push(lineFor(c,start+i));});
+    boqPick=null;
+    renderPricingStep(document.getElementById('dtab-quote'));
+    toast(chosen.length+' BOQ item'+(chosen.length===1?'':'s')+' added &#8212; price them, then Preview &amp; Send');
+    return;
+  }
+  var btn=document.getElementById('boq-pick-btn');
+  if(btn){btn.disabled=true;btn.innerHTML='<i class="ti ti-loader"></i> Creating&hellip;';}
+  var leadId=currentLead.id,quote=null;
+  try{
+    var res=await sbWrite('quotes',{method:'POST',body:JSON.stringify({lead_id:leadId,quote_number:newQuoteNumber('goods'),quote_type:'goods',status:'draft',client_name:currentLead.company||currentLead.name,client_address:'',subtotal:0,gst_total:0,total:0}),prefer:'return=representation'});
+    var rows=await res.json();
+    quote=rows&&rows[0];
+    if(!quote) throw new Error('Quote was not created');
+    /* Saved straight away, unlike a blank quote's lines, so the portion just picked is
+       not lost if the lead is closed before the quote is priced and sent. */
+    var lines=chosen.map(function(c,i){return Object.assign({quote_id:quote.id},lineFor(c,i));});
+    try{
+      await sbWrite('quote_line_items',{method:'POST',body:JSON.stringify(lines)});
+    }catch(le){
+      /* Never leave an empty quote behind that looks like a real one. */
+      try{await sbWrite('quotes?id=eq.'+quote.id,{method:'DELETE'});}catch(_){}
+      throw le;
+    }
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:leadId,action:'Quote created from BOQ',
+      detail:quote.quote_number+': '+chosen.map(function(c){return boqLineName(c.it)+' ×'+fmtQty(c.qty);}).join(', ')})});
+    boqPick=null;selectedQuoteId=quote.id;selectedQuoteType='goods';
+    await renderQuoteTab();
+    toast('Quote '+quote.quote_number+' created with '+chosen.length+' BOQ item'+(chosen.length===1?'':'s')+' &#8212; now price it');
+  }catch(e){
+    if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-check"></i> Create quote';}
+    toast('Could not create the quote: '+e.message,'error');
+  }
 }
 
 /* ── CONTAINER PACKING LIST ───────────────────────────────────────────────
@@ -3384,13 +3624,14 @@ function newQuoteNumber(type){
 async function createNewQuote(type){
   if(!currentLead) return;
   type=(type==='freight')?'freight':'goods';
-  if(quoteOfType(type)){toast('This lead already has a '+quoteTypeLabel(type).toLowerCase()+' quote','error');return;}
+  if(!isProjectLead()&&quoteOfType(type)){toast('This lead already has a '+quoteTypeLabel(type).toLowerCase()+' quote','error');return;}
   try{
     var res=await sbWrite('quotes',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,quote_number:newQuoteNumber(type),quote_type:type,status:'draft',client_name:currentLead.company||currentLead.name,client_address:'',subtotal:0,gst_total:0,total:0}),prefer:'return=representation'});
     var rows=await res.json();
     if(!rows||!rows.length) throw new Error('Quote was not created');
     currentQuotes.push(rows[0]);
     currentQuote=rows[0];currentLineItems=[];selectedQuoteType=type;
+    if(isProjectLead()){selectedQuoteId=rows[0].id;boqPick=null;}
     renderPricingStep(document.getElementById('dtab-quote'));
   }catch(e){toast('Could not create quote: '+e.message,'error');}
 }
@@ -3404,7 +3645,7 @@ function renderPricingStep(el){
   var itemRows=currentLineItems.map(function(item,i){
     var locked=item.manual===true;
     return '<tr>'
-      +'<td><input class="form-input" style="font-size:12px" value="'+escHtml(item.item_name||'')+'" oninput="currentLineItems['+i+'].item_name=this.value"></td>'
+      +'<td><input class="form-input" style="font-size:12px" value="'+escHtml(item.item_name||'')+'" oninput="currentLineItems['+i+'].item_name=this.value">'+boqLineTagHtml(item)+'</td>'
       +'<td><input class="form-input" style="font-size:12px" value="'+escHtml(item.description||'')+'" oninput="currentLineItems['+i+'].description=this.value"></td>'
       +'<td><input class="form-input" style="font-size:12px;width:55px;text-align:right" type="number" value="'+(item.quantity||1)+'" oninput="updateLineField('+i+',String.fromCharCode(113,116,121),this.value)"></td>'
       +'<td><input class="form-input" style="font-size:12px;width:75px;text-align:right;color:var(--text-secondary)" type="number" step="0.01" value="'+(Number(item.cost)||0)+'" oninput="updateLineField('+i+',String.fromCharCode(99,111,115,116),this.value)" title="Supplier cost (ex GST)"></td>'
@@ -3434,6 +3675,11 @@ function renderPricingStep(el){
     +'<th>Item</th><th>Description</th><th style="text-align:right">Qty</th><th style="text-align:right">Cost</th><th style="text-align:right">Rate (sell)</th><th style="text-align:right">Amount</th><th style="text-align:center">Status</th><th></th>'
     +'</tr></thead><tbody id="liTbody">'+itemRows+'</tbody></table>'
     +'<button class="btn btn-sm" style="margin-bottom:12px" onclick="addLineItem()"><i class="ti ti-plus"></i> Add item</button>'
+    +(isProjectLead()&&(currentQuote.quote_type||'goods')!=='freight'
+      ?(boqPick&&boqPick.mode==='append'
+        ?'<div id="boq-picker" style="margin:0 0 12px">'+boqPickerHtml()+'</div>'
+        :' <button class="btn btn-sm" style="margin-bottom:12px" onclick="openBoqAppend()"><i class="ti ti-list-details"></i> Add items from the BOQ</button>')
+      :'')
     // Markup box
     +'<div style="background:rgba(124,58,237,0.06);border:1px solid rgba(124,58,237,0.2);border-radius:var(--radius-md);padding:12px 14px;margin-bottom:12px">'
     +'<div style="font-size:12px;font-weight:700;color:var(--purple);margin-bottom:6px"><i class="ti ti-percentage"></i> Pricing Formula</div>'
@@ -3615,7 +3861,9 @@ async function sendQuoteToClient(){
     await sbWrite('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({client_name:currentQuote.client_name,client_address:currentQuote.client_address,expiry_date:currentQuote.expiry_date||null,subtotal:currentQuote.subtotal,gst_total:currentQuote.gst_total,total:currentQuote.total,markup_pct:Number(currentQuote.markup_pct)||0,status:'sent',updated_at:new Date().toISOString()})});
     await sbWrite('quote_line_items?quote_id=eq.'+currentQuote.id,{method:'DELETE'});
     if(currentLineItems.length>0){
-      var ins=currentLineItems.map(function(item,i){return {quote_id:currentQuote.id,item_name:item.item_name||'',description:item.description||'',quantity:Number(item.quantity)||1,cost:Number(item.cost)||0,rate:Number(item.rate)||0,gst_applicable:item.gst_applicable===true,manual:item.manual===true,amount:(Number(item.quantity)||1)*(Number(item.rate)||0),sort_order:i};});
+      /* Lines are rewritten on every send, so boq_item_id must be carried or a project
+         quote would silently lose its link to the BOQ the first time it is sent. */
+      var ins=currentLineItems.map(function(item,i){return {quote_id:currentQuote.id,item_name:item.item_name||'',description:item.description||'',quantity:Number(item.quantity)||1,cost:Number(item.cost)||0,rate:Number(item.rate)||0,gst_applicable:item.gst_applicable===true,manual:item.manual===true,amount:(Number(item.quantity)||1)*(Number(item.rate)||0),sort_order:i,boq_item_id:item.boq_item_id||null};});
       await sbWrite('quote_line_items',{method:'POST',body:JSON.stringify(ins)});
     }
     if(btn) btn.innerHTML='<i class="ti ti-loader"></i> Sending...';

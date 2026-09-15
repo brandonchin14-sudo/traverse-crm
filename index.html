@@ -2204,6 +2204,20 @@ async function loadShipments(){
     var r=await sb('lead_shipments?lead_id=eq.'+currentLead.id+'&order=seq.asc&select=*');
     currentShipments=await r.json();
     if(!Array.isArray(currentShipments)) currentShipments=[];
+    /* A project ships against its BOQ, not one quote: its goods arrive across many
+       quotes over the life of the job, and the BOQ is the one list they all share.
+       Lines are keyed by boq_item_id, which stays stable when a BOQ is added to later. */
+    if(isProjectLead()){
+      await loadBoqData();
+      var pr=boqProgress||{};
+      shipItems=boqItems.map(function(b){
+        var nm=boqLineName(b),d=b.description||'';
+        return {item_name:(nm?nm+' ':'')+(d.length>70?d.slice(0,67)+'...':d),description:d,quantity:Number(b.quantity)||0,
+          unit:b.unit||'',boq_item_id:b.id,ordered:(pr.ordered&&pr.ordered[b.id])||0};
+      });
+      renderShipmentsPanel();
+      return;
+    }
     /* Goods quote only — freight quote lines are charges, not cargo. */
     var qr=await sb('quotes?lead_id=eq.'+currentLead.id+'&quote_type=neq.freight&select=id&order=created_at.asc&limit=1');
     var qs=await qr.json();
@@ -2224,13 +2238,17 @@ function shippedQtyByLine(){
     if(typeof ls==='string'){try{ls=JSON.parse(ls);}catch(e){return;}}
     if(!Array.isArray(ls)) return;
     ls.forEach(function(x){
-      if(!x||x.sort_order==null) return;
-      m[x.sort_order]=(m[x.sort_order]||0)+(Number(x.quantity)||0);
+      if(!x) return;
+      var k=x.boq_item_id||x.sort_order;
+      if(k==null) return;
+      m[k]=(m[k]||0)+(Number(x.quantity)||0);
     });
   });
   return m;
 }
-function shipRemainingQty(it,i,done){return round2((Number(it.quantity)||0)-((done||{})[lineKey(it,i)]||0));}
+/* BOQ-based lines (projects) key by boq_item_id; quote lines key by position. */
+function shipKey(it,i){return it&&it.boq_item_id?it.boq_item_id:lineKey(it,i);}
+function shipRemainingQty(it,i,done){return round2((Number(it.quantity)||0)-((done||{})[shipKey(it,i)]||0));}
 
 function shipmentLinesHtml(s){
   var ls=s.lines;
@@ -2289,7 +2307,7 @@ function renderShipmentsPanel(){
       ?'<div style="font-size:12px;color:var(--text-secondary);margin-bottom:'+(rows||legacy?'0':'8px')+'">'
         +(outstanding
           ?'<span style="color:#b45309;font-weight:600">'+outstanding+' line'+(outstanding===1?'':'s')+' still to ship</span>'
-          :'<span style="color:var(--green);font-weight:600"><i class="ti ti-check"></i> Everything on the quote has been shipped</span>')
+          :'<span style="color:var(--green);font-weight:600"><i class="ti ti-check"></i> Everything '+(isProjectLead()?'in the BOQ':'on the quote')+' has been shipped</span>')
         +'</div>'
       :'')
     +'<div style="background:var(--bg-primary);border:1px solid var(--border-t);border-radius:var(--radius-md);margin-top:8px">'
@@ -2316,13 +2334,24 @@ function setShipMethod(m){
 function toggleShipItem(i,on){
   if(!shipForm) return;
   if(on){
-    var it=shipItems[i]||{};
-    var rem=shipRemainingQty(it,i,shippedQtyByLine());
-    shipForm.items[i]=rem>0?rem:(Number(it.quantity)||1);
+    var it=shipItems[i]||{},done=shippedQtyByLine();
+    var rem=shipRemainingQty(it,i,done);
+    /* On a project the likely next shipment is what has been ordered (approved or
+       invoiced quotes) but not yet shipped, rather than the whole BOQ balance. */
+    var ready=it.boq_item_id?round2((it.ordered||0)-(done[shipKey(it,i)]||0)):0;
+    shipForm.items[i]=ready>0?ready:(rem>0?rem:(Number(it.quantity)||1));
   } else delete shipForm.items[i];
   renderShipmentsPanel();
 }
 function setShipItemQty(i,v){if(shipForm){shipForm.items[i]=v;updateShipPreview();}}
+function setShipShowAll(on){if(shipForm){shipForm.showAll=!!on;renderShipmentsPanel();}}
+function shipBoqFilterHtml(f,done){
+  var hidden=shipItems.filter(function(it,i){return f.items[i]==null&&!(it.ordered>0)&&!((done[shipKey(it,i)]||0)>0);}).length;
+  if(!hidden&&!f.showAll) return '';
+  return '<div style="font-size:11px;color:var(--text-secondary);margin:-2px 0 6px">'
+    +(f.showAll?'Showing every BOQ item. ':'Showing BOQ items that have been ordered or shipped; '+hidden+' more not ordered yet. ')
+    +'<a href="#" onclick="setShipShowAll('+(f.showAll?'false':'true')+');return false">'+(f.showAll?'Show ordered only':'Show all')+'</a></div>';
+}
 
 function shipSelectedLines(){
   if(!shipForm) return [];
@@ -2331,7 +2360,9 @@ function shipSelectedLines(){
     if(shipForm.items[i]==null) return;
     var q=Number(shipForm.items[i])||0;
     if(!(q>0)) return;
-    out.push({sort_order:lineKey(it,i),item_name:it.item_name||it.description||('Item '+(i+1)),quantity:q});
+    var line={sort_order:lineKey(it,i),item_name:it.item_name||it.description||('Item '+(i+1)),quantity:q};
+    if(it.boq_item_id) line.boq_item_id=it.boq_item_id;
+    out.push(line);
   });
   return out;
 }
@@ -2378,10 +2409,23 @@ function renderShipmentForm(){
     +'</div>'
     +(shipItems.length
       ?'<label class="form-label">What went on this shipment</label>'
+        +(isProjectLead()?shipBoqFilterHtml(f,done):'')
         +'<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:9px">'
         +shipItems.map(function(it,i){
-          var total=Number(it.quantity)||0,shippedQ=done[lineKey(it,i)]||0,rem=round2(total-shippedQ);
+          var total=Number(it.quantity)||0,shippedQ=done[shipKey(it,i)]||0,rem=round2(total-shippedQ);
           var on=f.items[i]!=null;
+          /* A long BOQ lists only what has been ordered or shipped unless asked for all. */
+          if(it.boq_item_id&&!f.showAll&&!on&&!(it.ordered>0)&&!(shippedQ>0)) return '';
+          if(it.boq_item_id){
+            return '<div style="display:flex;align-items:center;gap:8px;font-size:12px;flex-wrap:wrap">'
+              +'<label style="display:flex;align-items:center;gap:7px;cursor:pointer;flex:1;min-width:160px">'
+              +'<input type="checkbox" '+(on?'checked':'')+' onchange="toggleShipItem('+i+',this.checked)" style="width:14px;height:14px;accent-color:var(--accent)">'
+              +'<span'+(rem<=0?' style="color:var(--text-tertiary)"':'')+' title="'+escHtml(it.description||'')+'">'+escHtml(it.item_name)+'</span></label>'
+              +'<input class="form-input" type="number" step="any" min="0" value="'+escHtml(on?String(f.items[i]):'')+'" '+(on?'':'disabled')+' oninput="setShipItemQty('+i+',this.value)" style="width:76px;font-size:12px;text-align:right">'
+              +'<span style="color:var(--text-secondary);white-space:nowrap">of '+fmtQty(total)+(it.unit?' '+escHtml(it.unit):'')+' in BOQ</span>'
+              +'<span style="font-size:11px;white-space:nowrap;color:var(--text-tertiary)">'+fmtQty(it.ordered||0)+' ordered &middot; '+fmtQty(shippedQ)+' shipped &middot; '+fmtQty(Math.max(rem,0))+' left</span>'
+              +'</div>';
+          }
           return '<div style="display:flex;align-items:center;gap:8px;font-size:12px;flex-wrap:wrap">'
             +'<label style="display:flex;align-items:center;gap:7px;cursor:pointer;flex:1;min-width:160px">'
             +'<input type="checkbox" '+(on?'checked':'')+' onchange="toggleShipItem('+i+',this.checked)" style="width:14px;height:14px;accent-color:var(--accent)">'
@@ -2392,7 +2436,7 @@ function renderShipmentForm(){
             +'</div>';
         }).join('')
         +'</div>'
-      :'<div style="font-size:12px;color:var(--text-tertiary);margin-bottom:9px">No quote line items on this lead, so the shipment will just record how it travelled.</div>')
+      :'<div style="font-size:12px;color:var(--text-tertiary);margin-bottom:9px">'+(isProjectLead()?'This project has no BOQ yet, so the shipment will just record how it travelled.':'No quote line items on this lead, so the shipment will just record how it travelled.')+'</div>')
     +'<input class="form-input" placeholder="'+(f.method==='personal'?'Note — what was carried, and by whom':'Note (optional)')+'" value="'+escHtml(f.notes||'')+'" oninput="setShipField(\'notes\',this.value)" style="font-size:12px;margin-bottom:9px">'
     +'<div id="ship-preview"></div>'
     +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">'
@@ -2729,7 +2773,17 @@ async function loadBoqData(){
 }
 
 async function loadBoqProgress(leadId){
-  var prog={quoted:{},drafted:{},invoiced:{},partBilled:{}};
+  var prog={quoted:{},drafted:{},ordered:{},invoiced:{},partBilled:{},shipped:{}};
+  var add=function(m,k,v){m[k]=round2((m[k]||0)+v);};
+  /* Shipped comes from shipments on the project, which record BOQ items directly. */
+  var sr=await sb('lead_shipments?lead_id=eq.'+leadId+'&select=lines');
+  var ships=await sr.json();
+  (Array.isArray(ships)?ships:[]).forEach(function(s){
+    var ls=s.lines;
+    if(typeof ls==='string'){try{ls=JSON.parse(ls);}catch(e){ls=null;}}
+    if(!Array.isArray(ls)) return;
+    ls.forEach(function(x){if(x&&x.boq_item_id) add(prog.shipped,x.boq_item_id,Number(x.quantity)||0);});
+  });
   var qr=await sb('quotes?lead_id=eq.'+leadId+'&select=id,status,total');
   var quotes=await qr.json(); if(!Array.isArray(quotes)||!quotes.length) return prog;
   var ids=quotes.map(function(q){return q.id;});
@@ -2737,12 +2791,13 @@ async function loadBoqProgress(leadId){
   var lines=await lr.json(); if(!Array.isArray(lines)||!lines.length) return prog;
   var ir=await sb('quote_invoices?lead_id=eq.'+leadId+'&select=quote_id,basis,amount,lines');
   var stages=await ir.json(); if(!Array.isArray(stages)) stages=[];
-  var add=function(m,k,v){m[k]=round2((m[k]||0)+v);};
   quotes.forEach(function(q){
     var ql=lines.filter(function(l){return l.quote_id===q.id;});
     if(!ql.length) return;
     if(q.status==='sent'||q.status==='approved'||q.status==='invoiced') ql.forEach(function(l){add(prog.quoted,l.boq_item_id,Number(l.quantity)||0);});
     else ql.forEach(function(l){add(prog.drafted,l.boq_item_id,Number(l.quantity)||0);});
+    /* Ordered = the client has approved it, so it is what can be sent next. */
+    if(q.status==='approved'||q.status==='invoiced') ql.forEach(function(l){add(prog.ordered,l.boq_item_id,Number(l.quantity)||0);});
     var qs=stages.filter(function(s){return s.quote_id===q.id;});
     var billed=qs.reduce(function(s,x){return s+(Number(x.amount)||0);},0);
     if((q.status==='invoiced'&&!qs.length)||(qs.length&&billed>=(Number(q.total)||0)-0.005)){
@@ -2776,7 +2831,7 @@ function boqGroups(items){
 }
 
 function boqTrackerHtml(){
-  var p=boqProgress||{quoted:{},invoiced:{},partBilled:{}};
+  var p=boqProgress||{quoted:{},drafted:{},invoiced:{},partBilled:{},shipped:{}};
   var head='<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">'
     +'<div><div style="font-size:14px;font-weight:700"><i class="ti ti-list-details"></i> Bill of quantities</div>'
     +'<div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Items and quantities for the whole project. Quote, invoice and ship portions of it over time.</div></div>'
@@ -2807,7 +2862,7 @@ function boqTrackerHtml(){
         +'<td style="'+cell+'">'+(qd?fmtQty(qd):'<span style="color:var(--text-tertiary)">0</span>')
         +(p.drafted&&p.drafted[it.id]?'<div style="font-size:10px;color:var(--text-tertiary)">+'+fmtQty(p.drafted[it.id])+' in draft</div>':'')+'</td>'
         +'<td style="'+cell+'">'+(inv?fmtQty(inv):(p.partBilled[it.id]?'<span style="color:#b45309;font-size:11px" title="Billed by a percentage or deposit invoice, which does not bill specific units">part</span>':'<span style="color:var(--text-tertiary)">0</span>'))+'</td>'
-        +'<td style="'+cell+';color:var(--text-tertiary)">&#8212;</td>'
+        +'<td style="'+cell+'">'+(p.shipped&&p.shipped[it.id]?fmtQty(p.shipped[it.id]):'<span style="color:var(--text-tertiary)">0</span>')+'</td>'
         +'<td style="'+cell+';color:var(--text-tertiary)">&#8212;</td>'
         +'<td style="'+cell+';font-weight:600;color:'+leftCol+'">'+(left<=0.0001&&left>=-0.0001?'<i class="ti ti-check"></i>':fmtQty(left))+'</td>'
         +'</tr>';
@@ -2823,7 +2878,7 @@ function boqTrackerHtml(){
       +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'
       +'<thead><tr style="background:var(--bg-primary)">'
       +'<th style="padding:6px 8px;text-align:left">#</th><th style="padding:6px 8px;text-align:left">Item</th><th style="padding:6px 8px;text-align:left">Unit</th>'
-      +'<th style="'+cell+'">BOQ</th><th style="'+cell+'">Quoted</th><th style="'+cell+'">Invoiced</th><th style="'+cell+'" title="Shipment tracking against the BOQ is the next phase">Shipped</th><th style="'+cell+'" title="Payment tracking against the BOQ is a later phase">Paid</th><th style="'+cell+'">Left to quote</th>'
+      +'<th style="'+cell+'">BOQ</th><th style="'+cell+'">Quoted</th><th style="'+cell+'">Invoiced</th><th style="'+cell+'" title="Recorded on the Freight tab">Shipped</th><th style="'+cell+'" title="Payment tracking against the BOQ is a later phase">Paid</th><th style="'+cell+'">Left to quote</th>'
       +'</tr></thead><tbody>'+rows+'</tbody></table></div></div>';
   }).join('');
   return head+body;
@@ -4122,8 +4177,12 @@ async function createPartialInvoice(){
       invoice_date:todayLocalISO(),
       /* Per-line record of what this stage billed, so a later materials stage knows
          how many units of each line have already shipped. */
-      lines:lines.map(function(it,idx){return {sort_order:lineKey(it,idx),item_name:it.item_name||'',
-        quantity:Number(it.quantity)||0,rate:Number(it.rate)||0,amount:Number(it.amount)||0};})};
+      lines:lines.map(function(it,idx){var x={sort_order:lineKey(it,idx),item_name:it.item_name||'',
+        quantity:Number(it.quantity)||0,rate:Number(it.rate)||0,amount:Number(it.amount)||0};
+        /* A project stage records the BOQ item it bills, so the tracker does not depend
+           on the quote's line order staying the same. */
+        if(it.boq_item_id) x.boq_item_id=it.boq_item_id;
+        return x;})};
     var ins=await sbWrite('quote_invoices',{method:'POST',body:JSON.stringify(row),prefer:'return=representation'});
     var saved=await ins.json();
     currentQuoteInvoices.push(Array.isArray(saved)&&saved.length?saved[0]:row);

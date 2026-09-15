@@ -66,6 +66,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .brief-item-text{font-size:13px;font-weight:500;line-height:1.35}
 .brief-row.done .brief-item-text{color:var(--text-tertiary);text-decoration:line-through}
 .brief-chip{font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;background:var(--accent-light);color:var(--accent-dark);white-space:nowrap}
+/* Priority: 3 highest (red), 2 middle (yellow), 1 lowest (green). An inset shadow
+   rather than a border, so a coloured row keeps the same alignment as the others. */
+.brief-row.p3{box-shadow:inset 4px 0 0 #dc2626;background:rgba(220,38,38,.06)}
+.brief-row.p2{box-shadow:inset 4px 0 0 #eab308;background:rgba(234,179,8,.10)}
+.brief-row.p1{box-shadow:inset 4px 0 0 #16a34a;background:rgba(22,163,74,.07)}
+.brief-row.done.p3,.brief-row.done.p2,.brief-row.done.p1{background:transparent}
+.brief-pri{font-size:11px;font-weight:700;padding:1px 4px;border-radius:99px;border:1px solid var(--border-t);background:var(--bg-primary);color:var(--text-secondary);cursor:pointer}
+.brief-pri.p3{background:#dc2626;border-color:#dc2626;color:#fff}
+.brief-pri.p2{background:#eab308;border-color:#eab308;color:#1a1a1a}
+.brief-pri.p1{background:#16a34a;border-color:#16a34a;color:#fff}
 .brief-stuck{font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;background:var(--danger-light);color:var(--danger);white-space:nowrap}
 .brief-meta{font-size:11px;color:var(--text-tertiary);margin-top:3px}
 .brief-note{width:100%;font-size:12px;color:var(--text-secondary);background:transparent;border:1px solid transparent;border-radius:6px;padding:3px 6px;margin-top:4px;font-family:inherit;resize:vertical}
@@ -4890,6 +4900,9 @@ function briefPeople(){
 function briefSort(a,b){
   if(a.section!==b.section) return a.section==='Standing'?-1:1;
   if(a.status!==b.status) return a.status==='Pending'?-1:1;
+  /* Priority 3 first, then 2, then 1, then anything without one. Below status, so a
+     finished priority item never sits above work still to do. */
+  if((b.priority||0)!==(a.priority||0)) return (b.priority||0)-(a.priority||0);
   return (a.sort_order||0)-(b.sort_order||0);
 }
 
@@ -4978,12 +4991,16 @@ function briefRowHtml(it,archived){
   var stuck=briefStuck[it.id];
   var who=it.updated_by_email?escHtml(String(it.updated_by_email).split('@')[0]):'';
   var when=it.updated_at?new Date(it.updated_at).toLocaleString('en-AU',{day:'numeric',month:'short',hour:'numeric',minute:'2-digit'}):'';
-  return '<div class="brief-row'+(ok?' done':'')+'">'
+  var pr=Number(it.priority)||0;
+  return '<div class="brief-row'+(ok?' done':'')+(pr?' p'+pr:'')+'">'
     +(archived
       ?'<div class="brief-tick ok" style="cursor:default"><i class="ti ti-check"></i></div>'
       :'<div class="brief-tick'+(ok?' ok':'')+'" onclick="toggleBriefStatus(\''+it.id+'\')" title="'+(ok?'Mark pending':'Mark OK')+'">'+(ok?'<i class="ti ti-check"></i>':'')+'</div>')
     +'<div style="flex:1;min-width:0">'
     +'<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">'
+    +(archived
+      ?(pr?'<span class="brief-pri p'+pr+'" style="cursor:default">P'+pr+'</span>':'')
+      :briefPriorityPickerHtml(it))
     +'<span class="brief-item-text">'+escHtml(it.item)+'</span>'
     +(it.owners||[]).map(function(o){return '<span class="brief-chip">'+escHtml(o)+'</span>';}).join('')
     +(stuck?'<span class="brief-stuck"><i class="ti ti-alert-triangle"></i> stuck '+stuck+' days</span>':'')
@@ -5022,6 +5039,35 @@ function renderBriefBoard(){
       +'</div>';
   }
   el.innerHTML=html;
+}
+
+var BRIEF_PRIORITY_LABEL={3:'P3 high',2:'P2 medium',1:'P1 low'};
+function briefPriorityPickerHtml(it){
+  var pr=Number(it.priority)||0;
+  return '<select class="brief-pri'+(pr?' p'+pr:'')+'" title="Priority: 3 highest, 1 lowest" onchange="setBriefPriority(\''+it.id+'\',this.value)">'
+    +'<option value=""'+(pr?'':' selected')+'>P&#8211;</option>'
+    +[3,2,1].map(function(n){return '<option value="'+n+'"'+(pr===n?' selected':'')+'>P'+n+'</option>';}).join('')
+    +'</select>';
+}
+/* Saved on change, like ticking OK. */
+async function setBriefPriority(id,val){
+  var it=briefItems.find(function(x){return x.id===id;});
+  if(!it) return;
+  var next=val===''?null:Number(val),prev=it.priority==null?null:Number(it.priority);
+  if(next===prev) return;
+  it.priority=next;
+  briefItems.sort(briefSort);renderBriefBoard();
+  try{
+    await sbWrite('brief_items?id=eq.'+id,{method:'PATCH',
+      body:JSON.stringify({priority:next,updated_by:(currentUser&&currentUser.id)||null,updated_by_email:(currentUser&&currentUser.email)||null})});
+    it.updated_by_email=(currentUser&&currentUser.email)||it.updated_by_email;
+    it.updated_at=new Date().toISOString();
+    renderBriefBoard();
+  }catch(e){
+    it.priority=prev;
+    briefItems.sort(briefSort);renderBriefBoard();
+    toast('Could not set priority: '+e.message,'error');
+  }
 }
 
 /* One click writes straight through — no save button. updated_at is owned by a
@@ -5064,7 +5110,7 @@ async function saveBriefNotes(id,val){
 }
 
 function toggleBriefAdd(){
-  briefAdd=briefAdd?null:{section:'Task',item:'',owners:{},notes:'',mode:'one',bulk:''};
+  briefAdd=briefAdd?null:{section:'Task',item:'',owners:{},notes:'',mode:'one',bulk:'',priority:''};
   renderBriefAddForm();
   if(briefAdd) setTimeout(function(){var f=document.getElementById('briefNewItem');if(f)f.focus();},30);
 }
@@ -5105,7 +5151,7 @@ function updateBriefBulkPreview(){
   if(!rows.length){el.innerHTML='<div style="font-size:12px;color:var(--text-tertiary);padding:6px 0">One task per line. Add &ldquo; - Brandon, Luis&rdquo; on the end of a line to set its owners.</div>';return;}
   var missing=rows.filter(function(r){return !r.owners.length;}).length;
   el.innerHTML='<div style="font-size:12px;margin-top:6px">'
-    +'<div style="color:var(--text-secondary);margin-bottom:4px">'+rows.length+' item'+(rows.length===1?'':'s')+' will be added as <strong>'+escHtml(briefAdd.section==='Standing'?'Standing':'Tasks')+'</strong>, all Pending:</div>'
+    +'<div style="color:var(--text-secondary);margin-bottom:4px">'+rows.length+' item'+(rows.length===1?'':'s')+' will be added as <strong>'+escHtml(briefAdd.section==='Standing'?'Standing':'Tasks')+'</strong>, all Pending'+(briefAdd.priority?', priority <strong>P'+escHtml(String(briefAdd.priority))+'</strong>':'')+':</div>'
     +rows.map(function(r){
       return '<div style="display:flex;gap:6px;align-items:center;padding:2px 0"><span style="color:var(--text-tertiary)">&bull;</span>'
         +'<span style="flex:1">'+escHtml(r.item)+'</span>'
@@ -5128,7 +5174,7 @@ async function addBriefBulk(){
   /* One POST with an array — PostgREST inserts them all in a single request, so a
      pasted list either lands complete or not at all. */
   var payload=rows.map(function(r,i){
-    return {section:briefAdd.section,status:'Pending',item:r.item,owners:r.owners,notes:null,
+    return {section:briefAdd.section,status:'Pending',item:r.item,owners:r.owners,notes:null,priority:briefAdd.priority?Number(briefAdd.priority):null,
       sort_order:maxOrder+((i+1)*10),
       updated_by:(currentUser&&currentUser.id)||null,updated_by_email:(currentUser&&currentUser.email)||null};
   });
@@ -5163,6 +5209,10 @@ function renderBriefAddForm(){
     +'<option value="Task"'+(briefAdd.section==='Task'?' selected':'')+'>Task &#8212; one-off, archived when done</option>'
     +'<option value="Standing"'+(briefAdd.section==='Standing'?' selected':'')+'>Standing &#8212; ongoing, stays on the board</option>'
     +'</select>'
+    +'<select class="form-input" style="width:auto" title="Priority" onchange="setBriefAddField(\'priority\',this.value);if(briefAdd.mode===\'bulk\')updateBriefBulkPreview()">'
+    +'<option value=""'+(briefAdd.priority?'':' selected')+'>No priority</option>'
+    +[3,2,1].map(function(n){return '<option value="'+n+'"'+(String(briefAdd.priority)===String(n)?' selected':'')+'>'+BRIEF_PRIORITY_LABEL[n]+'</option>';}).join('')
+    +'</select>'
     +(bulk?'':'<input class="form-input" id="briefNewItem" placeholder="What needs doing?" style="flex:1;min-width:220px" oninput="setBriefAddField(\'item\',this.value)">')
     +'</div>'
     +'<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:9px;font-size:12px">'
@@ -5196,7 +5246,7 @@ async function addBriefItem(){
     .reduce(function(m,i){return Math.max(m,i.sort_order||0);},0);
   try{
     var r=await sbWrite('brief_items',{method:'POST',prefer:'return=representation',
-      body:JSON.stringify({section:briefAdd.section,status:'Pending',item:text,owners:owners,
+      body:JSON.stringify({section:briefAdd.section,status:'Pending',item:text,owners:owners,priority:briefAdd.priority?Number(briefAdd.priority):null,
         notes:(briefAdd.notes||'').trim()||null,sort_order:maxOrder+10,
         updated_by:(currentUser&&currentUser.id)||null,updated_by_email:(currentUser&&currentUser.email)||null})});
     var rows=await r.json();

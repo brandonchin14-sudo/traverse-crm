@@ -4963,7 +4963,7 @@ let briefItems=[],briefArchived=[],briefStuck={},briefShowArchive=false,briefAdd
 /* Known team plus anyone already on the board, so a new owner appearing in the
    data does not need a code change. */
 function briefPeople(){
-  var s={Brandon:1,Cara:1,Luis:1};
+  var s={Brandon:1,Cara:1,Kathy:1,Luis:1};
   briefItems.concat(briefArchived).forEach(function(it){(it.owners||[]).forEach(function(o){if(o)s[o]=1;});});
   return Object.keys(s).sort();
 }

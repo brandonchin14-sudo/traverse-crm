@@ -619,7 +619,7 @@ async function connectQB(){
   if(!win){toast('Allow pop-ups for this site to connect QuickBooks','error');return;}
   try{
     await ensureValidToken();
-    var sres=await fetch('https://dwmpunbcwrprhhzwduyx.supabase.co/functions/v1/quickbooks-auth?action=start',{method:'POST',headers:{'apikey':SB_KEY,'Authorization':'Bearer '+authToken}});
+    var sres=await fetchTimeout('https://dwmpunbcwrprhhzwduyx.supabase.co/functions/v1/quickbooks-auth?action=start',{method:'POST',headers:{'apikey':SB_KEY,'Authorization':'Bearer '+authToken}},30000);
     var sd=await sres.json().catch(function(){return {};});
     if(!sres.ok||!sd.url) throw new Error(sd.error||('HTTP '+sres.status));
     win.location.href=sd.url;
@@ -652,7 +652,7 @@ async function connectDrive(){
   if(!w){toast('Allow pop-ups for this site to connect Google Drive','error');return;}
   try{
     await ensureValidToken();
-    var res=await fetch(GOOGLE_AUTH_URL+'?action=start',{method:'POST',headers:{'apikey':SB_KEY,'Authorization':'Bearer '+authToken}});
+    var res=await fetchTimeout(GOOGLE_AUTH_URL+'?action=start',{method:'POST',headers:{'apikey':SB_KEY,'Authorization':'Bearer '+authToken}},30000);
     var d=await res.json().catch(function(){return {};});
     if(!res.ok||!d.url) throw new Error(d.error||('HTTP '+res.status));
     w.location.href=d.url;
@@ -669,7 +669,7 @@ async function callQB(action,extra){
        through sb(), so refresh the session here — the 45-minute refresh timer does not
        tick while a laptop sleeps, and a stale token would be refused. */
     await ensureValidToken();
-    var res=await fetch(QB_API_URL,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify(body)});
+    var res=await fetchTimeout(QB_API_URL,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify(body)},60000);
     if(!res.ok){
       var err=await res.json().catch(function(){return {};});
       console.warn('QB API error ('+res.status+'):', JSON.stringify(err).substring(0,120));
@@ -687,11 +687,11 @@ async function callDriveAPI(action, params) {
      through sb(), so refresh the session here — the 45-minute refresh timer does not
      tick while a laptop sleeps, and a stale token would be refused. */
   await ensureValidToken();
-  var res = await fetch(DRIVE_API_URL, {
+  var res = await fetchTimeout(DRIVE_API_URL, {
     method:'POST',
     headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},
     body:JSON.stringify(payload)
-  });
+  }, 90000);
   return res.json();
 }
 
@@ -972,9 +972,24 @@ function quoteTypeLabel(t){var d=QUOTE_TYPES.find(function(x){return x.key===t;}
   let refreshToken=null,tokenExpiresAt=0,tokenRefreshTimer=null;
 
 /* &#9472;&#9472; AUTH &#9472;&#9472; */
+/* Every network call gets a deadline. Without one a stalled request leaves the UI
+   waiting forever with nothing said: on 2026-09-16 a revised quote's Send button sat
+   spinning and no request ever reached the server. A timeout turns that into a plain
+   error the user can act on, and re-enables whatever button was waiting. */
+function fetchTimeout(url,opts,ms){
+  opts=opts||{};ms=ms||30000;
+  var ctl=new AbortController();
+  var timer=setTimeout(function(){ctl.abort();},ms);
+  return fetch(url,Object.assign({},opts,{signal:ctl.signal}))
+    .catch(function(e){
+      if(e&&(e.name==='AbortError'||e.code===20)) throw new Error('No answer after '+Math.round(ms/1000)+' seconds. Check your internet connection, then try again.');
+      throw new Error(e&&e.message?e.message:'Could not reach the server');
+    })
+    .finally(function(){clearTimeout(timer);});
+}
 function sbH(token,extra){return Object.assign({'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+(token||SB_KEY)},extra||{});}
-async function sb(path,opts){opts=opts||{};await ensureValidToken();var prefer=opts.prefer;var o=Object.assign({},opts);delete o.prefer;return fetch(SB_URL+'/rest/v1/'+path,{headers:sbH(authToken,prefer?{'Prefer':prefer}:null),method:o.method||'GET',body:o.body});}
-function sbRpc(fn,params={}){return fetch(SB_URL+'/rest/v1/rpc/'+fn,{method:'POST',headers:sbH(authToken),body:JSON.stringify(params)});}
+async function sb(path,opts){opts=opts||{};await ensureValidToken();var prefer=opts.prefer;var o=Object.assign({},opts);delete o.prefer;return fetchTimeout(SB_URL+'/rest/v1/'+path,{headers:sbH(authToken,prefer?{'Prefer':prefer}:null),method:o.method||'GET',body:o.body},30000);}
+function sbRpc(fn,params={}){return fetchTimeout(SB_URL+'/rest/v1/rpc/'+fn,{method:'POST',headers:sbH(authToken),body:JSON.stringify(params)},30000);}
 
 /* sbWrite: a write (PATCH/POST/DELETE) that THROWS on real failure so callers
    can rely on try/catch. Returns parsed body when representation requested. */
@@ -998,7 +1013,7 @@ async function doLogin(){
   btn.innerHTML='<i class="ti ti-loader"></i> Signing in...';btn.disabled=true;
   err.classList.remove('show');
   try{
-    const r=await fetch(SB_URL+'/auth/v1/token?grant_type=password',{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY},body:JSON.stringify({email,password:pass})});
+    const r=await fetchTimeout(SB_URL+'/auth/v1/token?grant_type=password',{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY},body:JSON.stringify({email,password:pass})});
     const d=await r.json();
     if(!r.ok){
       var msg=d.error_description||d.msg||d.error||'Invalid email or password';
@@ -1061,7 +1076,7 @@ function storeSession(tok,rtok,expiresIn,user){
 
 async function fetchMe(){
   try{
-    const r=await fetch(SB_URL+'/auth/v1/user',{headers:sbH(authToken)});
+    const r=await fetchTimeout(SB_URL+'/auth/v1/user',{headers:sbH(authToken)});
     if(r.ok){currentUser=await r.json();localStorage.setItem('traverse_user',JSON.stringify(currentUser));}
   }catch(_){}
 }
@@ -1103,7 +1118,7 @@ async function doSetPassword(){
   if(!_pendingAuth||!_pendingAuth.access_token){showSetPwErr('This link has expired. Ask for a new one to be sent.');return;}
   btn.innerHTML='<i class="ti ti-loader"></i> Saving...';btn.disabled=true;
   try{
-    const r=await fetch(SB_URL+'/auth/v1/user',{method:'PUT',headers:sbH(_pendingAuth.access_token),body:JSON.stringify({password:p1})});
+    const r=await fetchTimeout(SB_URL+'/auth/v1/user',{method:'PUT',headers:sbH(_pendingAuth.access_token),body:JSON.stringify({password:p1})});
     const d=await r.json();
     if(!r.ok){
       /* A stale link surfaces as raw JWT jargon from Supabase ("token is malformed:
@@ -1171,7 +1186,7 @@ async function refreshSession(){
   const rt=refreshToken||localStorage.getItem('traverse_refresh');
   if(!rt) return false;
   try{
-    const r=await fetch(SB_URL+'/auth/v1/token?grant_type=refresh_token',{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY},body:JSON.stringify({refresh_token:rt})});
+    const r=await fetchTimeout(SB_URL+'/auth/v1/token?grant_type=refresh_token',{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY},body:JSON.stringify({refresh_token:rt})});
     const d=await r.json();
     if(!r.ok||!d.access_token) return false;
     authToken=d.access_token;refreshToken=d.refresh_token||rt;
@@ -2103,7 +2118,7 @@ async function sendEmailViaFunction(to,subject,body,templateName,leadId){
        than through sb(), so it must refresh the token itself — the 45-minute refresh
        timer does not tick while a laptop sleeps, and a stale token would be refused. */
     await ensureValidToken();
-    const res=await fetch(EMAIL_FN,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify({to,subject,body})});
+    const res=await fetchTimeout(EMAIL_FN,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify({to,subject,body})},90000);
     const data=await res.json();
     if(!res.ok) throw new Error(data.error||'Send failed');
     if(lid) await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:lid,action:'Email sent',detail:templateName+' &#8594; '+to})});
@@ -4000,11 +4015,11 @@ async function scanDocument(file,action){
     try{ var hb=b64.slice(0,1368); hb=hb.slice(0,hb.length-(hb.length%4)); head=atob(hb); }catch(err){}
     if(head.indexOf('%PDF-')===-1) throw new Error('This PDF appears to be damaged &#8212; it is missing the header every PDF should start with. Try re-downloading or re-exporting it, then scan again.');
   }
-  var res=await fetch(SB_URL+'/functions/v1/scan-document',{
+  var res=await fetchTimeout(SB_URL+'/functions/v1/scan-document',{
     method:'POST',
     headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},
     body:JSON.stringify({action:action||'scan',base64:b64,mediaType:mediaType,isPdf:isPdf})
-  });
+  }, 180000);
   var result=await res.json();
   if(!res.ok||!result.success) throw new Error(result.error||'Scan failed');
   return result.data;
@@ -4164,6 +4179,10 @@ function openQuotePreview(){showEditableQuote();}
 
 function showEditableQuote(){
   if(!currentQuote) return;
+  /* Reset the Send button: if a previous attempt stalled it is still disabled and
+     showing "Sending...", which would make this quote unsendable until a reload. */
+  var sendBtn=document.getElementById('previewSendBtn');
+  if(sendBtn){sendBtn.disabled=false;sendBtn.innerHTML='<i class="ti ti-send"></i> Save &amp; send to client';}
   var cnEl=document.getElementById('eq-client-name');
   var caEl=document.getElementById('eq-client-addr');
   var exEl=document.getElementById('eq-expiry');
@@ -4267,7 +4286,7 @@ async function sendQuoteToClient(){
     var fn=(currentLead.name||'').split(' ')[0];
     var body='Hi '+fn+',\n\nPlease find your quote '+currentQuote.quote_number+' below.\n\nTotal: A$'+currentQuote.total.toFixed(2)+'\nExpiry: '+(currentQuote.expiry_date?new Date(currentQuote.expiry_date).toLocaleDateString('en-AU'):'-')+'\n\nPlease review and let us know if you would like to proceed.\n\nKind regards,\nTraverse Exports\nsales@traverse-exports.com.au';
     await ensureValidToken();
-    var res=await fetch(EMAIL_FN,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify({to:currentLead.contact,subject:subject,body:body,pdfBase64:pdfB64,quoteNumber:currentQuote.quote_number})});
+    var res=await fetchTimeout(EMAIL_FN,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+authToken},body:JSON.stringify({to:currentLead.contact,subject:subject,body:body,pdfBase64:pdfB64,quoteNumber:currentQuote.quote_number})},90000);
     var data=await res.json();
     if(!res.ok) throw new Error(data.error||'Send failed');
     await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({quote_status:'sent',emails_sent:(currentLead.emails_sent||0)+1,updated_at:new Date().toISOString()})});

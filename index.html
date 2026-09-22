@@ -1494,7 +1494,7 @@ async function openDetail(id){
     document.querySelectorAll('.detail-section').forEach((s,i)=>s.classList.toggle('active',i===0));
     /* Clear the type selection so each lead opens on its own most relevant quote
        rather than inheriting the type left selected on the previous lead. */
-    selectedQuoteType=null;currentQuotes=[];selectedQuoteId=null;boqPick=null;
+    selectedQuoteType=null;currentQuotes=[];selectedQuoteId=null;boqPick=null;currentPOs=[];poForm=null;
     await loadCurrentQuote();
     await renderDetailInfo();
     renderDetailEmails();
@@ -2224,7 +2224,137 @@ function renderDetailFiles(){
     </div>
     ${!l.drive_folder_id
       ?'<div style="text-align:center;padding:20px"><button class="btn btn-green" onclick="createFolderFromDetail()"><i class="ti ti-brand-google-drive"></i> Create Drive folder now</button></div>'
-      :'<a href="https://drive.google.com" target="_blank" class="btn btn-green btn-sm"><i class="ti ti-brand-google-drive"></i> Open Google Drive</a>'}`;
+      :'<a href="https://drive.google.com" target="_blank" class="btn btn-green btn-sm"><i class="ti ti-brand-google-drive"></i> Open Google Drive</a>'}
+    <div id="po-panel" style="margin-top:18px"><div style="font-size:12px;color:var(--text-secondary)"><i class="ti ti-loader"></i> Loading purchase orders&hellip;</div></div>`;
+  loadPurchaseOrders();
+}
+
+/* ── PURCHASE ORDERS ──────────────────────────────────────────────────────
+   What Traverse paid a supplier for this job. The document goes straight into the
+   lead's Drive folder under Purchase Orders, so nothing has to be kept on the
+   laptop, and the row records supplier, PO number, date and total so the cost side
+   of a job can be read back months later. The CRM is staff-only, so none of this
+   is ever visible to a customer, and it never appears on a quote or in an email. */
+var currentPOs=[],poForm=null;
+
+async function loadPurchaseOrders(){
+  if(!currentLead) return;
+  var leadId=currentLead.id;
+  try{
+    var r=await sb('purchase_orders?lead_id=eq.'+leadId+'&order=created_at.desc&select=*');
+    var rows=await r.json();
+    if(!currentLead||currentLead.id!==leadId) return;
+    currentPOs=Array.isArray(rows)?rows:[];
+  }catch(e){currentPOs=[];}
+  renderPOPanel();
+}
+function openPOForm(){poForm={supplier:'',po_number:'',po_date:todayLocalISO(),total:'',notes:'',file:null,busy:false};renderPOPanel();}
+function closePOForm(){poForm=null;renderPOPanel();}
+function setPOField(k,v){if(poForm) poForm[k]=v;}
+function setPOFile(input){if(poForm){poForm.file=(input.files&&input.files[0])||null;renderPOPanel();}}
+function poPaidTotal(){return round2(currentPOs.reduce(function(s,p){return s+(Number(p.total)||0);},0));}
+
+function renderPOPanel(){
+  var el=document.getElementById('po-panel');
+  if(!el||!currentLead) return;
+  var paid=poPaidTotal();
+  var rows=currentPOs.map(function(p){
+    var link=p.drive_file_id?'<a href="https://drive.google.com/file/d/'+encodeURIComponent(p.drive_file_id)+'/view" target="_blank" style="color:var(--accent)">'+escHtml(p.file_name||'Open')+'</a>':'<span style="color:var(--text-tertiary)">no file</span>';
+    return '<tr style="border-top:1px solid var(--border-t)">'
+      +'<td style="padding:6px 8px;white-space:nowrap">'+escHtml(p.po_date?String(p.po_date).slice(0,10):String(p.created_at||'').slice(0,10))+'</td>'
+      +'<td style="padding:6px 8px;font-weight:600">'+escHtml(p.supplier||'')
+      +(p.po_number?'<div style="font-size:11px;color:var(--text-tertiary);font-weight:400">PO '+escHtml(p.po_number)+'</div>':'')
+      +(p.notes?'<div style="font-size:11px;color:var(--text-secondary);font-weight:400">'+escHtml(p.notes)+'</div>':'')+'</td>'
+      +'<td style="padding:6px 8px;font-size:11px">'+link+'</td>'
+      +'<td style="padding:6px 8px;text-align:right;white-space:nowrap">'+(p.total!=null?fmtAud(p.total):'&#8212;')+'</td>'
+      +'<td style="padding:6px 8px;text-align:right"><button class="btn btn-sm" title="Remove this record" onclick="deletePO(\''+p.id+'\')"><i class="ti ti-trash"></i></button></td>'
+      +'</tr>';
+  }).join('');
+  var form='';
+  if(poForm){
+    var f=poForm;
+    form='<div style="margin-top:12px;padding:13px;border:1px solid var(--accent);border-radius:var(--radius-md);background:var(--bg-secondary)">'
+      +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:9px">'
+      +'<div style="flex:1;min-width:170px"><label class="form-label">Supplier</label><input class="form-input" value="'+escHtml(f.supplier)+'" placeholder="e.g. Rexel" oninput="setPOField(\'supplier\',this.value)"></div>'
+      +'<div><label class="form-label">PO number</label><input class="form-input" style="width:140px" value="'+escHtml(f.po_number)+'" oninput="setPOField(\'po_number\',this.value)"></div>'
+      +'<div><label class="form-label">Date</label><input class="form-input" type="date" style="width:150px" value="'+escHtml(f.po_date||'')+'" onchange="setPOField(\'po_date\',this.value)"></div>'
+      +'<div><label class="form-label">Total paid (A$)</label><input class="form-input" type="number" step="0.01" min="0" style="width:130px;text-align:right" value="'+escHtml(f.total)+'" oninput="setPOField(\'total\',this.value)"></div>'
+      +'</div>'
+      +'<input class="form-input" placeholder="Note (optional)" style="font-size:12px;margin-bottom:9px" value="'+escHtml(f.notes)+'" oninput="setPOField(\'notes\',this.value)">'
+      +(currentLead.drive_folder_id
+        ?'<label class="form-label">Purchase order file</label><input type="file" accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xlsm,.csv" style="font-size:12px" onchange="setPOFile(this)">'
+          +'<div style="font-size:11px;color:var(--text-tertiary);margin-top:4px">'+(f.file?escHtml(f.file.name)+' &#8212; goes to Drive / Purchase Orders':'Saved straight into this lead\'s Drive folder, under Purchase Orders.')+'</div>'
+        :'<div style="font-size:12px;color:#b45309"><i class="ti ti-alert-circle"></i> Create the Drive folder above first to attach the file. You can still record the amounts now.</div>')
+      +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">'
+      +'<button class="btn btn-sm" onclick="closePOForm()">Cancel</button>'
+      +'<button class="btn btn-primary btn-sm" id="po-save-btn" onclick="savePO()"><i class="ti ti-upload"></i> Save purchase order</button>'
+      +'</div></div>';
+  }
+  el.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">'
+    +'<div><div style="font-size:13px;font-weight:700"><i class="ti ti-receipt-2"></i> Purchase orders</div>'
+    +'<div style="font-size:11px;color:var(--text-secondary)">What we paid suppliers for this job. Files are kept in Drive, not on your computer.</div></div>'
+    +(poForm?'':'<button class="btn btn-sm" onclick="openPOForm()"><i class="ti ti-plus"></i> Upload purchase order</button>')
+    +'</div>'
+    +(currentPOs.length
+      ?'<div style="overflow-x:auto;border:1px solid var(--border-t);border-radius:var(--radius-md)"><table style="width:100%;border-collapse:collapse;font-size:12px">'
+        +'<thead><tr style="background:var(--bg-secondary)"><th style="padding:6px 8px;text-align:left">Date</th><th style="padding:6px 8px;text-align:left">Supplier</th><th style="padding:6px 8px;text-align:left">File</th><th style="padding:6px 8px;text-align:right">Paid</th><th></th></tr></thead>'
+        +'<tbody>'+rows+'</tbody>'
+        +(currentPOs.length>1?'<tfoot><tr style="border-top:2px solid var(--border-t);font-weight:700"><td style="padding:6px 8px" colspan="3">Total paid</td><td style="padding:6px 8px;text-align:right">'+fmtAud(paid)+'</td><td></td></tr></tfoot>':'')
+        +'</table></div>'
+      :'<div style="font-size:12px;color:var(--text-tertiary);padding:10px;border:1px solid var(--border-t);border-radius:var(--radius-md)">No purchase orders recorded for this lead yet.</div>')
+    +form;
+}
+
+async function savePO(){
+  if(!poForm||!currentLead) return;
+  var f=poForm,leadId=currentLead.id;
+  var supplier=(f.supplier||'').trim();
+  if(!supplier){toast('Enter the supplier','error');return;}
+  if(f.total!==''&&!(Number(f.total)>=0)){toast('Total paid must be a number','error');return;}
+  var btn=document.getElementById('po-save-btn');
+  if(btn){btn.disabled=true;btn.innerHTML='<i class="ti ti-loader"></i> Saving&hellip;';}
+  try{
+    /* File first: if Drive refuses, nothing is recorded, so a retry cannot leave a
+       half-saved purchase order behind. */
+    var fileId=null,fileName=null;
+    if(f.file&&currentLead.drive_folder_id){
+      var b64=await fileToBase64(f.file);
+      var d=await callDriveAPI('save_file',{folderId:currentLead.drive_folder_id,fileName:f.file.name,
+        fileBase64:b64,mimeType:f.file.type||'application/pdf',subfolder:'Purchase Orders',leadId:leadId});
+      if(!d||!d.success) throw new Error((d&&d.error)||'Could not save the file to Drive');
+      fileId=d.fileId||null;fileName=f.file.name;
+    }
+    var row={lead_id:leadId,supplier:supplier,po_number:(f.po_number||'').trim()||null,
+      po_date:f.po_date||null,total:f.total===''?null:Number(f.total),
+      notes:(f.notes||'').trim()||null,file_name:fileName,drive_file_id:fileId,
+      created_by_email:(currentUser&&currentUser.email)||null};
+    var r=await sbWrite('purchase_orders',{method:'POST',prefer:'return=representation',body:JSON.stringify(row)});
+    var saved=await r.json();
+    currentPOs.unshift(Array.isArray(saved)&&saved.length?saved[0]:row);
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:leadId,action:'Purchase order recorded',
+      detail:supplier+(row.po_number?' PO '+row.po_number:'')+(row.total!=null?' — '+fmtAud(row.total):'')+(fileName?' — '+fileName+' saved to Drive/Purchase Orders':' — no file attached')})});
+    poForm=null;
+    renderPOPanel();
+    if(currentQuote) renderQuoteTab().catch(function(){});
+    toast('Purchase order saved &#10003;');
+  }catch(e){
+    if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-upload"></i> Save purchase order';}
+    toast('Could not save the purchase order: '+e.message,'error');
+  }
+}
+
+/* Removes the record only. The file stays in Drive, where it is the actual document. */
+async function deletePO(id){
+  var p=currentPOs.find(function(x){return x.id===id;});
+  if(!p) return;
+  if(!confirm('Remove this purchase order record'+(p.supplier?' for '+p.supplier:'')+'?\n\nThe file itself stays in the Drive folder.')) return;
+  try{
+    await sbWrite('purchase_orders?id=eq.'+id,{method:'DELETE'});
+    currentPOs=currentPOs.filter(function(x){return x.id!==id;});
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Purchase order removed',detail:(p.supplier||'')+(p.po_number?' PO '+p.po_number:'')})});
+    renderPOPanel();
+    toast('Purchase order record removed');
+  }catch(e){toast('Could not remove it: '+e.message,'error');}
 }
 
 async function renderDetailActivity(){
@@ -2759,6 +2889,8 @@ async function renderQuoteTab(){
     /* Project quotes show which BOQ item each line came from, so the BOQ is loaded
        before any quote screen draws. */
     if(isProjectLead()) await loadBoqData();
+    /* The margin box compares purchase orders with the quoted cost. */
+    await loadPurchaseOrders();
     if(!currentQuote){renderDocumentScan(el);return;}
     if(currentQuote.status==='sent'||currentQuote.status==='approved'||currentQuote.status==='invoiced'){renderQuoteReview(el);return;}
     if(currentQuote&&currentQuote.status==='draft'){renderPricingStep(el);return;}
@@ -4627,14 +4759,23 @@ function renderQuoteReview(el){
     +'<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-secondary)">GST</span><span>A$'+(q.gst_total||0).toFixed(2)+'</span></div>'
     +'<div style="display:flex;justify-content:space-between;font-weight:700;font-size:15px;border-top:0.5px solid var(--border-t);padding-top:8px;margin-top:6px"><span>Total</span><span style="color:var(--accent)">A$'+(q.total||0).toFixed(2)+'</span></div>'
     +'</div>'
-    +'<table class="line-items-table"><thead><tr><th>Item</th><th>Description</th><th style="text-align:right">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th><th style="text-align:center">GST</th></tr></thead>'
+    +'<table class="line-items-table"><thead><tr><th>Item</th><th>Description</th><th style="text-align:right">Qty</th>'
+    +'<th style="text-align:right" title="What we paid per unit">Cost</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th>'
+    +'<th style="text-align:right" title="Sell less cost on this line">Margin</th><th style="text-align:center">GST</th></tr></thead>'
     +'<tbody>'+(currentLineItems||[]).map(function(item){
+      var qty=Number(item.quantity)||1,cost=Number(item.cost)||0,rate=Number(item.rate)||0;
+      var sell=Number(item.amount)||round2(qty*rate),spend=round2(qty*cost),marg=round2(sell-spend);
+      var pct=sell>0?Math.round((marg/sell)*100):0;
       return '<tr><td>'+escHtml(item.item_name||'')+'</td><td style="color:var(--text-secondary)">'+escHtml(item.description||'')+'</td>'
-        +'<td style="text-align:right">'+(item.quantity||1)+'</td>'
-        +'<td style="text-align:right;color:var(--green);font-weight:600">A$'+(item.rate||0).toFixed(2)+'</td>'
-        +'<td style="text-align:right;font-weight:500">A$'+(item.amount||0).toFixed(2)+'</td>'
+        +'<td style="text-align:right">'+qty+'</td>'
+        +'<td style="text-align:right;color:var(--text-secondary)">'+(cost>0?'A$'+cost.toFixed(2):'&#8212;')+'</td>'
+        +'<td style="text-align:right;color:var(--green);font-weight:600">A$'+rate.toFixed(2)+'</td>'
+        +'<td style="text-align:right;font-weight:500">A$'+sell.toFixed(2)+'</td>'
+        +'<td style="text-align:right;white-space:nowrap;color:'+(cost>0?(marg<0?'var(--danger)':'var(--text-primary)'):'var(--text-tertiary)')+'">'
+        +(cost>0?'A$'+marg.toFixed(2)+' <span style="font-size:11px;color:var(--text-tertiary)">'+pct+'%</span>':'&#8212;')+'</td>'
         +'<td style="text-align:center;font-size:12px">'+(item.gst_applicable?'&#10003;':'&#8212;')+'</td></tr>';
     }).join('')+'</tbody></table>'
+    +quoteMarginHtml()
     +(q.status==='sent'?'<div style="background:#FAEEDA;border:0.5px solid #633806;border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:#633806"><i class="ti ti-clock"></i> <strong>Awaiting client approval.</strong> Click Revise quote if changes needed, or Client approved once confirmed.</div>':'')
     +(q.status==='approved'?(q.qb_estimate_id
       ?(q.qb_estimate_stale?''
@@ -4644,6 +4785,42 @@ function renderQuoteReview(el){
     +(q.qb_estimate_id&&q.qb_estimate_stale&&q.status!=='invoiced'?'<div style="background:rgba(180,83,9,0.06);border:0.5px solid rgba(180,83,9,0.4);border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:#b45309"><i class="ti ti-alert-triangle"></i> <strong>QB estimate '+escHtml(q.qb_estimate_number||q.qb_estimate_id)+' is out of date.</strong> This quote was revised after the estimate was created, so the figures in QuickBooks no longer match. Update or delete the estimate in QuickBooks before invoicing &#8212; the invoice will still link to it.</div>':'')
     +(q.status==='invoiced'?'<div style="background:var(--accent-light);border:0.5px solid var(--accent);border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:var(--accent-dark)"><i class="ti ti-check"></i> <strong>Invoiced.</strong> QB Invoice: '+(q.qb_invoice_id||'Pending')+(q.qb_estimate_id?' &middot; QB Estimate: '+escHtml(q.qb_estimate_number||q.qb_estimate_id):'')+'</div>':'')
     +partialPanelHtml();
+}
+
+/* Cost and margin for the selected quote, from the supplier cost stored on each line
+   when it was priced. Staff-only: these figures are in the CRM alone — never on the
+   quote PDF, the customer email, or anything sent to QuickBooks. Purchase orders
+   recorded on the lead are shown beside the quoted cost so a difference is obvious. */
+function quoteMarginHtml(){
+  var items=currentLineItems||[];
+  if(!items.length) return '';
+  var sell=0,spend=0,priced=0;
+  items.forEach(function(it){
+    var qty=Number(it.quantity)||1,cost=Number(it.cost)||0;
+    sell+=Number(it.amount)||round2(qty*(Number(it.rate)||0));
+    spend+=round2(qty*cost);
+    if(cost>0) priced++;
+  });
+  sell=round2(sell);spend=round2(spend);
+  var marg=round2(sell-spend),pct=sell>0?Math.round((marg/sell)*100):0;
+  var paid=poPaidTotal(),diff=round2(paid-spend);
+  var box=function(label,val,col,sub){
+    return '<div style="flex:1;min-width:110px;padding:8px 11px;background:var(--bg-primary);border:1px solid var(--border-t);border-radius:var(--radius-md)">'
+      +'<div style="font-size:11px;color:var(--text-secondary)">'+label+'</div>'
+      +'<div style="font-size:14px;font-weight:700'+(col?';color:'+col:'')+'">'+val+'</div>'
+      +(sub?'<div style="font-size:10px;color:var(--text-tertiary)">'+sub+'</div>':'')+'</div>';
+  };
+  return '<div style="margin-top:12px;padding:12px;background:var(--bg-secondary);border:1px solid var(--border-t);border-radius:var(--radius-md)">'
+    +'<div style="font-size:12px;font-weight:700;margin-bottom:8px"><i class="ti ti-lock"></i> Cost and margin &#8212; internal only</div>'
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap">'
+    +box('Cost',fmtAud(spend),'var(--text-secondary)',priced<items.length?priced+' of '+items.length+' lines have a cost':'from the quoted costs')
+    +box('Sell',fmtAud(sell),null,'what the customer pays')
+    +box('Margin',fmtAud(marg),marg<0?'var(--danger)':'var(--green)',pct+'% of sell')
+    +(currentPOs.length?box('Purchase orders',fmtAud(paid),null,(diff===0?'same as quoted cost':(diff>0?fmtAud(diff)+' more than quoted':fmtAud(-diff)+' less than quoted'))):'')
+    +'</div>'
+    +(priced<items.length?'<div style="font-size:11px;color:#b45309;margin-top:7px"><i class="ti ti-alert-triangle"></i> '+(items.length-priced)+' line'+(items.length-priced===1?' has':'s have')+' no cost recorded, so the margin above is overstated.</div>':'')
+    +'<div style="font-size:10px;color:var(--text-tertiary);margin-top:6px">Never shown to the customer: not on the quote PDF, the email, or in QuickBooks.</div>'
+    +'</div>';
 }
 
 async function reviseQuote(){

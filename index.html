@@ -5828,6 +5828,7 @@ function clearanceChecks(){
     else seen[ref]=l.source_tag||'?';
   });
   if(clearance._rules&&clearance._rules.bad.length) out.push({level:'warn',text:'Instruction not understood: '+clearance._rules.bad.join('; ')});
+  (clearance._scanNotes||[]).forEach(function(n){out.push({level:'warn',text:n});});
   if((clearance.total_cents||0)>EXPORT_DECLARATION_CENTS) out.push({level:'export',text:'Export declaration required — total is '+centsAud(clearance.total_cents)+', above A$2,000.'});
   if(clearance.source_total_cents!=null&&clearance.source_total_cents!==clearanceLines.reduce(function(a,l){return a+Math.round((Number(l.qty_ordered)||0)*(Number(l.orig_unit_cents)||0));},0))
     out.push({level:'warn',text:'The source total does not match the sum of its lines.'});
@@ -5993,6 +5994,8 @@ function renderClearanceEditor(){
       +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">'
       +'<div style="font-size:13px;font-weight:700">Lines</div>'
       +'<div style="display:flex;gap:6px;flex-wrap:wrap">'
+      +'<label class="btn btn-sm" style="cursor:pointer"><i class="ti ti-scan"></i> Scan documents'
+      +'<input type="file" accept=".pdf,.jpg,.jpeg,.png" multiple style="display:none" onchange="if(this.files.length)scanClearanceFiles(this.files);this.value=\'\'"></label>'
       +'<button class="btn btn-sm" onclick="openClearancePaste()"><i class="ti ti-clipboard"></i> Paste lines</button>'
       +'<button class="btn btn-sm" onclick="loadClearanceSample()" title="Load the 37-line sample invoice 0061-26">Load sample</button>'
       +'<button class="btn btn-sm" onclick="addClearanceLine()"><i class="ti ti-plus"></i> Add line</button>'
@@ -6209,6 +6212,78 @@ function applyClearancePaste(){
   clearancePaste=null;
   recalcClearance();renderClearancePaste();renderClearanceLines();renderClearanceTotals();
   toast(rows.length+' line'+(rows.length===1?'':'s')+' added');
+}
+
+/* ── reading source documents ──
+   Supplier invoices, purchase orders and SLIs arrive as PDFs. Each file is read by
+   the scanner and becomes one tagged source document (A, then B, ...), so every
+   line on the invoice can still be traced back to the page it came from. Nothing
+   is generated from a scan: the lines land in the review table with the document's
+   own prices, where the existing checks compare qty × price against the amount the
+   document printed, and the totals against the sum of its lines. */
+function nextClearanceLetter(){
+  var used={};
+  clearanceLines.forEach(function(l){
+    var m=String(l.source_tag||'').toUpperCase().match(/^([A-Z])\d+$/);
+    if(m) used[m[1]]=true;
+  });
+  for(var i=0;i<26;i++){var c=String.fromCharCode(65+i);if(!used[c]) return c;}
+  return 'Z';
+}
+function renderClearanceScanProgress(rows){
+  var el=document.getElementById('clr-paste');
+  if(!el) return;
+  if(!rows||!rows.length){el.innerHTML='';return;}
+  el.innerHTML='<div style="border:1px solid var(--border-t);border-radius:var(--radius-md);padding:10px 12px;margin-bottom:10px;background:var(--bg-secondary)">'
+    +'<div style="font-size:12px;font-weight:700;margin-bottom:6px"><i class="ti ti-scan"></i> Reading documents</div>'
+    +rows.map(function(r){
+      var colour=r.state==='done'?'var(--green)':(r.state==='error'?'var(--danger)':'var(--text-secondary)');
+      var icon=r.state==='done'?'ti-check':(r.state==='error'?'ti-alert-circle':'ti-loader');
+      return '<div style="font-size:12px;color:'+colour+';padding:2px 0"><i class="ti '+icon+'"></i> '+escHtml(r.name)+' \u2014 '+escHtml(r.note)+'</div>';
+    }).join('')
+    +'</div>';
+}
+async function scanClearanceFiles(files){
+  if(!clearance) return;
+  var list=Array.prototype.slice.call(files);
+  var rows=list.map(function(f){return {name:f.name,state:'busy',note:'reading\u2026'};});
+  renderClearanceScanProgress(rows);
+  var addedTotal=0;
+  for(var i=0;i<list.length;i++){
+    var file=list[i];
+    try{
+      var d=await scanDocument(file,'scan_clearance');
+      var letter=nextClearanceLetter();
+      var lines=(d.lines||[]).map(function(x,n){
+        var qty=Number(x.qty)||0;
+        var unit=centsFromText(x.unit_price)||0;
+        var amt=x.amount?centsFromText(x.amount):null;
+        return {source_tag:letter+(n+1),item_ref:String(x.item_ref||'').trim(),
+          description:String(x.description||'').trim(),section:String(x.section||'').trim(),
+          qty_ordered:qty,qty_shipped:qty,orig_unit_cents:unit,final_unit_cents:unit,
+          line_total_cents:Math.round(qty*unit),currency:(d.currency||'AUD').toUpperCase()||'AUD',
+          source_amount_cents:(amt&&amt>0)?amt:null};
+      }).filter(function(l){return l.description||l.item_ref;});
+      if(!lines.length) throw new Error('no goods lines found');
+      clearanceLines=clearanceLines.concat(lines);
+      addedTotal+=lines.length;
+      /* The document's own total, for the does-it-add-up check. */
+      var docTotal=centsFromText(d.total)||0;
+      if(docTotal>0) clearance.source_total_cents=(Number(clearance.source_total_cents)||0)+docTotal;
+      clearance._scanNotes=clearance._scanNotes||[];
+      if(d.prices_include_gst||(centsFromText(d.gst_amount)||0)>0)
+        clearance._scanNotes.push(file.name+' shows GST \u2014 exports are GST-free, so check these are ex-GST prices');
+      var sumLines=lines.reduce(function(a,l){return a+Math.round((Number(l.qty_ordered)||0)*(Number(l.orig_unit_cents)||0));},0);
+      rows[i]={name:file.name,state:'done',note:letter+': '+lines.length+' line'+(lines.length===1?'':'s')+' \u00b7 '+centsText(sumLines)
+        +(docTotal>0?' (document total '+centsText(docTotal)+')':' (no total printed)')};
+    }catch(e){
+      rows[i]={name:file.name,state:'error',note:e.message};
+    }
+    renderClearanceScanProgress(rows);
+    recalcClearance();renderClearanceLines();renderClearanceTotals();
+  }
+  if(addedTotal) toast(addedTotal+' line'+(addedTotal===1?'':'s')+' read \u2014 check them against the documents before generating');
+  else toast('Nothing could be read from those files','error');
 }
 
 /* The 37-line invoice 0061-26, kept in the repo as the acceptance test. */

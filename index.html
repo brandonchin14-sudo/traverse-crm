@@ -2263,10 +2263,52 @@ async function loadPurchaseOrders(){
   }catch(e){currentPOs=[];}
   renderPOPanel();
 }
-function openPOForm(){poForm={supplier:'',po_number:'',po_date:todayLocalISO(),total:'',notes:'',file:null,busy:false};renderPOPanel();}
+function openPOForm(){poForm={supplier:'',po_number:'',po_date:todayLocalISO(),total:'',notes:'',file:null,busy:false,scan:null};renderPOPanel();}
 function closePOForm(){poForm=null;renderPOPanel();}
 function setPOField(k,v){if(poForm) poForm[k]=v;}
-function setPOFile(input){if(poForm){poForm.file=(input.files&&input.files[0])||null;renderPOPanel();}}
+function setPOFile(input){
+  if(!poForm) return;
+  poForm.file=(input.files&&input.files[0])||null;
+  poForm.scan=null;
+  renderPOPanel();
+  if(poForm.file) readPOFile(poForm.file);
+}
+/* Reads the purchase order and fills in what it finds. Only fills fields that are
+   still empty, and never the date typed today, so anything already entered by hand
+   wins; everything stays editable, because the document is the record, not this. */
+async function readPOFile(file){
+  if(!poForm||!/\.(pdf|jpe?g|png)$/i.test(file.name||'')) return;
+  poForm.scan={state:'busy',note:'reading '+file.name+'\u2026'};
+  renderPOPanel();
+  try{
+    var d=await scanDocument(file,'scan_po');
+    if(!poForm||poForm.file!==file) return;
+    var filled=[];
+    var take=function(key,val,label){
+      if(val==null||String(val).trim()==='') return;
+      if(String(poForm[key]||'').trim()!=='') return;
+      poForm[key]=String(val).trim();filled.push(label);
+    };
+    take('supplier',d.supplier,'supplier');
+    take('po_number',d.po_number,'PO number');
+    if(d.total&&Number(d.total)>0&&String(poForm.total||'').trim()===''){poForm.total=String(Number(d.total).toFixed(2));filled.push('total');}
+    /* The date defaults to today, so only replace it when the document states one. */
+    if(/^\d{4}-\d{2}-\d{2}$/.test(String(d.po_date||''))&&(!poForm.po_date||poForm.po_date===todayLocalISO())){
+      poForm.po_date=d.po_date;filled.push('date');
+    }
+    var warn=[];
+    if(d.currency&&String(d.currency).toUpperCase()!=='AUD') warn.push('the document is in '+d.currency);
+    if(!filled.length) warn.push('nothing could be read \u2014 type the details in');
+    poForm.scan={state:filled.length?'done':'warn',
+      note:(filled.length?'Filled in '+filled.join(', ')+' \u2014 check them against the document':'')+(warn.length?(filled.length?'. ':'')+warn.join('; '):''),
+      ref:d.reference||''};
+    renderPOPanel();
+  }catch(e){
+    if(!poForm||poForm.file!==file) return;
+    poForm.scan={state:'error',note:'Could not read it: '+e.message+'. Type the details in instead.'};
+    renderPOPanel();
+  }
+}
 function poPaidTotal(){return round2(currentPOs.reduce(function(s,p){return s+(Number(p.total)||0);},0));}
 
 function renderPOPanel(){
@@ -2298,7 +2340,10 @@ function renderPOPanel(){
       +'<input class="form-input" placeholder="Note (optional)" style="font-size:12px;margin-bottom:9px" value="'+escHtml(f.notes)+'" oninput="setPOField(\'notes\',this.value)">'
       +(currentLead.drive_folder_id
         ?'<label class="form-label">Purchase order file</label><input type="file" accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xlsm,.csv" style="font-size:12px" onchange="setPOFile(this)">'
-          +'<div style="font-size:11px;color:var(--text-tertiary);margin-top:4px">'+(f.file?escHtml(f.file.name)+' &#8212; goes to Drive / Purchase Orders':'Saved straight into this lead\'s Drive folder, under Purchase Orders.')+'</div>'
+          +'<div style="font-size:11px;color:var(--text-tertiary);margin-top:4px">'+(f.file?escHtml(f.file.name)+' &#8212; goes to Drive / Purchase Orders':'Saved straight into this lead\'s Drive folder, under Purchase Orders. A PDF or photo is read to fill in the details.')+'</div>'
+          +(f.scan?'<div style="font-size:11px;margin-top:4px;color:'+(f.scan.state==='error'?'var(--danger)':(f.scan.state==='busy'?'var(--text-secondary)':(f.scan.state==='warn'?'#b45309':'var(--green)')))+'">'
+            +'<i class="ti '+(f.scan.state==='busy'?'ti-loader':(f.scan.state==='done'?'ti-check':'ti-alert-triangle'))+'"></i> '+escHtml(f.scan.note)
+            +(f.scan.ref?' <span style="color:var(--text-tertiary)">(ref on the document: '+escHtml(f.scan.ref)+')</span>':'')+'</div>':'')
         :'<div style="font-size:12px;color:#b45309"><i class="ti ti-alert-circle"></i> Create the Drive folder above first to attach the file. You can still record the amounts now.</div>')
       +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">'
       +'<button class="btn btn-sm" onclick="closePOForm()">Cancel</button>'

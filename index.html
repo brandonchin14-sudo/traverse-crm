@@ -365,9 +365,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <div class="nav-tab" onclick="switchView('drive',this)"><i class="ti ti-brand-google-drive"></i> Drive</div>
   <div class="nav-tab" onclick="switchView('reports',this)"><i class="ti ti-chart-bar"></i> Reports</div>
   <div class="nav-tab" onclick="switchView('brief',this)"><i class="ti ti-checklist"></i> Brief</div>
-  <div class="nav-tab" onclick="switchView('clearance',this)"><i class="ti ti-file-certificate"></i> Clearance</div>
   <div style="margin-left:auto;display:flex;align-items:center;gap:10px">
     <button class="btn" onclick="openPackingList()" title="Build a container packing list from several leads' SLIs"><i class="ti ti-clipboard-list"></i> Packing list</button>
+    <button class="btn" onclick="openClearanceModal()" title="Customs clearance invoices for shipments to GEL"><i class="ti ti-file-certificate"></i> Clearance</button>
     <button class="btn btn-primary" onclick="openNewLead()"><i class="ti ti-plus"></i> New lead</button>
     <button class="btn theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Switch to dark theme"><i class="ti ti-moon"></i></button>
     <div class="user-pill" onclick="doLogout()"><i class="ti ti-user"></i><span id="userEmail"></span><i class="ti ti-logout" style="font-size:13px"></i></div>
@@ -417,8 +417,17 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 </div>
 
 <!-- CUSTOMS CLEARANCE -->
-<div id="view-clearance" class="view main">
-  <div id="clearanceScreen"><div class="empty-state"><i class="ti ti-loader"></i> Loading...</div></div>
+<div class="overlay" id="clearanceOverlay">
+  <div class="modal modal-xl">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title">Customs clearance</div>
+        <div class="modal-sub">Invoices for shipments to GEL, in the layout customs expects</div>
+      </div>
+      <button class="close-btn" onclick="closeModal('clearanceOverlay')"><i class="ti ti-x"></i></button>
+    </div>
+    <div id="clearanceScreen"><div class="empty-state"><i class="ti ti-loader"></i> Loading...</div></div>
+  </div>
 </div>
 
 <!-- REPORTS -->
@@ -1682,7 +1691,6 @@ function switchView(view,el){
   if(view==='reports') renderReports();
   if(view==='drive') renderDriveView();
   if(view==='brief') renderBrief();
-  if(view==='clearance') renderClearance();
 }
 function escHtml(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
@@ -5833,6 +5841,10 @@ async function loadClearanceList(){
     clearanceList=Array.isArray(rows)?rows:[];
   }catch(e){clearanceList=[];}
 }
+function openClearanceModal(){
+  document.getElementById('clearanceOverlay').classList.add('open');
+  renderClearance();
+}
 async function renderClearance(){
   var el=document.getElementById('clearanceScreen');
   if(!el) return;
@@ -5841,7 +5853,9 @@ async function renderClearance(){
   await loadClearanceList();
   var rows=clearanceList.map(function(c){
     return '<tr style="border-top:1px solid var(--border-t);cursor:pointer" onclick="openClearance(\''+c.id+'\')">'
-      +'<td style="padding:8px 10px;font-weight:600">'+escHtml(c.invoice_no||'draft')+'</td>'
+      +'<td style="padding:8px 10px;font-weight:600">'+escHtml(c.invoice_no||'draft')
+      +(c.amend_count>0?'<div style="font-size:11px;color:var(--text-tertiary);font-weight:400">amended '+c.amend_count+'\u00d7</div>':'')
+      +(c.continues_invoice_id?'<div style="font-size:11px;color:var(--text-tertiary);font-weight:400">carries a balance</div>':'')+'</td>'
       +'<td style="padding:8px 10px">'+escHtml(c.mode||'')+'</td>'
       +'<td style="padding:8px 10px">'+escHtml(String(c.invoice_date||'').slice(0,10))+'</td>'
       +'<td style="padding:8px 10px">'+escHtml(c.consignee_name||'')+(c.ref_no?'<div style="font-size:11px;color:var(--text-tertiary)">'+escHtml(c.ref_no)+'</div>':'')+'</td>'
@@ -5876,6 +5890,13 @@ async function openClearance(id){
     var rows=await r.json();
     if(!rows||!rows.length) throw new Error('Not found');
     clearance=rows[0];clearance.instructions=clearance.instructions||'';
+    if(clearance.continues_invoice_id){
+      try{
+        var pr=await sb('clearance_invoices?id=eq.'+clearance.continues_invoice_id+'&select=invoice_no');
+        var prev=await pr.json();
+        clearance._continues_no=(Array.isArray(prev)&&prev[0]||{}).invoice_no||null;
+      }catch(_){}
+    }
     var lr=await sb('clearance_lines?invoice_id=eq.'+id+'&order=sort_order.asc&select=*');
     clearanceLines=await lr.json();
     if(!Array.isArray(clearanceLines)) clearanceLines=[];
@@ -5938,10 +5959,16 @@ function renderClearanceEditor(){
   })).join('');
   el.innerHTML='<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">'
     +'<button class="btn btn-sm" onclick="closeClearance()"><i class="ti ti-arrow-left"></i> All invoices</button>'
-    +'<div style="flex:1;min-width:200px"><div style="font-size:16px;font-weight:600">'+escHtml(c.invoice_no||'New clearance invoice')+'</div>'
-    +'<div style="font-size:12px;color:var(--text-secondary)">'+(c.invoice_no?'Number stays with this shipment, including amendments':'Number is allocated when you generate it')+'</div></div>'
+    +'<div style="flex:1;min-width:200px"><div style="font-size:16px;font-weight:600">'+escHtml(c.invoice_no||'New clearance invoice')
+    +(c.status==='issued'?' <span class="quote-status-badge qs-invoiced">Issued</span>':'')
+    +(c.amend_count>0?' <span class="quote-status-badge qs-sent">Amended '+c.amend_count+'\u00d7</span>':'')+'</div>'
+    +'<div style="font-size:12px;color:var(--text-secondary)">'
+    +(c.invoice_no
+      ?'Amendments keep this number; each re-generation is saved as a new version'
+      :'Number is allocated when you generate it')
+    +(c._continues_no?' \u00b7 carries the balance of '+escHtml(c._continues_no):'')+'</div></div>'
     +'<button class="btn btn-sm" onclick="saveClearance()"><i class="ti ti-device-floppy"></i> Save draft</button>'
-    +'<button class="btn btn-primary" id="clr-gen-btn" onclick="generateClearanceDocx()"><i class="ti ti-file-download"></i> Generate invoice</button>'
+    +'<button class="btn btn-primary" id="clr-gen-btn" onclick="generateClearanceDocx()"><i class="ti ti-file-download"></i> '+(c.invoice_no?'Re-generate invoice':'Generate invoice')+'</button>'
     +'</div>'
     /* header */
     +'<div style="background:var(--bg-primary);border:1px solid var(--border-t);border-radius:var(--radius-md);padding:14px;margin-bottom:12px">'
@@ -5972,7 +5999,7 @@ function renderClearanceEditor(){
       +'<button class="btn btn-sm" onclick="clearanceShipAll(true)">Ship all</button>'
       +'<button class="btn btn-sm" onclick="clearanceShipAll(false)">Ship none</button>'
       +'</div></div>'
-      +'<div id="clr-paste"></div><div id="clr-lines"></div></div>'
+      +'<div id="clr-paste"></div><div id="clr-lines"></div><div id="clr-balance"></div></div>'
     +'<div style="flex:1;min-width:230px;background:var(--bg-primary);border:1px solid var(--border-t);border-radius:var(--radius-md);padding:12px">'
       +'<div style="font-size:13px;font-weight:700;margin-bottom:4px">Pricing instructions</div>'
       +'<div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px">One per line. Most specific wins: line, then section, then document, then all.</div>'
@@ -6021,6 +6048,77 @@ function renderClearanceLines(){
   el.innerHTML='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px"><thead>'+head+'</thead><tbody>'+rows+'</tbody></table></div>';
 }
 
+/* ── balance ──
+   What this shipment leaves behind: anything ordered but not shipped, whether held
+   back entirely or only part-sent. The next shipment is built from exactly this. */
+function clearanceBalance(){
+  return clearanceLines.map(function(l,i){
+    var rem=round2((Number(l.qty_ordered)||0)-(Number(l.qty_shipped)||0));
+    return rem>0.0001?{i:i,line:l,remaining:rem,value_cents:Math.round(rem*(Number(l.final_unit_cents)||0))}:null;
+  }).filter(Boolean);
+}
+function renderClearanceBalance(){
+  var el=document.getElementById('clr-balance');
+  if(!el) return;
+  var bal=clearanceBalance();
+  if(!bal.length){
+    el.innerHTML=clearanceLines.length
+      ?'<div style="font-size:12px;color:var(--green);margin-top:10px"><i class="ti ti-check"></i> Everything ordered is on this shipment \u2014 nothing outstanding.</div>':'';
+    return;
+  }
+  var value=bal.reduce(function(a,b){return a+b.value_cents;},0);
+  el.innerHTML='<div style="margin-top:12px;border:1px solid var(--border-t);border-radius:var(--radius-md);overflow:hidden">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 11px;background:var(--bg-secondary)">'
+    +'<div><div style="font-size:13px;font-weight:700"><i class="ti ti-package-off"></i> Still to ship</div>'
+    +'<div style="font-size:11px;color:var(--text-secondary)">'+bal.length+' line'+(bal.length===1?'':'s')+' outstanding \u00b7 '+centsAud(value)+' at the prices used here</div></div>'
+    +'<button class="btn btn-sm" onclick="startNextFromBalance()"><i class="ti ti-arrow-right"></i> Start next shipment from these</button></div>'
+    +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'
+    +'<thead><tr style="background:var(--bg-primary)"><th style="padding:5px 7px;text-align:left">Tag</th><th style="padding:5px 7px;text-align:left">Item</th>'
+    +'<th style="padding:5px 7px;text-align:right">Ordered</th><th style="padding:5px 7px;text-align:right">On this shipment</th>'
+    +'<th style="padding:5px 7px;text-align:right">Remaining</th><th style="padding:5px 7px;text-align:right">Value</th></tr></thead><tbody>'
+    +bal.map(function(b){
+      var held=(Number(b.line.qty_shipped)||0)===0;
+      return '<tr style="border-top:1px solid var(--border-t)">'
+        +'<td style="padding:5px 7px;color:var(--text-tertiary)">'+escHtml(b.line.source_tag||'')+'</td>'
+        +'<td style="padding:5px 7px">'+escHtml(b.line.item_ref||'')+' <span style="color:var(--text-secondary)">'+escHtml(String(b.line.description||'').slice(0,46))+'</span>'
+        +(held?' <span class="brief-stuck">held</span>':'')+'</td>'
+        +'<td style="padding:5px 7px;text-align:right">'+qtyText(b.line.qty_ordered)+'</td>'
+        +'<td style="padding:5px 7px;text-align:right">'+qtyText(b.line.qty_shipped)+'</td>'
+        +'<td style="padding:5px 7px;text-align:right;font-weight:600;color:#b45309">'+qtyText(b.remaining)+'</td>'
+        +'<td style="padding:5px 7px;text-align:right">'+centsText(b.value_cents)+'</td></tr>';
+    }).join('')+'</tbody></table></div></div>';
+}
+
+/* Opens a fresh draft holding only what is still owed, with the header, lead and
+   pricing instructions carried over so the next shipment is not retyped. */
+async function startNextFromBalance(){
+  if(!clearance) return;
+  var bal=clearanceBalance();
+  if(!bal.length){toast('Nothing outstanding to carry forward','error');return;}
+  if(!clearance.id){
+    var savedId=await saveClearance(true);
+    if(!savedId){toast('Save this invoice first','error');return;}
+  }
+  var from=clearance,fromNo=from.invoice_no||'the previous draft';
+  if(!confirm('Start a new clearance invoice with the '+bal.length+' outstanding line'+(bal.length===1?'':'s')+' from '+fromNo+'?')) return;
+  var lines=bal.map(function(b){
+    return {source_tag:b.line.source_tag,item_ref:b.line.item_ref,description:b.line.description,
+      section:b.line.section,qty_ordered:b.remaining,qty_shipped:b.remaining,
+      orig_unit_cents:b.line.orig_unit_cents,final_unit_cents:b.line.final_unit_cents,
+      line_total_cents:Math.round(b.remaining*(Number(b.line.final_unit_cents)||0)),
+      currency:b.line.currency||'AUD',source_amount_cents:null};
+  });
+  clearance={id:null,invoice_no:null,mode:from.mode,status:'draft',lead_id:from.lead_id||null,
+    ref_no:'',invoice_date:todayLocalISO(),consignee_name:from.consignee_name,consignee_branch:from.consignee_branch,
+    note:from.note||'',salesperson:from.salesperson,job:from.job,boq_ref:from.boq_ref,
+    payment_terms:from.payment_terms,due_date:from.due_date,adjust_label:'',adjust_value_cents:null,
+    instructions:from.instructions||'',subtotal_cents:0,total_cents:0,amend_count:0,
+    continues_invoice_id:from.id,_continues_no:from.invoice_no||null};
+  clearanceLines=lines;clearancePaste=null;
+  recalcClearance();renderClearanceEditor();
+  toast(lines.length+' outstanding line'+(lines.length===1?'':'s')+' carried over \u2014 check the date and ref, then generate');
+}
+
 function renderClearanceTotals(){
   var el=document.getElementById('clr-totals');
   if(!el||!clearance) return;
@@ -6031,6 +6129,7 @@ function renderClearanceTotals(){
     +'<div style="display:flex;justify-content:space-between;padding:2px 0"><span style="color:var(--text-secondary)">Subtotal</span><span>'+centsText(clearance.subtotal_cents)+'</span></div>'
     +(clearance.adjust_value_cents!=null?'<div style="display:flex;justify-content:space-between;padding:2px 0"><span style="color:var(--text-secondary)">'+escHtml(clearance.adjust_label||'Adjustment')+'</span><span>'+centsText(clearance.adjust_value_cents)+'</span></div>':'')
     +'<div style="display:flex;justify-content:space-between;padding:6px 0 0;border-top:1px solid var(--border-t);margin-top:4px;font-weight:700;font-size:14px"><span>Total</span><span>'+centsAud(clearance.total_cents)+'</span></div></div>';
+  renderClearanceBalance();
   renderClearanceChecks();
 }
 
@@ -6137,14 +6236,16 @@ async function loadClearanceSample(){
 async function saveClearance(silent){
   if(!clearance) return null;
   recalcClearance();
-  var head={mode:clearance.mode,status:clearance.status||'draft',lead_id:clearance.lead_id||null,
+  var head={invoice_no:clearance.invoice_no||null,
+    mode:clearance.mode,status:clearance.status||'draft',lead_id:clearance.lead_id||null,
     ref_no:clearance.ref_no||null,invoice_date:clearance.invoice_date||todayLocalISO(),
     consignee_name:clearance.consignee_name||null,consignee_branch:clearance.consignee_branch||null,
     note:clearance.note||null,salesperson:clearance.salesperson||null,job:clearance.job||null,
     boq_ref:clearance.boq_ref||null,payment_terms:clearance.payment_terms||null,due_date:clearance.due_date||null,
     adjust_label:clearance.adjust_label||null,adjust_value_cents:clearance.adjust_value_cents,
     instructions:clearance.instructions||null,subtotal_cents:clearance.subtotal_cents,
-    total_cents:clearance.total_cents,updated_at:new Date().toISOString()};
+    total_cents:clearance.total_cents,continues_invoice_id:clearance.continues_invoice_id||null,
+    amend_count:Number(clearance.amend_count)||0,updated_at:new Date().toISOString()};
   try{
     if(!clearance.id){
       head.created_by_email=(currentUser&&currentUser.email)||null;
@@ -6227,11 +6328,16 @@ async function generateClearanceDocx(){
   try{
     await loadDocxLibs();
     var tpl=await fetchClearanceTemplate();
-    /* The number is allocated once, server-side, and kept for every later amendment. */
-    if(!clearance.invoice_no){
+    /* The number is allocated once, server-side, and kept for every later amendment;
+       each re-generation is a new version of the document, so the copy customs already
+       received is never overwritten. */
+    var amending=!!clearance.invoice_no;
+    if(!amending){
       var nr=await sbRpc('next_clearance_number');
       if(!nr.ok) throw new Error('Could not allocate an invoice number');
       clearance.invoice_no=await nr.json();
+    } else {
+      clearance.amend_count=(Number(clearance.amend_count)||0)+1;
     }
     clearance.status='issued';
     var id=await saveClearance(true);
@@ -6240,7 +6346,9 @@ async function generateClearanceDocx(){
     var doc=new window.docxtemplater(zip,{paragraphLoop:true,linebreaks:true});
     doc.render(clearanceDocData());
     var blob=doc.getZip().generate({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
-    var name='Traverse_Invoice_'+clearance.invoice_no+'_'+(clearance.mode==='AIR'?'Air':'Sea')+'.docx';
+    var version=Number(clearance.amend_count)||0;
+    var name='Traverse_Invoice_'+clearance.invoice_no+'_'+(clearance.mode==='AIR'?'Air':'Sea')
+      +(version?'_amended-'+(version+1):'')+'.docx';
     var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();
     setTimeout(function(){URL.revokeObjectURL(a.href);},4000);
     /* Keep a copy with the job when the invoice is attached to a lead. */
@@ -6257,7 +6365,7 @@ async function generateClearanceDocx(){
       }catch(de){toast('Invoice built, but the Drive copy failed','error');}
     }
     renderClearanceEditor();
-    toast('Invoice '+clearance.invoice_no+' generated &#10003;');
+    toast('Invoice '+clearance.invoice_no+(version?' re-generated (version '+(version+1)+')':' generated')+' &#10003;');
   }catch(e){
     toast('Could not generate it: '+e.message,'error');
   }finally{

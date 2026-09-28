@@ -1,0 +1,242 @@
+{
+ "invoice_no": "0061-26",
+ "mode": "SEA",
+ "ref_no": "Kalgin shipment",
+ "date": "September 25, 2026",
+ "consignee_name": "GEL Honiara",
+ "consignee_branch": "Ranadi Branch",
+ "note": "",
+ "salesperson": "Cara",
+ "job": "Ranadi W/Shop",
+ "boq_ref": "Electrical",
+ "payment_terms": "As Per Schedule",
+ "due_date": "As Per Schedule",
+ "items": [
+  {
+   "qty": "150",
+   "description": "I/N 0782966 – Click A60 ES LED Globe 14W / 1400lm Cool White, non-dimmable",
+   "unit_price": "0.82",
+   "line_total": "123.00"
+  },
+  {
+   "qty": "20",
+   "description": "ALL16MD – Conduit Rigid PVC Medium Duty 16mm x 4m, Grey",
+   "unit_price": "2.24",
+   "line_total": "44.80"
+  },
+  {
+   "qty": "20",
+   "description": "ALL20MD – Conduit Rigid PVC Medium Duty 20mm x 4m, Grey",
+   "unit_price": "2.14",
+   "line_total": "42.80"
+  },
+  {
+   "qty": "20",
+   "description": "ALL25MD – Conduit Rigid PVC Medium Duty 25mm x 4m, Grey",
+   "unit_price": "2.58",
+   "line_total": "51.60"
+  },
+  {
+   "qty": "20",
+   "description": "ALL32MD – Conduit Rigid PVC Medium Duty 32mm x 4m, Grey",
+   "unit_price": "4.28",
+   "line_total": "85.60"
+  },
+  {
+   "qty": "20",
+   "description": "ALL50MD – Conduit Rigid PVC Medium Duty 50mm x 4m, Grey",
+   "unit_price": "9.38",
+   "line_total": "187.60"
+  },
+  {
+   "qty": "20",
+   "description": "ALL20HD – Conduit Rigid PVC Heavy Duty 20mm x 4m, Orange",
+   "unit_price": "2.72",
+   "line_total": "54.40"
+  },
+  {
+   "qty": "20",
+   "description": "ALL25HD – Conduit Rigid PVC Heavy Duty 25mm x 4m, Orange",
+   "unit_price": "4.40",
+   "line_total": "88.00"
+  },
+  {
+   "qty": "20",
+   "description": "ALL40HD – Conduit Rigid PVC Heavy Duty 40mm x 4m, Orange",
+   "unit_price": "7.19",
+   "line_total": "143.80"
+  },
+  {
+   "qty": "20",
+   "description": "ALL50HD – Conduit Rigid PVC Heavy Duty 50mm x 4m, Orange",
+   "unit_price": "9.06",
+   "line_total": "181.20"
+  },
+  {
+   "qty": "1",
+   "description": "CBL164CEOCOR500 – Cable Orange Circular 16mm 7/1.70 4C+E 100m 0.6/1kV",
+   "unit_price": "801.38",
+   "line_total": "801.38"
+  },
+  {
+   "qty": "1",
+   "description": "CBL104CEOCOR500 – Cable Orange Circular 10mm 7/1.35 4C+E 100m 0.6/1kV",
+   "unit_price": "521.56",
+   "line_total": "521.56"
+  },
+  {
+   "qty": "1",
+   "description": "CBL254CEXLPEOR500 – Cable XLPE 25mm 19/1.35 4C+E 100m, Orange Sheath",
+   "unit_price": "1,272.35",
+   "line_total": "1,272.35"
+  },
+  {
+   "qty": "3",
+   "description": "CBL10TWH – Cable TPS Twin 10mm 7/1.35 2C 100m Red/Black, White Sheath",
+   "unit_price": "256.70",
+   "line_total": "770.10"
+  },
+  {
+   "qty": "4",
+   "description": "CBT1.5TEWH – Cable TPS 1.5mm 7/0.50 2C+E 100m Red/Black/Earth, White",
+   "unit_price": "46.92",
+   "line_total": "187.68"
+  },
+  {
+   "qty": "2",
+   "description": "CBL1.5TWH – Cable TPS Twin 1.5mm 7/0.50 2C 100m Red/Black, White Sheath",
+   "unit_price": "46.24",
+   "line_total": "92.48"
+  },
+  {
+   "qty": "3",
+   "description": "CBL6BWEW – Cable Building Wire Earth 6mm 1C 100m, Green/Yellow",
+   "unit_price": "66.30",
+   "line_total": "198.90"
+  },
+  {
+   "qty": "3",
+   "description": "CBL2.53CODFXGR – Cable Flex Ordinary Duty 2.5mm 50/0.25 3C 100m, Grey",
+   "unit_price": "102.34",
+   "line_total": "307.02"
+  },
+  {
+   "qty": "3",
+   "description": "CBL1.53CODFXGR – Cable Flex Ordinary Duty 1.5mm 30/0.25 3C 100m, Grey",
+   "unit_price": "64.60",
+   "line_total": "193.80"
+  },
+  {
+   "qty": "5",
+   "description": "TPDCC1650 – Corrugated Conduit 16mm x 50m, Grey, Medium Duty",
+   "unit_price": "19.31",
+   "line_total": "96.55"
+  },
+  {
+   "qty": "5",
+   "description": "TPDCC2050 – Corrugated Conduit 20mm x 50m, Grey, Medium Duty",
+   "unit_price": "22.66",
+   "line_total": "113.30"
+  },
+  {
+   "qty": "5",
+   "description": "TPDCC2550 – Corrugated Conduit 25mm x 50m, Grey, Medium Duty",
+   "unit_price": "27.70",
+   "line_total": "138.50"
+  },
+  {
+   "qty": "5",
+   "description": "TPDCC3225 – Corrugated Conduit 32mm x 25m, Grey, Medium Duty",
+   "unit_price": "23.51",
+   "line_total": "117.55"
+  },
+  {
+   "qty": "5",
+   "description": "TPDCC4010 – Corrugated Conduit 40mm x 10m, Grey, Medium Duty",
+   "unit_price": "19.31",
+   "line_total": "96.55"
+  },
+  {
+   "qty": "5",
+   "description": "TPDCC5010 – Corrugated Conduit 50mm x 10m, Grey, Medium Duty",
+   "unit_price": "29.39",
+   "line_total": "146.95"
+  },
+  {
+   "qty": "20",
+   "description": "WATPVCBLALT – Tape PVC 18mm x 20m, Black",
+   "unit_price": "0.44",
+   "line_total": "8.80"
+  },
+  {
+   "qty": "20",
+   "description": "WATPVCBLULT – Tape PVC 18mm x 20m, Blue",
+   "unit_price": "0.44",
+   "line_total": "8.80"
+  },
+  {
+   "qty": "20",
+   "description": "WATPVCRLT – Tape PVC 18mm x 20m, Red",
+   "unit_price": "0.44",
+   "line_total": "8.80"
+  },
+  {
+   "qty": "20",
+   "description": "WATPVCWLT – Tape PVC 18mm x 20m, White",
+   "unit_price": "0.44",
+   "line_total": "8.80"
+  },
+  {
+   "qty": "20",
+   "description": "WATPVCGYLT – Tape PVC 18mm x 20m, Green/Yellow",
+   "unit_price": "0.44",
+   "line_total": "8.80"
+  },
+  {
+   "qty": "100",
+   "description": "TPDTRITC20-P – Coupling Grey 20mm",
+   "unit_price": "0.11",
+   "line_total": "11.00"
+  },
+  {
+   "qty": "100",
+   "description": "TPDTRITC25-P – Coupling Grey 25mm",
+   "unit_price": "0.16",
+   "line_total": "16.00"
+  },
+  {
+   "qty": "100",
+   "description": "TPDTRITC32-P – Coupling Grey 32mm",
+   "unit_price": "0.20",
+   "line_total": "20.00"
+  },
+  {
+   "qty": "50",
+   "description": "BIZSBN725 – Screw Bugle Head Needle Point 7g x 25mm (x100)",
+   "unit_price": "1.78",
+   "line_total": "89.00"
+  },
+  {
+   "qty": "100",
+   "description": "NGL243069# – Batten Holder E27, White",
+   "unit_price": "1.99",
+   "line_total": "199.00"
+  },
+  {
+   "qty": "100",
+   "description": "GNSTESBH – Batten Holder, Standard",
+   "unit_price": "0.90",
+   "line_total": "90.00"
+  },
+  {
+   "qty": "100",
+   "description": "OMETRAERC1400 – Earth Rod 12.5mm x 1.4m c/w Clip and Earth Tag",
+   "unit_price": "5.53",
+   "line_total": "553.00"
+  }
+ ],
+ "subtotal": "7,079.47",
+ "adjust_label": "",
+ "adjust_value": "",
+ "total": "7,079.47"
+}

@@ -365,6 +365,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <div class="nav-tab" onclick="switchView('drive',this)"><i class="ti ti-brand-google-drive"></i> Drive</div>
   <div class="nav-tab" onclick="switchView('reports',this)"><i class="ti ti-chart-bar"></i> Reports</div>
   <div class="nav-tab" onclick="switchView('brief',this)"><i class="ti ti-checklist"></i> Brief</div>
+  <div class="nav-tab" onclick="switchView('clearance',this)"><i class="ti ti-file-certificate"></i> Clearance</div>
   <div style="margin-left:auto;display:flex;align-items:center;gap:10px">
     <button class="btn" onclick="openPackingList()" title="Build a container packing list from several leads' SLIs"><i class="ti ti-clipboard-list"></i> Packing list</button>
     <button class="btn btn-primary" onclick="openNewLead()"><i class="ti ti-plus"></i> New lead</button>
@@ -413,6 +414,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <div id="briefSummary"></div>
   <div id="briefAddForm"></div>
   <div id="briefBoard"><div class="empty-state"><i class="ti ti-loader"></i> Loading...</div></div>
+</div>
+
+<!-- CUSTOMS CLEARANCE -->
+<div id="view-clearance" class="view main">
+  <div id="clearanceScreen"><div class="empty-state"><i class="ti ti-loader"></i> Loading...</div></div>
 </div>
 
 <!-- REPORTS -->
@@ -1676,6 +1682,7 @@ function switchView(view,el){
   if(view==='reports') renderReports();
   if(view==='drive') renderDriveView();
   if(view==='brief') renderBrief();
+  if(view==='clearance') renderClearance();
 }
 function escHtml(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
@@ -5689,6 +5696,583 @@ function exportReportCSV(){
   var csv=rows.map(function(r){return r.map(function(c){return '"'+String(c).replace(/"/g,'""')+'"';}).join(',');}).join('\n');
   var blob=new Blob([csv],{type:'text/csv'});
   var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='traverse_report.csv';a.click();
+}
+
+/* ── CUSTOMS CLEARANCE INVOICES ─────────────────────────────────
+   Every shipment to GEL needs an invoice listing exactly what is on it, in the fixed
+   layout customs expects. Lines come from supplier documents, then prices and
+   quantities are amended per shipment, so this keeps: what the source said, the
+   instruction applied, and what was finally charged — all in integer cents, because
+   a cent lost to floating point is a customs discrepancy.
+   The .docx is produced from templates/clearance_template.docx, which lives in a
+   private Supabase bucket (the repo is public and the template carries bank details).
+   The layout is never touched here; only its placeholders are filled. */
+var CLEARANCE_TEMPLATE_URL=SB_URL+'/storage/v1/object/templates/clearance_template.docx';
+var CLEARANCE_DEFAULTS={consignee_name:'GEL Honiara',consignee_branch:'Ranadi Branch',salesperson:'Cara',
+  job:'Ranadi W/Shop',boq_ref:'Electrical',payment_terms:'As Per Schedule',due_date:'As Per Schedule'};
+/* Above this, customs needs an export declaration. */
+var EXPORT_DECLARATION_CENTS=200000;
+var clearanceList=[],clearance=null,clearanceLines=[],clearanceBusy=false,clearancePaste=null;
+
+/* Money is integer cents everywhere. Strings only exist for display and for the
+   document itself. */
+function centsFromText(v){
+  var t=String(v==null?'':v).replace(/[$,\s]/g,'').trim();
+  if(t==='') return null;
+  if(!/^-?\d*(\.\d*)?$/.test(t)) return NaN;
+  return Math.round(parseFloat(t)*100);
+}
+function centsText(c){return (Number(c||0)/100).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2});}
+function centsAud(c){return 'A$'+centsText(c);}
+function qtyText(q){var n=Number(q)||0;return String(Math.round(n*1000)/1000);}
+/* Percentage applied to the unit price, rounded half-up to the cent, in integers so
+   there is no floating point drift. Basis points keep 12.5% exact. */
+function applyPct(cents,pct){
+  var bp=Math.round(Number(pct)*100);
+  var v=Number(cents)*(10000+bp);
+  return v>=0?Math.floor((v+5000)/10000):-Math.floor((-v+5000)/10000);
+}
+function clearanceDocDate(iso){
+  if(!iso) return '';
+  var p=String(iso).slice(0,10).split('-');
+  if(p.length!==3) return String(iso);
+  return new Date(Number(p[0]),Number(p[1])-1,Number(p[2])).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
+}
+
+/* ── pricing instructions ──
+   One per line, most specific wins: a line (A3 = 42.50 or A3 -10%), then a section
+   (cables -15%), then a source document (B +12%), then everything (all -15%). */
+function parseClearanceInstructions(text){
+  var out={all:null,pdf:{},section:{},line:{},bad:[]};
+  String(text||'').split('\n').forEach(function(raw){
+    var t=raw.trim();
+    if(!t||t.charAt(0)==='#') return;
+    var m;
+    if((m=t.match(/^([A-Za-z]+\d+)\s*=\s*\$?([\d,]+(?:\.\d+)?)$/))){
+      out.line[m[1].toUpperCase()]={set:centsFromText(m[2])};return;
+    }
+    if((m=t.match(/^([A-Za-z]+\d+)\s*([+-]\s*\d+(?:\.\d+)?)\s*%$/))){
+      out.line[m[1].toUpperCase()]={pct:parseFloat(m[2].replace(/\s/g,''))};return;
+    }
+    if((m=t.match(/^all\s*([+-]\s*\d+(?:\.\d+)?)\s*%$/i))){out.all=parseFloat(m[1].replace(/\s/g,''));return;}
+    if((m=t.match(/^([A-Za-z])\s*([+-]\s*\d+(?:\.\d+)?)\s*%$/))){out.pdf[m[1].toUpperCase()]=parseFloat(m[2].replace(/\s/g,''));return;}
+    if((m=t.match(/^(.+?)\s*([+-]\s*\d+(?:\.\d+)?)\s*%$/))){out.section[m[1].trim().toLowerCase()]=parseFloat(m[2].replace(/\s/g,''));return;}
+    out.bad.push(t);
+  });
+  return out;
+}
+/* Which rule wins for this line, and what it does to the price. */
+function clearancePriceFor(line,rules){
+  var tag=(line.source_tag||'').toUpperCase();
+  var pdf=tag.replace(/\d+$/,'');
+  var sect=(line.section||'').toLowerCase();
+  var orig=Number(line.orig_unit_cents)||0;
+  var r=rules.line[tag];
+  if(r&&r.set!=null) return {cents:r.set,label:tag+' = '+centsText(r.set)};
+  if(r&&r.pct!=null) return {cents:applyPct(orig,r.pct),label:tag+' '+(r.pct>0?'+':'')+r.pct+'%'};
+  if(sect&&rules.section[sect]!=null) return {cents:applyPct(orig,rules.section[sect]),label:sect+' '+(rules.section[sect]>0?'+':'')+rules.section[sect]+'%'};
+  if(pdf&&rules.pdf[pdf]!=null) return {cents:applyPct(orig,rules.pdf[pdf]),label:pdf+' '+(rules.pdf[pdf]>0?'+':'')+rules.pdf[pdf]+'%'};
+  if(rules.all!=null) return {cents:applyPct(orig,rules.all),label:'all '+(rules.all>0?'+':'')+rules.all+'%'};
+  return {cents:orig,label:''};
+}
+/* Recomputes every line and the totals from the source prices and the instructions. */
+function recalcClearance(){
+  if(!clearance) return;
+  var rules=parseClearanceInstructions(clearance.instructions||'');
+  clearance._rules=rules;
+  var sub=0;
+  clearanceLines.forEach(function(l){
+    var p=clearancePriceFor(l,rules);
+    l.final_unit_cents=p.cents;
+    l.instruction=p.label||null;
+    var q=Number(l.qty_shipped)||0;
+    l.line_total_cents=Math.round(q*p.cents);
+    sub+=l.line_total_cents;
+  });
+  clearance.subtotal_cents=sub;
+  clearance.total_cents=sub+(Number(clearance.adjust_value_cents)||0);
+}
+
+/* Everything that should stop an invoice going to customs wrong. */
+function clearanceChecks(){
+  var out=[];
+  if(!clearance) return out;
+  var shipping=clearanceLines.filter(function(l){return (Number(l.qty_shipped)||0)>0;});
+  if(!shipping.length) out.push({level:'block',text:'No lines are being shipped.'});
+  ['consignee_name','salesperson','job','boq_ref','payment_terms','due_date'].forEach(function(k){
+    if(!String(clearance[k]||'').trim()) out.push({level:'block',text:'Header field missing: '+k.replace(/_/g,' ')});
+  });
+  if(!clearance.invoice_date) out.push({level:'block',text:'Header field missing: date'});
+  clearanceLines.forEach(function(l){
+    if(!String(l.description||'').trim()) out.push({level:'block',text:(l.source_tag||'A line')+' has no description'});
+    if((Number(l.qty_shipped)||0)>(Number(l.qty_ordered)||0)) out.push({level:'warn',text:(l.source_tag||'')+' ships '+qtyText(l.qty_shipped)+' of '+qtyText(l.qty_ordered)+' ordered'});
+    if(l.source_amount_cents!=null){
+      var expect=Math.round((Number(l.qty_ordered)||0)*(Number(l.orig_unit_cents)||0));
+      if(Math.abs(expect-l.source_amount_cents)>0) out.push({level:'warn',text:(l.source_tag||'line')+': source says '+centsText(l.source_amount_cents)+' but qty × price is '+centsText(expect)});
+    }
+    if((l.currency||'AUD').toUpperCase()!=='AUD') out.push({level:'warn',text:(l.source_tag||'line')+' is in '+l.currency+', not AUD'});
+  });
+  var seen={};
+  clearanceLines.forEach(function(l){
+    var ref=String(l.item_ref||'').trim().toUpperCase();
+    if(!ref) return;
+    if(seen[ref]&&seen[ref]!==l.source_tag) out.push({level:'warn',text:'Item '+ref+' appears twice ('+seen[ref]+' and '+(l.source_tag||'?')+')'});
+    else seen[ref]=l.source_tag||'?';
+  });
+  if(clearance._rules&&clearance._rules.bad.length) out.push({level:'warn',text:'Instruction not understood: '+clearance._rules.bad.join('; ')});
+  if((clearance.total_cents||0)>EXPORT_DECLARATION_CENTS) out.push({level:'export',text:'Export declaration required — total is '+centsAud(clearance.total_cents)+', above A$2,000.'});
+  if(clearance.source_total_cents!=null&&clearance.source_total_cents!==clearanceLines.reduce(function(a,l){return a+Math.round((Number(l.qty_ordered)||0)*(Number(l.orig_unit_cents)||0));},0))
+    out.push({level:'warn',text:'The source total does not match the sum of its lines.'});
+  return out;
+}
+
+async function loadClearanceList(){
+  try{
+    var r=await sb('clearance_invoices?select=*&order=created_at.desc&limit=200');
+    var rows=await r.json();
+    clearanceList=Array.isArray(rows)?rows:[];
+  }catch(e){clearanceList=[];}
+}
+async function renderClearance(){
+  var el=document.getElementById('clearanceScreen');
+  if(!el) return;
+  if(clearance){renderClearanceEditor();return;}
+  el.innerHTML='<div class="empty-state"><i class="ti ti-loader"></i> Loading…</div>';
+  await loadClearanceList();
+  var rows=clearanceList.map(function(c){
+    return '<tr style="border-top:1px solid var(--border-t);cursor:pointer" onclick="openClearance(\''+c.id+'\')">'
+      +'<td style="padding:8px 10px;font-weight:600">'+escHtml(c.invoice_no||'draft')+'</td>'
+      +'<td style="padding:8px 10px">'+escHtml(c.mode||'')+'</td>'
+      +'<td style="padding:8px 10px">'+escHtml(String(c.invoice_date||'').slice(0,10))+'</td>'
+      +'<td style="padding:8px 10px">'+escHtml(c.consignee_name||'')+(c.ref_no?'<div style="font-size:11px;color:var(--text-tertiary)">'+escHtml(c.ref_no)+'</div>':'')+'</td>'
+      +'<td style="padding:8px 10px;text-align:right;font-weight:600">'+centsAud(c.total_cents)+'</td>'
+      +'<td style="padding:8px 10px;text-align:center">'+(c.status==='issued'
+        ?'<span class="quote-status-badge qs-invoiced">Issued</span>':'<span class="quote-status-badge qs-draft">Draft</span>')+'</td></tr>';
+  }).join('');
+  el.innerHTML='<div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;flex-wrap:wrap">'
+    +'<div style="flex:1;min-width:220px"><div style="font-size:16px;font-weight:600;margin-bottom:3px">Customs clearance invoices</div>'
+    +'<div style="font-size:13px;color:var(--text-secondary)">What is actually on each shipment, in the layout customs expects</div></div>'
+    +'<button class="btn" onclick="renderClearance()"><i class="ti ti-refresh"></i></button>'
+    +'<button class="btn btn-primary" onclick="newClearance()"><i class="ti ti-plus"></i> New clearance invoice</button></div>'
+    +(clearanceList.length
+      ?'<div style="overflow-x:auto;border:1px solid var(--border-t);border-radius:var(--radius-md)"><table style="width:100%;border-collapse:collapse;font-size:12px">'
+        +'<thead><tr style="background:var(--bg-secondary)"><th style="padding:8px 10px;text-align:left">Invoice</th><th style="padding:8px 10px;text-align:left">Mode</th><th style="padding:8px 10px;text-align:left">Date</th><th style="padding:8px 10px;text-align:left">Consignee</th><th style="padding:8px 10px;text-align:right">Total</th><th style="padding:8px 10px;text-align:center">Status</th></tr></thead>'
+        +'<tbody>'+rows+'</tbody></table></div>'
+      :'<div class="empty-state"><i class="ti ti-file-certificate"></i> No clearance invoices yet. Start one when a shipment is ready.</div>');
+}
+
+function newClearance(){
+  clearance=Object.assign({id:null,invoice_no:null,mode:'SEA',status:'draft',lead_id:null,ref_no:'',
+    invoice_date:todayLocalISO(),note:'',adjust_label:'',adjust_value_cents:null,instructions:'',
+    subtotal_cents:0,total_cents:0},CLEARANCE_DEFAULTS);
+  clearanceLines=[];clearancePaste=null;
+  renderClearanceEditor();
+}
+async function openClearance(id){
+  var el=document.getElementById('clearanceScreen');
+  el.innerHTML='<div class="empty-state"><i class="ti ti-loader"></i> Loading…</div>';
+  try{
+    var r=await sb('clearance_invoices?id=eq.'+id+'&select=*');
+    var rows=await r.json();
+    if(!rows||!rows.length) throw new Error('Not found');
+    clearance=rows[0];clearance.instructions=clearance.instructions||'';
+    var lr=await sb('clearance_lines?invoice_id=eq.'+id+'&order=sort_order.asc&select=*');
+    clearanceLines=await lr.json();
+    if(!Array.isArray(clearanceLines)) clearanceLines=[];
+    recalcClearance();
+    renderClearanceEditor();
+  }catch(e){clearance=null;toast('Could not open it: '+e.message,'error');renderClearance();}
+}
+function closeClearance(){clearance=null;clearanceLines=[];clearancePaste=null;renderClearance();}
+function setClearanceField(k,v){
+  if(!clearance) return;
+  if(k==='adjust_value_cents'){clearance[k]=v===''?null:centsFromText(v);recalcClearance();renderClearanceTotals();return;}
+  clearance[k]=v;
+}
+function setClearanceInstructions(v){
+  if(!clearance) return;
+  clearance.instructions=v;
+  recalcClearance();renderClearanceLines();renderClearanceTotals();
+}
+function setClearanceLine(i,k,v){
+  var l=clearanceLines[i];
+  if(!l) return;
+  if(k==='qty_shipped'||k==='qty_ordered') l[k]=v===''?0:(parseFloat(v)||0);
+  else if(k==='orig_unit_cents') l[k]=centsFromText(v)||0;
+  else l[k]=v;
+  recalcClearance();renderClearanceLines();renderClearanceTotals();
+}
+function clearanceShipAll(on){
+  clearanceLines.forEach(function(l){l.qty_shipped=on?(Number(l.qty_ordered)||0):0;});
+  recalcClearance();renderClearanceLines();renderClearanceTotals();
+}
+function addClearanceLine(){
+  var tag=nextClearanceTag('A');
+  clearanceLines.push({source_tag:tag,item_ref:'',description:'',section:'',qty_ordered:1,qty_shipped:1,
+    orig_unit_cents:0,final_unit_cents:0,line_total_cents:0,currency:'AUD',source_amount_cents:null});
+  recalcClearance();renderClearanceLines();renderClearanceTotals();
+}
+function removeClearanceLine(i){clearanceLines.splice(i,1);recalcClearance();renderClearanceLines();renderClearanceTotals();}
+function nextClearanceTag(letter){
+  var n=0;
+  clearanceLines.forEach(function(l){
+    var m=String(l.source_tag||'').toUpperCase().match(new RegExp('^'+letter+'(\\d+)$'));
+    if(m) n=Math.max(n,Number(m[1]));
+  });
+  return letter+(n+1);
+}
+
+
+/* ── editor ── */
+function renderClearanceEditor(){
+  var el=document.getElementById('clearanceScreen');
+  if(!el||!clearance) return;
+  var c=clearance;
+  var f=function(label,key,type,width,extra){
+    return '<div style="'+(width?'width:'+width:'flex:1;min-width:150px')+'"><label class="form-label">'+label+'</label>'
+      +'<input class="form-input" '+(type?'type="'+type+'" ':'')+'value="'+escHtml(c[key]==null?'':String(c[key]))+'" '
+      +'oninput="setClearanceField(\''+key+'\',this.value)" '+(extra||'')+'></div>';
+  };
+  var leadOpts=['<option value="">Not linked to a lead</option>'].concat(leads.filter(function(l){return !l.parent_lead_id;}).map(function(l){
+    return '<option value="'+l.id+'"'+(c.lead_id===l.id?' selected':'')+'>'+escHtml((l.name||'')+' — '+(l.company||''))+'</option>';
+  })).join('');
+  el.innerHTML='<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">'
+    +'<button class="btn btn-sm" onclick="closeClearance()"><i class="ti ti-arrow-left"></i> All invoices</button>'
+    +'<div style="flex:1;min-width:200px"><div style="font-size:16px;font-weight:600">'+escHtml(c.invoice_no||'New clearance invoice')+'</div>'
+    +'<div style="font-size:12px;color:var(--text-secondary)">'+(c.invoice_no?'Number stays with this shipment, including amendments':'Number is allocated when you generate it')+'</div></div>'
+    +'<button class="btn btn-sm" onclick="saveClearance()"><i class="ti ti-device-floppy"></i> Save draft</button>'
+    +'<button class="btn btn-primary" id="clr-gen-btn" onclick="generateClearanceDocx()"><i class="ti ti-file-download"></i> Generate invoice</button>'
+    +'</div>'
+    /* header */
+    +'<div style="background:var(--bg-primary);border:1px solid var(--border-t);border-radius:var(--radius-md);padding:14px;margin-bottom:12px">'
+    +'<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">'
+    +'<div style="width:130px"><label class="form-label">Mode</label><select class="form-input" onchange="setClearanceField(\'mode\',this.value)">'
+      +['SEA','AIR'].map(function(m){return '<option'+(c.mode===m?' selected':'')+'>'+m+'</option>';}).join('')+'</select></div>'
+    +f('Ref no','ref_no',null,'190px')
+    +f('Date','invoice_date','date','160px')
+    +'<div style="flex:1;min-width:200px"><label class="form-label">Lead (optional)</label>'
+      +'<select class="form-input" onchange="setClearanceField(\'lead_id\',this.value||null)">'+leadOpts+'</select></div>'
+    +'</div>'
+    +'<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">'
+    +f('Consignee','consignee_name')+f('Branch','consignee_branch')+f('Note (optional)','note')
+    +'</div>'
+    +'<div style="display:flex;gap:10px;flex-wrap:wrap">'
+    +f('Salesperson','salesperson',null,'150px')+f('Job','job',null,'170px')+f('B.O.Q ref','boq_ref',null,'150px')
+    +f('Payment terms','payment_terms',null,'160px')+f('Due date','due_date',null,'160px')
+    +'</div></div>'
+    /* lines + instructions */
+    +'<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">'
+    +'<div style="flex:2;min-width:280px;background:var(--bg-primary);border:1px solid var(--border-t);border-radius:var(--radius-md);padding:12px">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">'
+      +'<div style="font-size:13px;font-weight:700">Lines</div>'
+      +'<div style="display:flex;gap:6px;flex-wrap:wrap">'
+      +'<button class="btn btn-sm" onclick="openClearancePaste()"><i class="ti ti-clipboard"></i> Paste lines</button>'
+      +'<button class="btn btn-sm" onclick="loadClearanceSample()" title="Load the 37-line sample invoice 0061-26">Load sample</button>'
+      +'<button class="btn btn-sm" onclick="addClearanceLine()"><i class="ti ti-plus"></i> Add line</button>'
+      +'<button class="btn btn-sm" onclick="clearanceShipAll(true)">Ship all</button>'
+      +'<button class="btn btn-sm" onclick="clearanceShipAll(false)">Ship none</button>'
+      +'</div></div>'
+      +'<div id="clr-paste"></div><div id="clr-lines"></div></div>'
+    +'<div style="flex:1;min-width:230px;background:var(--bg-primary);border:1px solid var(--border-t);border-radius:var(--radius-md);padding:12px">'
+      +'<div style="font-size:13px;font-weight:700;margin-bottom:4px">Pricing instructions</div>'
+      +'<div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px">One per line. Most specific wins: line, then section, then document, then all.</div>'
+      +'<textarea class="form-input" rows="6" style="font-size:12px;font-family:inherit" placeholder="all -15%&#10;B +12%&#10;cables -15%&#10;A3 = 42.50" oninput="setClearanceInstructions(this.value)">'+escHtml(c.instructions||'')+'</textarea>'
+      +'<div style="display:flex;gap:8px;margin-top:10px">'
+      +'<div style="flex:1"><label class="form-label">Adjustment label</label><input class="form-input" style="font-size:12px" value="'+escHtml(c.adjust_label||'')+'" placeholder="e.g. Freight" oninput="setClearanceField(\'adjust_label\',this.value)"></div>'
+      +'<div style="width:110px"><label class="form-label">Amount</label><input class="form-input" style="font-size:12px;text-align:right" value="'+(c.adjust_value_cents!=null?centsText(c.adjust_value_cents):'')+'" oninput="setClearanceField(\'adjust_value_cents\',this.value)"></div>'
+      +'</div>'
+      +'<div id="clr-totals" style="margin-top:10px"></div></div>'
+    +'</div>'
+    +'<div id="clr-checks"></div>';
+  renderClearanceLines();renderClearanceTotals();
+}
+
+function renderClearanceLines(){
+  var el=document.getElementById('clr-lines');
+  if(!el) return;
+  if(!clearanceLines.length){
+    el.innerHTML='<div style="font-size:12px;color:var(--text-tertiary);padding:10px">No lines yet. Paste them, add them by hand, or load the sample.</div>';
+    return;
+  }
+  var head='<tr style="background:var(--bg-secondary)">'
+    +'<th style="padding:5px 6px;text-align:left">Tag</th><th style="padding:5px 6px;text-align:left">Item</th>'
+    +'<th style="padding:5px 6px;text-align:left">Description</th><th style="padding:5px 6px;text-align:left">Section</th>'
+    +'<th style="padding:5px 6px;text-align:right">Ordered</th><th style="padding:5px 6px;text-align:right">Shipping</th>'
+    +'<th style="padding:5px 6px;text-align:right" title="What the source charged">Original</th>'
+    +'<th style="padding:5px 6px;text-align:left">Instruction</th>'
+    +'<th style="padding:5px 6px;text-align:right">Final</th><th style="padding:5px 6px;text-align:right">Line total</th><th></th></tr>';
+  var rows=clearanceLines.map(function(l,i){
+    var held=(Number(l.qty_shipped)||0)===0;
+    var part=!held&&(Number(l.qty_shipped)||0)<(Number(l.qty_ordered)||0);
+    var inp=function(k,val,w,extra){return '<input class="form-input" style="font-size:12px;padding:4px 6px;width:'+w+(extra||'')+'" value="'+escHtml(val)+'" oninput="setClearanceLine('+i+',\''+k+'\',this.value)">';};
+    return '<tr style="border-top:1px solid var(--border-t)'+(held?';opacity:.5':'')+'">'
+      +'<td style="padding:4px 6px">'+inp('source_tag',l.source_tag||'','52px')+'</td>'
+      +'<td style="padding:4px 6px">'+inp('item_ref',l.item_ref||'','110px')+'</td>'
+      +'<td style="padding:4px 6px;min-width:200px">'+inp('description',l.description||'','100%')+'</td>'
+      +'<td style="padding:4px 6px">'+inp('section',l.section||'','90px')+'</td>'
+      +'<td style="padding:4px 6px;text-align:right">'+inp('qty_ordered',qtyText(l.qty_ordered),'62px',';text-align:right')+'</td>'
+      +'<td style="padding:4px 6px;text-align:right">'+inp('qty_shipped',qtyText(l.qty_shipped),'62px',';text-align:right'+(part?';border-color:var(--amber)':''))+'</td>'
+      +'<td style="padding:4px 6px;text-align:right">'+inp('orig_unit_cents',centsText(l.orig_unit_cents),'80px',';text-align:right')+'</td>'
+      +'<td style="padding:4px 6px;font-size:11px;color:'+(l.instruction?'var(--accent-dark)':'var(--text-tertiary)')+'">'+escHtml(l.instruction||'—')+'</td>'
+      +'<td style="padding:4px 6px;text-align:right;font-weight:600">'+centsText(l.final_unit_cents)+'</td>'
+      +'<td style="padding:4px 6px;text-align:right;font-weight:600">'+centsText(l.line_total_cents)+'</td>'
+      +'<td style="padding:4px 6px"><button class="btn btn-sm" onclick="removeClearanceLine('+i+')"><i class="ti ti-trash"></i></button></td></tr>';
+  }).join('');
+  el.innerHTML='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px"><thead>'+head+'</thead><tbody>'+rows+'</tbody></table></div>';
+}
+
+function renderClearanceTotals(){
+  var el=document.getElementById('clr-totals');
+  if(!el||!clearance) return;
+  var shipping=clearanceLines.filter(function(l){return (Number(l.qty_shipped)||0)>0;}).length;
+  var held=clearanceLines.length-shipping;
+  el.innerHTML='<div style="border-top:1px solid var(--border-t);padding-top:8px;font-size:12px">'
+    +'<div style="display:flex;justify-content:space-between;padding:2px 0"><span style="color:var(--text-secondary)">Lines shipping</span><span>'+shipping+(held?' <span style="color:var(--text-tertiary)">('+held+' held)</span>':'')+'</span></div>'
+    +'<div style="display:flex;justify-content:space-between;padding:2px 0"><span style="color:var(--text-secondary)">Subtotal</span><span>'+centsText(clearance.subtotal_cents)+'</span></div>'
+    +(clearance.adjust_value_cents!=null?'<div style="display:flex;justify-content:space-between;padding:2px 0"><span style="color:var(--text-secondary)">'+escHtml(clearance.adjust_label||'Adjustment')+'</span><span>'+centsText(clearance.adjust_value_cents)+'</span></div>':'')
+    +'<div style="display:flex;justify-content:space-between;padding:6px 0 0;border-top:1px solid var(--border-t);margin-top:4px;font-weight:700;font-size:14px"><span>Total</span><span>'+centsAud(clearance.total_cents)+'</span></div></div>';
+  renderClearanceChecks();
+}
+
+function renderClearanceChecks(){
+  var el=document.getElementById('clr-checks');
+  if(!el) return;
+  var checks=clearanceChecks();
+  var exp=checks.filter(function(c){return c.level==='export';});
+  var block=checks.filter(function(c){return c.level==='block';});
+  var warn=checks.filter(function(c){return c.level==='warn';});
+  var list=function(items,colour,icon,title){
+    if(!items.length) return '';
+    return '<div style="padding:10px 12px;border:1px solid '+colour+';border-radius:var(--radius-md);margin-bottom:8px">'
+      +'<div style="font-size:12px;font-weight:700;color:'+colour+';margin-bottom:4px"><i class="ti '+icon+'"></i> '+title+'</div>'
+      +'<ul style="margin:0;padding-left:18px;font-size:12px;color:var(--text-secondary)">'+items.map(function(c){return '<li>'+escHtml(c.text)+'</li>';}).join('')+'</ul></div>';
+  };
+  el.innerHTML=(exp.length?'<div style="padding:11px 14px;border-radius:var(--radius-md);background:var(--amber-light);border:1px solid var(--amber);color:#b45309;font-size:13px;font-weight:600;margin-bottom:8px"><i class="ti ti-alert-triangle"></i> '+escHtml(exp[0].text)+'</div>':'')
+    +list(block,'var(--danger)','ti-alert-circle','Fix before generating')
+    +list(warn,'#b45309','ti-alert-triangle','Worth checking')
+    +(!checks.length?'<div style="font-size:12px;color:var(--green)"><i class="ti ti-check"></i> Everything adds up.</div>':'');
+}
+
+/* ── pasting lines ──
+   Tab or comma separated: item ref, description, qty, unit price, [section], [amount
+   the source showed]. One source document per paste, so the tag letter is asked for. */
+function openClearancePaste(){clearancePaste={letter:'A',text:''};renderClearancePaste();}
+function closeClearancePaste(){clearancePaste=null;renderClearancePaste();}
+function setClearancePaste(k,v){if(clearancePaste){clearancePaste[k]=v;if(k==='text')renderClearancePastePreview();}}
+function parseClearancePaste(text,letter){
+  var out=[],n=0;
+  String(text||'').split('\n').forEach(function(raw){
+    var line=raw.trim();
+    if(!line) return;
+    var cells=line.indexOf('\t')>-1?line.split('\t'):line.split(/\s*,\s*(?=(?:[^"]*"[^"]*")*[^"]*$)/);
+    cells=cells.map(function(x){return String(x).trim().replace(/^"|"$/g,'');});
+    if(cells.length<3) return;
+    var qty=parseFloat(String(cells[2]).replace(/,/g,''));
+    var unit=centsFromText(cells[3]);
+    if(!isFinite(qty)||unit==null||isNaN(unit)) return;
+    n++;
+    out.push({source_tag:letter+n,item_ref:cells[0],description:cells[1],section:cells[4]||'',
+      qty_ordered:qty,qty_shipped:qty,orig_unit_cents:unit,final_unit_cents:unit,
+      line_total_cents:Math.round(qty*unit),currency:'AUD',
+      source_amount_cents:cells[5]?centsFromText(cells[5]):null});
+  });
+  return out;
+}
+function renderClearancePastePreview(){
+  var el=document.getElementById('clr-paste-preview');
+  if(!el||!clearancePaste) return;
+  var rows=parseClearancePaste(clearancePaste.text,clearancePaste.letter);
+  el.innerHTML=rows.length
+    ?'<div style="font-size:12px;color:var(--text-secondary);margin-top:6px">'+rows.length+' line'+(rows.length===1?'':'s')+' read, tagged '+escHtml(clearancePaste.letter+'1')+' to '+escHtml(clearancePaste.letter+rows.length)+'.</div>'
+    :'<div style="font-size:12px;color:var(--text-tertiary);margin-top:6px">Nothing read yet. Each line needs at least: item ref, description, qty, unit price.</div>';
+}
+function renderClearancePaste(){
+  var el=document.getElementById('clr-paste');
+  if(!el) return;
+  if(!clearancePaste){el.innerHTML='';return;}
+  el.innerHTML='<div style="border:1px solid var(--accent);border-radius:var(--radius-md);padding:12px;margin-bottom:10px;background:var(--bg-secondary)">'
+    +'<div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:8px;flex-wrap:wrap">'
+    +'<div style="width:120px"><label class="form-label">Source tag</label><input class="form-input" value="'+escHtml(clearancePaste.letter)+'" maxlength="2" oninput="setClearancePaste(\'letter\',this.value.toUpperCase())"></div>'
+    +'<div style="flex:1;min-width:200px;font-size:11px;color:var(--text-secondary)">One document per paste. Columns: item ref, description, qty, unit price, section (optional), amount shown on the source (optional). Tabs or commas.</div>'
+    +'</div>'
+    +'<textarea class="form-input" rows="6" style="font-size:12px;font-family:ui-monospace,monospace" placeholder="ALL16MD\tConduit Rigid PVC Medium Duty 16mm x 4m, Grey\t20\t2.24\tconduit\t44.80" oninput="setClearancePaste(\'text\',this.value)">'+escHtml(clearancePaste.text||'')+'</textarea>'
+    +'<div id="clr-paste-preview"></div>'
+    +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">'
+    +'<button class="btn btn-sm" onclick="closeClearancePaste()">Cancel</button>'
+    +'<button class="btn btn-primary btn-sm" onclick="applyClearancePaste()"><i class="ti ti-plus"></i> Add lines</button></div></div>';
+  renderClearancePastePreview();
+}
+function applyClearancePaste(){
+  if(!clearancePaste) return;
+  var rows=parseClearancePaste(clearancePaste.text,clearancePaste.letter||'A');
+  if(!rows.length){toast('Nothing to add — each line needs item ref, description, qty and unit price','error');return;}
+  clearanceLines=clearanceLines.concat(rows);
+  clearancePaste=null;
+  recalcClearance();renderClearancePaste();renderClearanceLines();renderClearanceTotals();
+  toast(rows.length+' line'+(rows.length===1?'':'s')+' added');
+}
+
+/* The 37-line invoice 0061-26, kept in the repo as the acceptance test. */
+async function loadClearanceSample(){
+  try{
+    var r=await fetchTimeout('templates/sample_0061-26.json',{},15000);
+    var d=await r.json();
+    clearance=Object.assign({},clearance,{mode:d.mode,ref_no:d.ref_no,consignee_name:d.consignee_name,
+      consignee_branch:d.consignee_branch,note:d.note,salesperson:d.salesperson,job:d.job,boq_ref:d.boq_ref,
+      payment_terms:d.payment_terms,due_date:d.due_date,adjust_label:d.adjust_label||'',
+      adjust_value_cents:d.adjust_value?centsFromText(d.adjust_value):null});
+    clearanceLines=(d.items||[]).map(function(it,i){
+      var parts=String(it.description||'').split(' – ');
+      var qty=parseFloat(String(it.qty).replace(/,/g,''))||0;
+      var unit=centsFromText(it.unit_price)||0;
+      return {source_tag:'A'+(i+1),item_ref:parts.length>1?parts[0]:'',description:parts.length>1?parts.slice(1).join(' – '):it.description,
+        section:'',qty_ordered:qty,qty_shipped:qty,orig_unit_cents:unit,final_unit_cents:unit,
+        line_total_cents:Math.round(qty*unit),currency:'AUD',source_amount_cents:centsFromText(it.line_total)};
+    });
+    recalcClearance();renderClearanceEditor();
+    toast(clearanceLines.length+' sample lines loaded — total '+centsAud(clearance.total_cents));
+  }catch(e){toast('Could not load the sample: '+e.message,'error');}
+}
+
+async function saveClearance(silent){
+  if(!clearance) return null;
+  recalcClearance();
+  var head={mode:clearance.mode,status:clearance.status||'draft',lead_id:clearance.lead_id||null,
+    ref_no:clearance.ref_no||null,invoice_date:clearance.invoice_date||todayLocalISO(),
+    consignee_name:clearance.consignee_name||null,consignee_branch:clearance.consignee_branch||null,
+    note:clearance.note||null,salesperson:clearance.salesperson||null,job:clearance.job||null,
+    boq_ref:clearance.boq_ref||null,payment_terms:clearance.payment_terms||null,due_date:clearance.due_date||null,
+    adjust_label:clearance.adjust_label||null,adjust_value_cents:clearance.adjust_value_cents,
+    instructions:clearance.instructions||null,subtotal_cents:clearance.subtotal_cents,
+    total_cents:clearance.total_cents,updated_at:new Date().toISOString()};
+  try{
+    if(!clearance.id){
+      head.created_by_email=(currentUser&&currentUser.email)||null;
+      var r=await sbWrite('clearance_invoices',{method:'POST',prefer:'return=representation',body:JSON.stringify(head)});
+      var made=await r.json();
+      clearance.id=(Array.isArray(made)&&made[0]||{}).id;
+      if(!clearance.id) throw new Error('Invoice was not saved');
+    } else {
+      await sbWrite('clearance_invoices?id=eq.'+clearance.id,{method:'PATCH',body:JSON.stringify(head)});
+    }
+    /* Lines are rewritten as a set: they are edited as a block and the order matters. */
+    await sbWrite('clearance_lines?invoice_id=eq.'+clearance.id,{method:'DELETE'});
+    if(clearanceLines.length){
+      await sbWrite('clearance_lines',{method:'POST',body:JSON.stringify(clearanceLines.map(function(l,i){
+        return {invoice_id:clearance.id,sort_order:i,source_tag:l.source_tag||null,item_ref:l.item_ref||null,
+          description:l.description||null,section:l.section||null,qty_ordered:Number(l.qty_ordered)||0,
+          qty_shipped:Number(l.qty_shipped)||0,orig_unit_cents:Number(l.orig_unit_cents)||0,
+          instruction:l.instruction||null,final_unit_cents:Number(l.final_unit_cents)||0,
+          line_total_cents:Number(l.line_total_cents)||0,source_amount_cents:l.source_amount_cents==null?null:Number(l.source_amount_cents),
+          currency:l.currency||'AUD'};
+      }))});
+    }
+    if(!silent) toast('Saved &#10003;');
+    return clearance.id;
+  }catch(e){
+    toast('Could not save: '+e.message,'error');
+    return null;
+  }
+}
+
+/* ── the document ──
+   docxtemplater and PizZip are loaded only when a document is actually generated, so
+   they cost nothing on every other screen. */
+function loadScriptOnce(src){
+  return new Promise(function(res,rej){
+    if(document.querySelector('script[data-src="'+src+'"]')) return res();
+    var sc=document.createElement('script');
+    sc.src=src;sc.setAttribute('data-src',src);
+    sc.onload=function(){res();};
+    sc.onerror=function(){rej(new Error('Could not load '+src));};
+    document.head.appendChild(sc);
+  });
+}
+async function loadDocxLibs(){
+  if(!window.PizZip) await loadScriptOnce('https://cdn.jsdelivr.net/npm/pizzip@3.1.7/dist/pizzip.min.js');
+  if(!window.docxtemplater) await loadScriptOnce('https://cdnjs.cloudflare.com/ajax/libs/docxtemplater/3.71.0/docxtemplater.js');
+  if(!window.PizZip||!window.docxtemplater) throw new Error('The document builder did not load');
+}
+async function fetchClearanceTemplate(){
+  await ensureValidToken();
+  var r=await fetchTimeout(CLEARANCE_TEMPLATE_URL,{headers:{'apikey':SB_KEY,'Authorization':'Bearer '+authToken}},60000);
+  if(!r.ok) throw new Error(r.status===404
+    ? 'The template is not in the private templates bucket yet — upload clearance_template.docx there first'
+    : 'Could not fetch the template ('+r.status+')');
+  return r.arrayBuffer();
+}
+function clearanceDocData(){
+  var c=clearance;
+  return {invoice_no:c.invoice_no||'',mode:c.mode||'',ref_no:c.ref_no||'',date:clearanceDocDate(c.invoice_date),
+    consignee_name:c.consignee_name||'',consignee_branch:c.consignee_branch||'',note:c.note||'',
+    salesperson:c.salesperson||'',job:c.job||'',boq_ref:c.boq_ref||'',payment_terms:c.payment_terms||'',
+    due_date:c.due_date||'',
+    items:clearanceLines.filter(function(l){return (Number(l.qty_shipped)||0)>0;}).map(function(l){
+      return {qty:qtyText(l.qty_shipped),
+        description:(l.item_ref?l.item_ref+' – ':'')+(l.description||''),
+        unit_price:centsText(l.final_unit_cents),line_total:centsText(l.line_total_cents)};
+    }),
+    subtotal:centsText(c.subtotal_cents),
+    adjust_label:c.adjust_value_cents!=null?(c.adjust_label||''):'',
+    adjust_value:c.adjust_value_cents!=null?centsText(c.adjust_value_cents):'',
+    total:centsText(c.total_cents)};
+}
+async function generateClearanceDocx(){
+  if(!clearance||clearanceBusy) return;
+  var blockers=clearanceChecks().filter(function(c){return c.level==='block';});
+  if(blockers.length){toast('Fix first: '+blockers[0].text,'error');return;}
+  var btn=document.getElementById('clr-gen-btn');
+  clearanceBusy=true;
+  if(btn){btn.disabled=true;btn.innerHTML='<i class="ti ti-loader"></i> Building…';}
+  try{
+    await loadDocxLibs();
+    var tpl=await fetchClearanceTemplate();
+    /* The number is allocated once, server-side, and kept for every later amendment. */
+    if(!clearance.invoice_no){
+      var nr=await sbRpc('next_clearance_number');
+      if(!nr.ok) throw new Error('Could not allocate an invoice number');
+      clearance.invoice_no=await nr.json();
+    }
+    clearance.status='issued';
+    var id=await saveClearance(true);
+    if(!id) throw new Error('The invoice was not saved, so nothing was generated');
+    var zip=new window.PizZip(tpl);
+    var doc=new window.docxtemplater(zip,{paragraphLoop:true,linebreaks:true});
+    doc.render(clearanceDocData());
+    var blob=doc.getZip().generate({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+    var name='Traverse_Invoice_'+clearance.invoice_no+'_'+(clearance.mode==='AIR'?'Air':'Sea')+'.docx';
+    var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();
+    setTimeout(function(){URL.revokeObjectURL(a.href);},4000);
+    /* Keep a copy with the job when the invoice is attached to a lead. */
+    var lead=clearance.lead_id?leads.find(function(l){return l.id===clearance.lead_id;}):null;
+    if(lead&&lead.drive_folder_id){
+      try{
+        var b64=await blobToBase64(blob);
+        var d=await callDriveAPI('save_file',{folderId:lead.drive_folder_id,fileName:name,fileBase64:b64,
+          mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          subfolder:'Freight Docs',leadId:lead.id});
+        if(d&&d.success) await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:lead.id,
+          action:'Clearance invoice generated',detail:name+' saved to Drive/Freight Docs'})});
+        else toast('Invoice built, but the Drive copy failed','error');
+      }catch(de){toast('Invoice built, but the Drive copy failed','error');}
+    }
+    renderClearanceEditor();
+    toast('Invoice '+clearance.invoice_no+' generated &#10003;');
+  }catch(e){
+    toast('Could not generate it: '+e.message,'error');
+  }finally{
+    clearanceBusy=false;
+    var b2=document.getElementById('clr-gen-btn');
+    if(b2){b2.disabled=false;b2.innerHTML='<i class="ti ti-file-download"></i> Generate invoice';}
+  }
+}
+function blobToBase64(blob){
+  return new Promise(function(res,rej){
+    var fr=new FileReader();
+    fr.onload=function(){res(String(fr.result).split(',')[1]);};
+    fr.onerror=function(){rej(new Error('Could not read the generated file'));};
+    fr.readAsDataURL(blob);
+  });
 }
 
 /*  APP INITIALIZATION  */

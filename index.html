@@ -4916,6 +4916,18 @@ async function markQuoteApproved(){
   await createQBEstimate();
 }
 
+/* Saves bytes to a file. An edit on 2026-06-02 deleted this helper but left the
+   quote download calling it, so Download PDF on a quote threw
+   'downloadBlob is not defined' every time from then until 2026-09-29. */
+function downloadBlob(data,filename,mime){
+  var blob=(data instanceof Blob)?data:new Blob([data],{type:mime||'application/octet-stream'});
+  var a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=filename;
+  a.click();
+  setTimeout(function(){URL.revokeObjectURL(a.href);},4000);
+}
+
 function downloadQuotePDF(){
   try{
     if(!currentQuote||!currentLineItems.length){toast('No quote to download','error');return;}

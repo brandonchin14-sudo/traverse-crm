@@ -4702,7 +4702,8 @@ function partialPanelHtml(){
       +'<td style="padding:6px 8px"><div style="font-weight:600">'+escHtml(r.qb_invoice_number||('Stage '+partialSuffix(r.seq)))+'</div>'
       +'<div style="font-size:11px;color:var(--text-tertiary)">'+escHtml(r.label||'')+(r.invoice_date?' &middot; '+escHtml(String(r.invoice_date).slice(0,10)):'')+'</div></td>'
       +'<td style="padding:6px 8px;text-align:right">'+(r.pct!=null?Number(r.pct)+'%':'&#8212;')+'</td>'
-      +'<td style="padding:6px 8px;text-align:right;font-weight:600">'+fmtAud(r.amount)+'</td></tr>';
+      +'<td style="padding:6px 8px;text-align:right;font-weight:600">'+fmtAud(r.amount)+'</td>'
+      +'<td style="padding:6px 8px;text-align:right">'+(r.id?'<button class="btn btn-sm" title="Remove this invoice from the CRM after deleting it in QuickBooks" onclick="undoPartialInvoice(\''+r.id+'\')" style="font-size:11px;padding:3px 8px"><i class="ti ti-arrow-back-up"></i> Undo</button>':'')+'</td></tr>';
   }).join('');
   var form='';
   if(partialForm){
@@ -4747,7 +4748,7 @@ function partialPanelHtml(){
     +'<span>Remaining <strong style="color:'+(remaining<=0.005?'var(--green)':'var(--accent-dark)')+'">'+fmtAud(remaining)+'</strong></span>'
     +'</div>'
     +(rows?'<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:var(--bg-primary)">'
-      +'<th style="padding:6px 8px;text-align:left">Invoice</th><th style="padding:6px 8px;text-align:right">%</th><th style="padding:6px 8px;text-align:right">Amount</th>'
+      +'<th style="padding:6px 8px;text-align:left">Invoice</th><th style="padding:6px 8px;text-align:right">%</th><th style="padding:6px 8px;text-align:right">Amount</th><th></th>'
       +'</tr></thead><tbody>'+rows+'</tbody></table>':'')
     +form
     +'</div>';
@@ -4805,6 +4806,89 @@ async function createPartialInvoice(){
     renderBoard();renderQuoteReview(document.getElementById('dtab-quote'));
     toast('Invoice '+(data.invoice_number||num)+' created &#10003; '+fmtAud(t.total));
   }catch(e){toast('QB Invoice failed: '+e.message,'error');}
+}
+
+/* Removes a staged invoice from the CRM after it has been deleted in QuickBooks, for a
+   job that has to be re-quoted. QuickBooks is the record of truth for an invoice, not
+   the CRM, so this refuses to forget anything QuickBooks still holds: the two drifting
+   apart would have the CRM reporting revenue that was never billed. */
+async function undoPartialInvoice(rowId){
+  var r=(currentQuoteInvoices||[]).find(function(x){return x.id===rowId;});
+  if(!r||!currentQuote||!currentLead) return;
+  var label=r.qb_invoice_number||('Stage '+partialSuffix(r.seq));
+  var amt=Number(r.amount)||0;
+  if(!confirm('Undo invoice '+label+' ('+fmtAud(amt)+')?\n\nDelete it in QuickBooks first — this only removes the CRM\'s record of it.\n\nThe quote goes back to approved and this lead\'s revenue drops by '+fmtAud(amt)+'.')) return;
+  try{
+    if(r.qb_invoice_id){
+      var d=await callQB('get_transaction',{query:'invoice',clientId:String(r.qb_invoice_id)});
+      var inv=d&&d.success&&d.txn?d.txn.Invoice:null;
+      if(inv){
+        /* A voided invoice still exists in QuickBooks but bills nothing, so it is as
+           good as deleted for revenue — allowed, but named as what it is. */
+        var voided=Number(inv.TotalAmt||0)===0;
+        var paid=round2((Number(inv.TotalAmt)||0)-(Number(inv.Balance)||0));
+        if(!voided){
+          toast('QuickBooks still has invoice '+label+(paid>0.005?' and '+fmtAud(paid)+' has been paid against it':'')+'. Delete it there first, then undo it here.','error');
+          return;
+        }
+        if(!confirm('Invoice '+label+' is still in QuickBooks but voided (A$0.00).\n\nRemove the CRM\'s record of it anyway?')) return;
+      } else {
+        /* QuickBooks answers a deleted transaction with an Object Not Found fault. Any
+           other failure — offline, expired token — is not proof of anything, so stop. */
+        var msg=String((d&&d.error)||'');
+        if(!/object not found|"?code"?\s*:\s*"?(610|6240)\b/i.test(msg)){
+          toast('Could not confirm with QuickBooks that '+label+' is gone: '+(msg||'no answer')+'. Nothing was changed.','error');
+          return;
+        }
+      }
+    }
+    await sbWrite('quote_invoices?id=eq.'+r.id,{method:'DELETE'});
+    currentQuoteInvoices=currentQuoteInvoices.filter(function(x){return x.id!==r.id;});
+    var qPatch={updated_at:new Date().toISOString()};
+    /* Back to approved once nothing is billed against it: that is the state it was in
+       before the invoice, and it re-enables Amend quote and Invoice a part. */
+    if(!currentQuoteInvoices.length) qPatch.status='approved';
+    if(String(currentQuote.qb_invoice_id||'')===String(r.qb_invoice_id||'\u0000')){
+      var other=currentQuoteInvoices.find(function(x){return x.qb_invoice_id;});
+      qPatch.qb_invoice_id=other?String(other.qb_invoice_id):null;
+    }
+    await sbWrite('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify(qPatch)});
+    Object.assign(currentQuote,qPatch);
+    var qi=currentQuotes.findIndex(function(x){return x.id===currentQuote.id;});
+    if(qi>-1) Object.assign(currentQuotes[qi],qPatch);
+    await recomputeLeadInvoiceTotal();
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'QB Invoice reversed',
+      detail:'Invoice '+label+' ('+fmtAud(amt)+') deleted in QuickBooks and removed from the CRM'+(qPatch.status?' — quote '+currentQuote.quote_number+' back to approved':'')})});
+    _qbPayCache={};
+    if(ledgerLeads[currentLead.id]) await loadInvoiceLedger();
+    partialForm=null;
+    renderBoard();renderQuoteReview(document.getElementById('dtab-quote'));
+    toast('Invoice '+label+' undone &#10003;');
+  }catch(e){toast('Could not undo the invoice: '+e.message,'error');}
+}
+
+/* Sets the lead's revenue to exactly what is invoiced right now, so it can come down.
+   applyLeadInvoiceTotal only ever raises the figure, on purpose, so that a total
+   corrected by hand is never clobbered; reversing an invoice is the one case where it
+   has to fall, and it only runs once QuickBooks has confirmed the invoice is gone. */
+async function recomputeLeadInvoiceTotal(){
+  if(!currentLead) return;
+  var pr=await sb('quote_invoices?lead_id=eq.'+currentLead.id+'&select=quote_id,amount');
+  var parts=await pr.json(); if(!Array.isArray(parts)) parts=[];
+  var staged={},partSum=0;
+  parts.forEach(function(p){staged[p.quote_id]=true;partSum+=Number(p.amount)||0;});
+  var qr=await sb('quotes?lead_id=eq.'+currentLead.id+'&status=eq.invoiced&select=id,total');
+  var qs=await qr.json(); if(!Array.isArray(qs)) qs=[];
+  var total=round2(partSum+qs.reduce(function(s,q){return staged[q.id]?s:s+(Number(q.total)||0);},0));
+  var patch={invoice_total:total,invoice_paid:false,updated_at:new Date().toISOString()};
+  /* With nothing invoiced there is no invoice date, and leaving the old one would keep
+     the lead sitting in a revenue month it no longer belongs to. */
+  if(!total) patch.invoice_date=null;
+  if(currentLead.quote_status==='invoiced') patch.quote_status=currentQuote?currentQuote.status:'approved';
+  await sb('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify(patch)});
+  Object.assign(currentLead,patch);
+  var i=leads.findIndex(function(l){return l.id===currentLead.id;});
+  if(i>-1) Object.assign(leads[i],patch);
 }
 
 /* Recomputes the lead's revenue figure from what has actually been invoiced: staged

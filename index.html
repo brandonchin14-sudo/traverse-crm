@@ -985,6 +985,9 @@ let currentQuoteInvoices=[],partialForm=null;
    staff-only — never on the quote PDF, the client email, the estimate or the invoice —
    so it is editable at any quote status without reopening the quote. */
 let costEdit=null;
+/* While filling costs from a purchase order: {id, map} where map is quote line index
+   -> index of the purchase order line it was matched to. Null when no PO is in play. */
+let poPick=null;
 /* lead_id -> [{quote_type,status}], loaded with the board so cards can show a badge
    per quote type. Read-only; the board never writes it. */
 let quotesByLead={};
@@ -1561,7 +1564,7 @@ async function loadCurrentQuote(){
     }
     currentQuote=quoteOfType(selectedQuoteType);
     }
-    partialForm=null;costEdit=null;
+    partialForm=null;costEdit=null;poPick=null;
     if(currentQuote){
       const lr=await sb('quote_line_items?quote_id=eq.'+currentQuote.id+'&order=sort_order.asc&select=*');
       currentLineItems=await lr.json();
@@ -2267,13 +2270,13 @@ async function loadPurchaseOrders(){
   }catch(e){currentPOs=[];}
   renderPOPanel();
 }
-function openPOForm(){poForm={supplier:'',po_number:'',po_date:todayLocalISO(),total:'',notes:'',file:null,busy:false,scan:null};renderPOPanel();}
+function openPOForm(){poForm={supplier:'',po_number:'',po_date:todayLocalISO(),total:'',notes:'',file:null,busy:false,scan:null,lines:null};renderPOPanel();}
 function closePOForm(){poForm=null;renderPOPanel();}
 function setPOField(k,v){if(poForm) poForm[k]=v;}
 function setPOFile(input){
   if(!poForm) return;
   poForm.file=(input.files&&input.files[0])||null;
-  poForm.scan=null;
+  poForm.scan=null;poForm.lines=null;
   renderPOPanel();
   if(poForm.file) readPOFile(poForm.file);
 }
@@ -2307,12 +2310,44 @@ async function readPOFile(file){
       note:(filled.length?'Filled in '+filled.join(', ')+' \u2014 check them against the document':'')+(warn.length?(filled.length?'. ':'')+warn.join('; '):''),
       ref:d.reference||''};
     renderPOPanel();
+    /* Second pass for the goods lines, so the quote's cost column can be filled from
+       what the supplier actually charged. Deliberately after the header and never
+       fatal: a purchase order whose lines cannot be read is still worth recording. */
+    readPOLines(file);
   }catch(e){
     if(!poForm||poForm.file!==file) return;
     poForm.scan={state:'error',note:'Could not read it: '+e.message+'. Type the details in instead.'};
     renderPOPanel();
   }
 }
+/* Reads the goods lines off the purchase order and keeps them with the record, so the
+   unit costs on the document can later fill a quote's cost column. Uses the clearance
+   reader, which already extracts item code, description, quantity and unit price from
+   exactly this kind of supplier document. Failure is reported, never thrown: the
+   purchase order still saves without its lines. */
+async function readPOLines(file){
+  if(!poForm||poForm.file!==file) return;
+  try{
+    var d=await scanDocument(file,'scan_clearance');
+    if(!poForm||poForm.file!==file) return;
+    var lines=(d&&Array.isArray(d.lines)?d.lines:[]).map(function(l){
+      return {item_ref:String(l.item_ref||'').trim(),description:String(l.description||'').trim(),
+        qty:Number(l.qty)||0,unit_price:round2(Number(l.unit_price)||0),amount:round2(Number(l.amount)||0)};
+    }).filter(function(l){return (l.item_ref||l.description)&&l.unit_price>0;});
+    poForm.lines=lines.length?lines:null;
+    if(poForm.scan) poForm.scan.note=(poForm.scan.note||'')
+      +(poForm.scan.note?'. ':'')
+      +(lines.length?lines.length+' priced line'+(lines.length===1?'':'s')+' read — you can fill a quote’s costs from them later'
+        :'No priced lines could be read, so costs cannot be filled from this one');
+    renderPOPanel();
+  }catch(e){
+    if(!poForm||poForm.file!==file) return;
+    poForm.lines=null;
+    if(poForm.scan) poForm.scan.note=(poForm.scan.note||'')+(poForm.scan.note?'. ':'')+'Its lines could not be read, so costs cannot be filled from this one';
+    renderPOPanel();
+  }
+}
+
 function poPaidTotal(){return round2(currentPOs.reduce(function(s,p){return s+(Number(p.total)||0);},0));}
 
 function renderPOPanel(){
@@ -2391,6 +2426,7 @@ async function savePO(){
     var row={lead_id:leadId,supplier:supplier,po_number:(f.po_number||'').trim()||null,
       po_date:f.po_date||null,total:f.total===''?null:Number(f.total),
       notes:(f.notes||'').trim()||null,file_name:fileName,drive_file_id:fileId,
+      lines:(f.lines&&f.lines.length)?f.lines:null,
       created_by_email:(currentUser&&currentUser.email)||null};
     var r=await sbWrite('purchase_orders',{method:'POST',prefer:'return=representation',body:JSON.stringify(row)});
     var saved=await r.json();
@@ -4962,6 +4998,7 @@ function renderQuoteReview(el){
     +'<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-secondary)">GST</span><span>A$'+(q.gst_total||0).toFixed(2)+'</span></div>'
     +'<div style="display:flex;justify-content:space-between;font-weight:700;font-size:15px;border-top:0.5px solid var(--border-t);padding-top:8px;margin-top:6px"><span>Total</span><span style="color:var(--accent)">A$'+(q.total||0).toFixed(2)+'</span></div>'
     +'</div>'
+    +(costEdit?poCostPanelHtml():'')
     +'<table class="line-items-table"><thead><tr><th>Item</th><th>Description</th><th style="text-align:right">Qty</th>'
     +'<th style="text-align:right" title="What we paid per unit">Cost</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th>'
     +'<th style="text-align:right" title="Sell less cost on this line">Margin</th><th style="text-align:center">GST</th></tr></thead>'
@@ -4969,7 +5006,8 @@ function renderQuoteReview(el){
       var qty=Number(item.quantity)||1,cost=lineCost(item,i),rate=Number(item.rate)||0;
       var sell=Number(item.amount)||round2(qty*rate),spend=round2(qty*cost),marg=round2(sell-spend);
       var pct=sell>0?Math.round((marg/sell)*100):0;
-      return '<tr><td>'+escHtml(item.item_name||'')+'</td><td style="color:var(--text-secondary)">'+escHtml(item.description||'')+'</td>'
+      return '<tr><td>'+escHtml(item.item_name||'')+'</td>'
+        +'<td style="color:var(--text-secondary)">'+escHtml(item.description||'')+(costEdit&&poPick?poLinePickerHtml(i):'')+'</td>'
         +'<td style="text-align:right">'+qty+'</td>'
         +'<td style="text-align:right;color:var(--text-secondary)">'
         +(costEdit?'<input class="form-input" type="number" step="0.01" min="0" value="'+escHtml(costEdit[i]!=null?String(costEdit[i]):String(Number(item.cost)||0))+'" oninput="setCostEdit('+i+',this.value)" style="width:88px;font-size:12px;text-align:right">'
@@ -4998,8 +5036,113 @@ function lineCost(it,i){
   if(costEdit&&costEdit[i]!=null) return Number(costEdit[i])||0;
   return Number(it&&it.cost)||0;
 }
-function startCostEdit(){costEdit={};renderQuoteReview(document.getElementById('dtab-quote'));}
-function cancelCostEdit(){costEdit=null;renderQuoteReview(document.getElementById('dtab-quote'));}
+function startCostEdit(){costEdit={};poPick=null;renderQuoteReview(document.getElementById('dtab-quote'));}
+function cancelCostEdit(){costEdit=null;poPick=null;renderQuoteReview(document.getElementById('dtab-quote'));}
+
+/* ---- filling the cost column from a purchase order ---- */
+
+/* Lines read off the document when the purchase order was uploaded. Null on any PO
+   recorded before that was built, which is why the panel says so rather than looking
+   broken. */
+function poLines(p){
+  var l=p&&p.lines;
+  if(typeof l==='string'){try{l=JSON.parse(l);}catch(e){return [];}}
+  return Array.isArray(l)?l:[];
+}
+function posWithLines(){return (currentPOs||[]).filter(function(p){return poLines(p).length;});}
+
+function poNorm(s){return String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'');}
+/* Item codes are the reliable signal — a description gets reworded between the
+   supplier's document and our quote — so a code match always outranks a description
+   one, and nothing below a weak description match counts at all. */
+function poMatchScore(q,p){
+  var qc=poNorm(q.item_name),pc=poNorm(p.item_ref),qd=poNorm(q.description),pd=poNorm(p.description);
+  if(qc&&pc){
+    if(qc===pc) return 100;
+    if(qc.length>=4&&pc.length>=4&&(qc.indexOf(pc)>-1||pc.indexOf(qc)>-1)) return 80;
+  }
+  /* A supplier often prints our code inside its description, and the reverse. */
+  if(qc&&qc.length>=4&&pd&&pd.indexOf(qc)>-1) return 70;
+  if(pc&&pc.length>=4&&qd&&qd.indexOf(pc)>-1) return 70;
+  if(qd&&pd){
+    if(qd===pd) return 60;
+    if(qd.length>=8&&pd.length>=8&&(qd.indexOf(pd)>-1||pd.indexOf(qd)>-1)) return 40;
+  }
+  return 0;
+}
+/* Best matches claimed first, each purchase order line used once, so a strong match
+   is never stolen by a weaker one earlier in the table. */
+function matchPOLines(items,lines){
+  var pairs=[];
+  (items||[]).forEach(function(q,i){lines.forEach(function(p,j){
+    var s=poMatchScore(q,p);
+    if(s>0) pairs.push({i:i,j:j,s:s});
+  });});
+  pairs.sort(function(a,b){return b.s-a.s||a.i-b.i||a.j-b.j;});
+  var byQ={},usedP={};
+  pairs.forEach(function(x){
+    if(byQ[x.i]!=null||usedP[x.j]) return;
+    byQ[x.i]=x.j;usedP[x.j]=true;
+  });
+  return byQ;
+}
+
+/* Fills the cost boxes from the purchase order's unit prices. Nothing is saved here —
+   every figure lands in the open Edit costs panel for checking, and Save costs is
+   still a separate, deliberate step. */
+function applyPOCosts(poId){
+  if(!costEdit) return;
+  var po=(currentPOs||[]).find(function(x){return x.id===poId;});
+  if(!po) return;
+  var lines=poLines(po),items=currentLineItems||[];
+  var m=matchPOLines(items,lines),n=0;
+  poPick={id:poId,map:m};
+  Object.keys(m).forEach(function(k){costEdit[k]=String(lines[m[k]].unit_price);n++;});
+  renderQuoteReview(document.getElementById('dtab-quote'));
+  toast(n?n+' of '+items.length+' line'+(items.length===1?'':'s')+' matched — check them, then Save costs'
+        :'Nothing matched automatically — pick the lines yourself below','');
+}
+function setPOLineFor(i,j){
+  if(!costEdit||!poPick) return;
+  var po=(currentPOs||[]).find(function(x){return x.id===poPick.id;});
+  var lines=po?poLines(po):[];
+  if(j===''||j==null||!lines[Number(j)]){delete poPick.map[i];delete costEdit[i];}
+  else {poPick.map[i]=Number(j);costEdit[i]=String(lines[Number(j)].unit_price);}
+  renderQuoteReview(document.getElementById('dtab-quote'));
+}
+
+function poCostPanelHtml(){
+  var open='<div style="margin:0 0 12px;padding:11px 13px;border:1px solid var(--border-t);border-radius:var(--radius-md);background:var(--bg-secondary)">'
+    +'<div style="font-size:12px;font-weight:700;margin-bottom:7px"><i class="ti ti-receipt"></i> Fill costs from a purchase order</div>';
+  var pos=posWithLines();
+  if(!pos.length){
+    return open+'<div style="font-size:11px;color:var(--text-secondary)">No purchase order on this lead has its lines recorded. Lines are read when the document is uploaded, so one added earlier has none &#8212; type its costs in below, or upload it again on the Details tab.</div></div>';
+  }
+  var chips=pos.map(function(p){
+    var n=poLines(p).length,on=poPick&&poPick.id===p.id;
+    return '<button type="button" onclick="applyPOCosts(\''+p.id+'\')" style="text-align:left;cursor:pointer;padding:6px 10px;border-radius:var(--radius-md);border:1px solid '+(on?'var(--accent)':'var(--border-t)')+';background:'+(on?'var(--accent-light)':'var(--bg-primary)')+'">'
+      +'<div style="font-size:12px;font-weight:600">'+escHtml(p.supplier||'Supplier')+(p.po_number?' &middot; '+escHtml(p.po_number):'')+'</div>'
+      +'<div style="font-size:10px;color:var(--text-secondary)">'+n+' priced line'+(n===1?'':'s')+(p.total!=null?' &middot; '+fmtAud(p.total):'')+'</div></button>';
+  }).join('');
+  var note='';
+  if(poPick){
+    var items=currentLineItems||[],matched=Object.keys(poPick.map).length;
+    note='<div style="font-size:11px;margin-top:8px;color:'+(matched<items.length?'#b45309':'var(--green)')+'">'
+      +(matched<items.length?'<i class="ti ti-alert-triangle"></i> ':'<i class="ti ti-check"></i> ')
+      +matched+' of '+items.length+' line'+(items.length===1?'':'s')+' matched. Use the dropdown under each description to change or clear a match.</div>';
+  }
+  return open+'<div style="display:flex;gap:7px;flex-wrap:wrap">'+chips+'</div>'+note+'</div>';
+}
+function poLinePickerHtml(i){
+  var po=(currentPOs||[]).find(function(x){return x.id===poPick.id;});
+  var lines=po?poLines(po):[];
+  var sel=poPick.map[i];
+  var opts='<option value=""'+(sel==null?' selected':'')+'>Not on this purchase order</option>'
+    +lines.map(function(l,j){
+      return '<option value="'+j+'"'+(sel===j?' selected':'')+'>'+escHtml((l.item_ref||l.description||('Line '+(j+1)))+' — '+fmtAud(l.unit_price))+'</option>';
+    }).join('');
+  return '<div style="margin-top:4px"><select class="form-input" onchange="setPOLineFor('+i+',this.value)" style="font-size:11px;padding:3px 6px;max-width:250px">'+opts+'</select></div>';
+}
 /* Repaints only the line's margin cell and the margin box, never the table: redrawing
    the row would take the focus out of the box being typed in. */
 function setCostEdit(i,v){
@@ -5041,13 +5184,15 @@ async function saveLineCosts(){
       await sbWrite('quote_line_items?id=eq.'+changes[k].id,{method:'PATCH',body:JSON.stringify({cost:changes[k].to})});
       currentLineItems[changes[k].i].cost=changes[k].to;
     }
-    costEdit=null;
+    var fromPO=poPick?(currentPOs||[]).find(function(x){return x.id===poPick.id;}):null;
+    costEdit=null;poPick=null;
     var spend=0,sell=0;
     currentLineItems.forEach(function(it){var q=Number(it.quantity)||1;spend+=round2(q*(Number(it.cost)||0));sell+=Number(it.amount)||round2(q*(Number(it.rate)||0));});
     spend=round2(spend);sell=round2(sell);
     var marg=round2(sell-spend);
     await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Quote costs updated',
       detail:(currentQuote.quote_number||'')+' &mdash; cost changed on '+changes.length+' line'+(changes.length===1?'':'s')
+        +(fromPO?' from purchase order '+(fromPO.po_number||fromPO.supplier||''):'')
         +'; total cost now '+fmtAud(spend)+', margin '+fmtAud(marg)+(sell>0?' ('+Math.round((marg/sell)*100)+'%)':'')
         +' — internal only, the quote and invoice are unchanged'})});
     renderQuoteReview(document.getElementById('dtab-quote'));

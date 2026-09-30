@@ -4269,7 +4269,9 @@ function renderPricingStep(el){
     +'</div>'
     +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">'
     +'<div style="font-size:14px;font-weight:600">'+escHtml(currentQuote.quote_number)+'</div>'
-    +'<button class="btn btn-primary btn-sm" onclick="openQuotePreview()"><i class="ti ti-eye"></i> Preview &amp; Send</button>'
+    +'<div style="display:flex;gap:6px;flex-wrap:wrap">'
+    +'<button class="btn btn-sm" id="quote-save-btn" onclick="saveQuoteChanges()" title="Save without emailing the client"><i class="ti ti-device-floppy"></i> Save changes</button>'
+    +'<button class="btn btn-primary btn-sm" onclick="openQuotePreview()"><i class="ti ti-eye"></i> Preview &amp; Send</button></div>'
     +'</div>'
 +'<div style="margin-bottom:8px"><label class="form-label">QuickBooks customer <span style="font-size:11px;color:var(--text-tertiary);font-weight:400">&mdash; links this quote to the right QB customer for invoicing</span></label><div style="display:flex;gap:6px"><select class="form-input" id="eq-qb-customer" style="flex:1"><option value="">'+(currentQuote.qb_customer_id?escHtml(currentQuote.qb_customer_name||'Selected customer'):'-- Load customers --')+'</option></select><button class="btn btn-sm" type="button" onclick="loadQBCustomerDropdown()"><i class="ti ti-refresh"></i> Load</button></div></div>'
     +'<div style="margin-bottom:8px"><label class="form-label">PO reference <span style="font-size:11px;color:var(--text-tertiary);font-weight:400">&mdash; client purchase order number</span></label><input class="form-input" id="eq-po-reference" placeholder="Client PO number" value="'+escHtml(currentQuote.po_reference||'')+'" onchange="saveQuotePOReference(this.value)"></div>'
@@ -4450,6 +4452,53 @@ function showEditableQuote(){
     +'</div>';
   document.getElementById('quotePreviewContent').innerHTML=html;
   document.getElementById('previewOverlay').classList.add('open');
+}
+
+/* Saves the quote and its lines without emailing anyone: for an amendment agreed by
+   phone, where re-sending the document would only confuse the client. Leaves the
+   status alone, so an amended quote still has to be marked approved again. */
+async function saveQuoteChanges(){
+  if(!currentQuote||!currentLead) return;
+  var btn=document.getElementById('quote-save-btn');
+  if(btn){btn.disabled=true;btn.innerHTML='<i class="ti ti-loader"></i> Saving&hellip;';}
+  try{
+    var cn=document.getElementById('eq-client-name'),ca=document.getElementById('eq-client-addr'),ex=document.getElementById('eq-expiry');
+    if(cn) currentQuote.client_name=cn.value||currentQuote.client_name;
+    if(ca) currentQuote.client_address=ca.value||currentQuote.client_address;
+    if(ex) currentQuote.expiry_date=ex.value||currentQuote.expiry_date;
+    var mk=document.getElementById('markup-pct');
+    if(mk&&mk.value!=='') currentQuote.markup_pct=parseFloat(mk.value)||0;
+    var sub=0,gst=0;
+    currentLineItems.forEach(function(it){
+      var a=(Number(it.quantity)||1)*(Number(it.rate)||0);
+      it.amount=a;sub+=a;if(it.gst_applicable) gst+=a*0.1;
+    });
+    currentQuote.subtotal=round2(sub);currentQuote.gst_total=round2(gst);currentQuote.total=round2(sub+gst);
+    await sbWrite('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({
+      client_name:currentQuote.client_name,client_address:currentQuote.client_address,
+      expiry_date:currentQuote.expiry_date||null,subtotal:currentQuote.subtotal,
+      gst_total:currentQuote.gst_total,total:currentQuote.total,
+      markup_pct:Number(currentQuote.markup_pct)||0,updated_at:new Date().toISOString()})});
+    /* Same rewrite the send does, carrying the BOQ link so a project quote keeps it. */
+    await sbWrite('quote_line_items?quote_id=eq.'+currentQuote.id,{method:'DELETE'});
+    if(currentLineItems.length){
+      await sbWrite('quote_line_items',{method:'POST',body:JSON.stringify(currentLineItems.map(function(item,i){
+        return {quote_id:currentQuote.id,item_name:item.item_name||'',description:item.description||'',
+          quantity:Number(item.quantity)||1,cost:Number(item.cost)||0,rate:Number(item.rate)||0,
+          gst_applicable:item.gst_applicable===true,manual:item.manual===true,
+          amount:(Number(item.quantity)||1)*(Number(item.rate)||0),sort_order:i,
+          boq_item_id:item.boq_item_id||null,boq_qty:item.boq_item_id&&item.boq_qty!=null?Number(item.boq_qty):null};
+      }))});
+    }
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Quote amended',
+      detail:currentQuote.quote_number+' saved at '+fmtAud(currentQuote.total)+' without re-sending'})});
+    renderBoard();
+    if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-device-floppy"></i> Save changes';}
+    toast('Changes saved \u2014 mark it approved when the client confirms &#10003;');
+  }catch(e){
+    if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-device-floppy"></i> Save changes';}
+    toast('Could not save the changes: '+e.message,'error');
+  }
 }
 
 async function sendQuoteToClient(){
@@ -4808,6 +4857,7 @@ function renderQuoteReview(el){
     +'<div style="display:flex;gap:8px;flex-wrap:wrap">'
     +'<button class="btn btn-sm" onclick="showEditableQuote()"><i class="ti ti-pencil"></i> Edit &amp; preview</button>'
     +(q.status==='sent'||q.status==='draft'?'<button class="btn btn-amber btn-sm" onclick="reviseQuote()"><i class="ti ti-refresh"></i> Revise quote</button>':'')
+    +(q.status==='approved'?'<button class="btn btn-amber btn-sm" onclick="reviseQuote()" title="Reopen this quote to change items, quantities or prices"><i class="ti ti-pencil"></i> Amend quote</button>':'')
     +(q.status==='sent'?'<button class="btn btn-green btn-sm" onclick="markQuoteApproved()"><i class="ti ti-check"></i> Client approved</button>':'')
     +(q.status==='approved'&&!q.qb_estimate_id?'<button class="btn btn-sm" onclick="createQBEstimate()"><i class="ti ti-file-text"></i> Create QB Estimate</button>':'')
     +(q.status==='approved'?'<button class="btn btn-primary btn-sm" onclick="generateQBInvoice()"><i class="ti ti-file-invoice"></i> Generate QB Invoice</button>':'')
@@ -4886,6 +4936,11 @@ function quoteMarginHtml(){
 async function reviseQuote(){
   if(!currentQuote) return;
   var hadEstimate=!!currentQuote.qb_estimate_id;
+  var wasApproved=currentQuote.status==='approved';
+  /* Amending an approved quote steps the job backwards: it has to be approved again
+     before it can be invoiced, and any QuickBooks estimate no longer matches. */
+  if(wasApproved&&!confirm('Amend quote '+currentQuote.quote_number+'?\n\nIt goes back to draft, so you will need to mark it approved again before invoicing.'
+    +(hadEstimate?'\n\nQuickBooks estimate '+(currentQuote.qb_estimate_number||currentQuote.qb_estimate_id)+' will no longer match, and must be updated or deleted in QuickBooks.':''))) return;
   try{
     var patch={status:'draft',updated_at:new Date().toISOString()};
     if(hadEstimate) patch.qb_estimate_stale=true;
@@ -4895,6 +4950,7 @@ async function reviseQuote(){
     var idx=leads.findIndex(function(l){return l.id===currentLead.id;});
     if(idx>-1) leads[idx].quote_status='draft';
     currentLead.quote_status='draft';
+    if(wasApproved) await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Quote amended',detail:currentQuote.quote_number+' reopened after client approval'})});
     if(hadEstimate) await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'QB Estimate stale',detail:'Quote '+currentQuote.quote_number+' reopened after estimate '+(currentQuote.qb_estimate_number||currentQuote.qb_estimate_id)+' was created'})});
     renderPricingStep(document.getElementById('dtab-quote'));
     toast(hadEstimate?'Quote reopened — QB estimate '+(currentQuote.qb_estimate_number||currentQuote.qb_estimate_id)+' is now out of date and must be updated or deleted in QuickBooks':'Quote reopened for revision',hadEstimate?'error':undefined);

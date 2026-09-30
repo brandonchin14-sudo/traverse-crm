@@ -981,6 +981,10 @@ function isProjectLead(){return !!(currentLead&&currentLead.lead_type==='project
    in stages (30% advance, then the balance), so one quote carries many invoices.
    partialForm holds the in-progress "invoice a part" form, or null when it is shut. */
 let currentQuoteInvoices=[],partialForm=null;
+/* Open "Edit costs" panel: line index -> the cost being typed. Null when shut. Cost is
+   staff-only — never on the quote PDF, the client email, the estimate or the invoice —
+   so it is editable at any quote status without reopening the quote. */
+let costEdit=null;
 /* lead_id -> [{quote_type,status}], loaded with the board so cards can show a badge
    per quote type. Read-only; the board never writes it. */
 let quotesByLead={};
@@ -1557,7 +1561,7 @@ async function loadCurrentQuote(){
     }
     currentQuote=quoteOfType(selectedQuoteType);
     }
-    partialForm=null;
+    partialForm=null;costEdit=null;
     if(currentQuote){
       const lr=await sb('quote_line_items?quote_id=eq.'+currentQuote.id+'&order=sort_order.asc&select=*');
       currentLineItems=await lr.json();
@@ -4939,12 +4943,17 @@ function renderQuoteReview(el){
     +'<span style="font-size:11px;padding:3px 9px;border-radius:99px;font-weight:600;background:'+(statusBg[q.status]||'#f3f2f0')+';color:'+(statusColors[q.status]||'var(--text-secondary)')+';text-transform:capitalize;display:inline-block;margin-top:4px">'+(q.status||'draft')+'</span>'
     +'</div>'
     +'<div style="display:flex;gap:8px;flex-wrap:wrap">'
-    +'<button class="btn btn-sm" onclick="showEditableQuote()"><i class="ti ti-pencil"></i> Edit &amp; preview</button>'
+    /* While costs are being edited every other action is hidden: they all change what
+       the client or QuickBooks sees, which a cost edit deliberately does not. */
+    +(costEdit?'<button class="btn btn-green btn-sm" id="cost-save-btn" onclick="saveLineCosts()"><i class="ti ti-device-floppy"></i> Save costs</button>'
+      +'<button class="btn btn-sm" onclick="cancelCostEdit()">Cancel</button>':
+     '<button class="btn btn-sm" onclick="showEditableQuote()"><i class="ti ti-pencil"></i> Edit &amp; preview</button>'
+    +((currentLineItems||[]).length?'<button class="btn btn-sm" onclick="startCostEdit()" title="Correct what we paid per unit. Internal only — it never reaches the client, the quote PDF or QuickBooks, so the quote stays as it is."><i class="ti ti-coin"></i> Edit costs</button>':'')
     +(q.status==='sent'||q.status==='draft'?'<button class="btn btn-amber btn-sm" onclick="reviseQuote()"><i class="ti ti-refresh"></i> Revise quote</button>':'')
     +(q.status==='approved'?'<button class="btn btn-amber btn-sm" onclick="reviseQuote()" title="Reopen this quote to change items, quantities or prices"><i class="ti ti-pencil"></i> Amend quote</button>':'')
     +(q.status==='sent'?'<button class="btn btn-green btn-sm" onclick="markQuoteApproved()"><i class="ti ti-check"></i> Client approved</button>':'')
     +(q.status==='approved'&&!q.qb_estimate_id?'<button class="btn btn-sm" onclick="createQBEstimate()"><i class="ti ti-file-text"></i> Create QB Estimate</button>':'')
-    +(q.status==='approved'?'<button class="btn btn-primary btn-sm" onclick="generateQBInvoice()"><i class="ti ti-file-invoice"></i> Generate QB Invoice</button>':'')
+    +(q.status==='approved'?'<button class="btn btn-primary btn-sm" onclick="generateQBInvoice()"><i class="ti ti-file-invoice"></i> Generate QB Invoice</button>':''))
     +'</div></div>'
     +'<div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:12px 16px;margin-bottom:14px">'
     +'<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-secondary)">Client</span><span>'+(q.client_name||'&#8212;')+'</span></div>'
@@ -4956,20 +4965,22 @@ function renderQuoteReview(el){
     +'<table class="line-items-table"><thead><tr><th>Item</th><th>Description</th><th style="text-align:right">Qty</th>'
     +'<th style="text-align:right" title="What we paid per unit">Cost</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th>'
     +'<th style="text-align:right" title="Sell less cost on this line">Margin</th><th style="text-align:center">GST</th></tr></thead>'
-    +'<tbody>'+(currentLineItems||[]).map(function(item){
-      var qty=Number(item.quantity)||1,cost=Number(item.cost)||0,rate=Number(item.rate)||0;
+    +'<tbody>'+(currentLineItems||[]).map(function(item,i){
+      var qty=Number(item.quantity)||1,cost=lineCost(item,i),rate=Number(item.rate)||0;
       var sell=Number(item.amount)||round2(qty*rate),spend=round2(qty*cost),marg=round2(sell-spend);
       var pct=sell>0?Math.round((marg/sell)*100):0;
       return '<tr><td>'+escHtml(item.item_name||'')+'</td><td style="color:var(--text-secondary)">'+escHtml(item.description||'')+'</td>'
         +'<td style="text-align:right">'+qty+'</td>'
-        +'<td style="text-align:right;color:var(--text-secondary)">'+(cost>0?'A$'+cost.toFixed(2):'&#8212;')+'</td>'
+        +'<td style="text-align:right;color:var(--text-secondary)">'
+        +(costEdit?'<input class="form-input" type="number" step="0.01" min="0" value="'+escHtml(costEdit[i]!=null?String(costEdit[i]):String(Number(item.cost)||0))+'" oninput="setCostEdit('+i+',this.value)" style="width:88px;font-size:12px;text-align:right">'
+          :(cost>0?'A$'+cost.toFixed(2):'&#8212;'))+'</td>'
         +'<td style="text-align:right;color:var(--green);font-weight:600">A$'+rate.toFixed(2)+'</td>'
         +'<td style="text-align:right;font-weight:500">A$'+sell.toFixed(2)+'</td>'
-        +'<td style="text-align:right;white-space:nowrap;color:'+(cost>0?(marg<0?'var(--danger)':'var(--text-primary)'):'var(--text-tertiary)')+'">'
+        +'<td id="ce-marg-'+i+'" style="text-align:right;white-space:nowrap;color:'+(cost>0?(marg<0?'var(--danger)':'var(--text-primary)'):'var(--text-tertiary)')+'">'
         +(cost>0?'A$'+marg.toFixed(2)+' <span style="font-size:11px;color:var(--text-tertiary)">'+pct+'%</span>':'&#8212;')+'</td>'
         +'<td style="text-align:center;font-size:12px">'+(item.gst_applicable?'&#10003;':'&#8212;')+'</td></tr>';
     }).join('')+'</tbody></table>'
-    +quoteMarginHtml()
+    +'<div id="quote-margin-box">'+quoteMarginHtml()+'</div>'
     +(q.status==='sent'?'<div style="background:#FAEEDA;border:0.5px solid #633806;border-radius:var(--radius-md);padding:11px 14px;margin-top:12px;font-size:13px;color:#633806"><i class="ti ti-clock"></i> <strong>Awaiting client approval.</strong> Click Revise quote if changes needed, or Client approved once confirmed.</div>':'')
     +(q.status==='approved'?(q.qb_estimate_id
       ?(q.qb_estimate_stale?''
@@ -4981,6 +4992,72 @@ function renderQuoteReview(el){
     +partialPanelHtml();
 }
 
+/* What a line cost per unit right now: the figure being typed while Edit costs is open,
+   otherwise the one stored. */
+function lineCost(it,i){
+  if(costEdit&&costEdit[i]!=null) return Number(costEdit[i])||0;
+  return Number(it&&it.cost)||0;
+}
+function startCostEdit(){costEdit={};renderQuoteReview(document.getElementById('dtab-quote'));}
+function cancelCostEdit(){costEdit=null;renderQuoteReview(document.getElementById('dtab-quote'));}
+/* Repaints only the line's margin cell and the margin box, never the table: redrawing
+   the row would take the focus out of the box being typed in. */
+function setCostEdit(i,v){
+  if(!costEdit) return;
+  costEdit[i]=v;
+  var it=(currentLineItems||[])[i]||{};
+  var qty=Number(it.quantity)||1,cost=lineCost(it,i);
+  var sell=Number(it.amount)||round2(qty*(Number(it.rate)||0));
+  var marg=round2(sell-round2(qty*cost)),pct=sell>0?Math.round((marg/sell)*100):0;
+  var cell=document.getElementById('ce-marg-'+i);
+  if(cell){
+    cell.style.color=cost>0?(marg<0?'var(--danger)':'var(--text-primary)'):'var(--text-tertiary)';
+    cell.innerHTML=cost>0?'A$'+marg.toFixed(2)+' <span style="font-size:11px;color:var(--text-tertiary)">'+pct+'%</span>':'&#8212;';
+  }
+  var box=document.getElementById('quote-margin-box');
+  if(box) box.innerHTML=quoteMarginHtml();
+}
+
+/* Writes nothing but quote_line_items.cost. Cost is staff-only, so unlike a price it
+   changes no total, no estimate and no invoice — which is why this is allowed on a
+   quote at any status, including one already invoiced, and why it neither reopens the
+   quote nor flags the QuickBooks estimate as out of date. */
+async function saveLineCosts(){
+  if(!costEdit||!currentQuote) return;
+  var items=currentLineItems||[],changes=[],noId=0;
+  items.forEach(function(it,i){
+    if(costEdit[i]==null) return;
+    var to=round2(Number(costEdit[i])||0);
+    if(to===round2(Number(it.cost)||0)) return;
+    if(!it.id){noId++;return;}
+    changes.push({i:i,id:it.id,to:to});
+  });
+  if(noId) toast(noId+' line'+(noId===1?' has':'s have')+' never been saved, so their cost cannot be stored yet','error');
+  if(!changes.length){costEdit=null;renderQuoteReview(document.getElementById('dtab-quote'));if(!noId)toast('No cost changes to save');return;}
+  var btn=document.getElementById('cost-save-btn');
+  if(btn){btn.disabled=true;btn.innerHTML='<i class="ti ti-loader"></i> Saving&hellip;';}
+  try{
+    for(var k=0;k<changes.length;k++){
+      await sbWrite('quote_line_items?id=eq.'+changes[k].id,{method:'PATCH',body:JSON.stringify({cost:changes[k].to})});
+      currentLineItems[changes[k].i].cost=changes[k].to;
+    }
+    costEdit=null;
+    var spend=0,sell=0;
+    currentLineItems.forEach(function(it){var q=Number(it.quantity)||1;spend+=round2(q*(Number(it.cost)||0));sell+=Number(it.amount)||round2(q*(Number(it.rate)||0));});
+    spend=round2(spend);sell=round2(sell);
+    var marg=round2(sell-spend);
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Quote costs updated',
+      detail:(currentQuote.quote_number||'')+' &mdash; cost changed on '+changes.length+' line'+(changes.length===1?'':'s')
+        +'; total cost now '+fmtAud(spend)+', margin '+fmtAud(marg)+(sell>0?' ('+Math.round((marg/sell)*100)+'%)':'')
+        +' — internal only, the quote and invoice are unchanged'})});
+    renderQuoteReview(document.getElementById('dtab-quote'));
+    toast('Cost saved on '+changes.length+' line'+(changes.length===1?'':'s')+' &#10003;');
+  }catch(e){
+    if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-device-floppy"></i> Save costs';}
+    toast('Could not save the costs: '+e.message,'error');
+  }
+}
+
 /* Cost and margin for the selected quote, from the supplier cost stored on each line
    when it was priced. Staff-only: these figures are in the CRM alone — never on the
    quote PDF, the customer email, or anything sent to QuickBooks. Purchase orders
@@ -4989,8 +5066,8 @@ function quoteMarginHtml(){
   var items=currentLineItems||[];
   if(!items.length) return '';
   var sell=0,spend=0,priced=0;
-  items.forEach(function(it){
-    var qty=Number(it.quantity)||1,cost=Number(it.cost)||0;
+  items.forEach(function(it,i){
+    var qty=Number(it.quantity)||1,cost=lineCost(it,i);
     sell+=Number(it.amount)||round2(qty*(Number(it.rate)||0));
     spend+=round2(qty*cost);
     if(cost>0) priced++;

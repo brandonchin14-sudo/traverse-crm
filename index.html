@@ -135,6 +135,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .brief-pri.p1{background:#16a34a;border-color:#16a34a;color:#fff}
 .brief-stuck{font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;background:var(--danger-light);color:var(--danger);white-space:nowrap}
 .brief-meta{font-size:11px;color:var(--text-tertiary);margin-top:3px}
+/* Always present rather than hover-only: a control nobody can find is no control,
+   and it is guarded by a confirmation anyway. */
+.brief-remove{flex-shrink:0;border:none;background:none;cursor:pointer;padding:2px 5px;margin-top:1px;font-size:14px;line-height:1;color:var(--text-tertiary);opacity:.5;transition:opacity .12s,color .12s}
+.brief-row:hover .brief-remove{opacity:1}
+.brief-remove:hover,.brief-remove:focus{color:var(--danger);opacity:1}
 .brief-note{width:100%;font-size:12px;color:var(--text-secondary);background:transparent;border:1px solid transparent;border-radius:6px;padding:3px 6px;margin-top:4px;font-family:inherit;resize:vertical}
 .brief-note:hover{border-color:var(--border-t)}
 .brief-note:focus{border-color:var(--accent);background:var(--bg-primary);outline:none;color:var(--text-primary)}
@@ -5716,7 +5721,40 @@ function briefRowHtml(it,archived){
     +'<div class="brief-meta">'
     +(archived&&it.closed_at?'Closed '+new Date(it.closed_at).toLocaleDateString('en-AU')
       :(who?'Last moved by '+who+(when?', '+when:''):'Not touched yet'))
-    +'</div></div></div>';
+    +'</div></div>'
+    +(archived?'':'<button class="brief-remove" onclick="removeBriefItem(\''+it.id+'\')" title="Remove from the board"><i class="ti ti-x"></i></button>')
+    +'</div>';
+}
+
+/* Takes an item off the board for good. Archiving, not deleting: it is the same state
+   the 5pm rollover puts a finished Task in, so it keeps its history and stays readable
+   under Show archive. A Standing item is reset to Pending every night and so can never
+   be finished by ticking it — this is the only way to retire one. */
+async function removeBriefItem(id){
+  var it=briefItems.find(function(x){return x.id===id;});
+  if(!it) return;
+  if(!confirm('Remove "'+it.item+'" from the board?\n\n'
+    +(it.section==='Standing'?'It stops coming back each day and drops out of the 7am and 5pm emails.\n\n':'It drops off the board and out of the 7am and 5pm emails.\n\n')
+    +'It stays under Show archive, but cannot be put back from there — it would have to be added again.')) return;
+  var at=briefItems.indexOf(it);
+  briefItems.splice(at,1);
+  renderBriefSummary();renderBriefBoard();
+  try{
+    var r=await sbWrite('brief_items?id=eq.'+id,{method:'PATCH',
+      body:JSON.stringify({archived:true,closed_at:new Date().toISOString(),
+        updated_by:(currentUser&&currentUser.id)||null,updated_by_email:(currentUser&&currentUser.email)||null}),
+      prefer:'return=representation'});
+    var rows=await r.json();
+    /* Keep the archive list in step when it is already open, so the item reappears
+       there straight away instead of only after a reload. */
+    if(briefShowArchive&&Array.isArray(rows)&&rows.length) briefArchived.unshift(rows[0]);
+    renderBriefSummary();renderBriefBoard();
+    toast('Removed &#10003;');
+  }catch(e){
+    briefItems.splice(at,0,it);
+    briefItems.sort(briefSort);renderBriefSummary();renderBriefBoard();
+    toast('Could not remove it: '+e.message,'error');
+  }
 }
 
 function renderBriefBoard(){

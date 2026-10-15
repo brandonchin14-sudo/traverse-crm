@@ -1530,7 +1530,7 @@ async function openDetail(id){
     /* The Project tab (BOQ and tracker) only applies to project leads. */
     document.getElementById('detailTabProject').style.display=currentLead.lead_type==='project'?'':'none';
     document.getElementById('dtab-project').innerHTML='';
-    boqImport=null;
+    boqImport=null;boqQtyEdit=null;
     await renderDetailActivity();
     document.getElementById('detailOverlay').classList.add('open');
   }catch(e){
@@ -3094,6 +3094,10 @@ async function handleScanFile(file){
    are never read, stored or shown: header cells that look like money are dropped
    before any column is mapped. */
 var boqItems=[],boqImport=null,boqProgress=null,boqPick=null;
+/* Open "Edit quantities" panel on the BOQ tracker: boq_items id -> the quantity being
+   typed. Null when shut. A contractor revises quantities as a job runs, so the BOQ
+   cannot stay frozen at whatever the spreadsheet said on import. */
+var boqQtyEdit=null;
 var BOQ_MONEY_HEAD=/price|rate|cost|amount|total|value|sbd|aud|usd|\$/i;
 /* Item numbers look like 1, 12, 3.2, A4 or 2-1. Anything else in the item column
    (Note:, Date:, a web link) marks a notes row rather than a BOQ line. */
@@ -3417,15 +3421,89 @@ function boqGroups(items){
   return g;
 }
 
+/* The quantity an item is worth right now: the figure being typed while Edit
+   quantities is open, otherwise the one stored. */
+function boqQty(it){
+  if(boqQtyEdit&&it&&boqQtyEdit[it.id]!=null) return Number(boqQtyEdit[it.id])||0;
+  return Number(it&&it.quantity)||0;
+}
+function boqLeftCellHtml(left){
+  if(left<=0.0001&&left>=-0.0001) return '<i class="ti ti-check"></i>';
+  if(left<0) return '<span title="More quoted than the BOQ quantity">'+fmtQty(-left)+' over</span>';
+  return fmtQty(left);
+}
+function startBoqQtyEdit(){boqQtyEdit={};renderProjectTab();}
+function cancelBoqQtyEdit(){boqQtyEdit=null;renderProjectTab();}
+/* Repaints only that row's Left cell. Redrawing the table would take the focus out of
+   the box being typed in, and renderProjectTab re-reads the database besides. */
+function setBoqQty(id,v){
+  if(!boqQtyEdit) return;
+  boqQtyEdit[id]=v;
+  var it=boqItems.find(function(x){return x.id===id;});
+  if(!it) return;
+  var p=boqProgress||{quoted:{}};
+  var left=round2(boqQty(it)-(p.quoted[it.id]||0));
+  var cell=document.getElementById('boq-left-'+id);
+  if(cell){
+    cell.style.color=left<-0.0001?'#b45309':(left<=0.0001?'var(--green)':'#b45309');
+    cell.innerHTML=boqLeftCellHtml(left);
+  }
+}
+
+/* Writes nothing but boq_items.quantity. The BOQ is the project's scope, not its
+   money: no price, quote, invoice or revenue figure is touched, so a contractor's
+   revision can be recorded without disturbing anything already billed. */
+async function saveBoqQuantities(){
+  if(!boqQtyEdit||!currentLead) return;
+  var p=boqProgress||{quoted:{},invoiced:{}};
+  var changes=[],below=[];
+  boqItems.forEach(function(it){
+    if(boqQtyEdit[it.id]==null) return;
+    var to=round2(Number(boqQtyEdit[it.id])||0),from=round2(Number(it.quantity)||0);
+    if(to===from) return;
+    changes.push({it:it,from:from,to:to});
+    /* Cutting the scope below what has already gone out is not forbidden — a
+       contractor can reduce an item after an over-supply — but it is worth seeing,
+       because the tracker will then read "n over" for good. */
+    var done=Math.max(p.quoted[it.id]||0,p.invoiced[it.id]||0);
+    if(done>0&&to<done-0.0001) below.push(boqLineName(it)||it.description||'item');
+  });
+  if(!changes.length){boqQtyEdit=null;renderProjectTab();toast('No quantities changed');return;}
+  var summary=changes.map(function(c){return (boqLineName(c.it)||c.it.description||'item')+': '+fmtQty(c.from)+' → '+fmtQty(c.to);});
+  if(!confirm('Change '+changes.length+' BOQ quantit'+(changes.length===1?'y':'ies')+'?\n\n'+summary.join('\n')
+    +(below.length?'\n\nWARNING: this puts '+below.join(', ')+' below what has already been quoted or invoiced, so the tracker will show them as over-supplied.':''))) return;
+  var btn=document.getElementById('boq-qty-save');
+  if(btn){btn.disabled=true;btn.innerHTML='<i class="ti ti-loader"></i> Saving&hellip;';}
+  try{
+    for(var k=0;k<changes.length;k++){
+      await sbWrite('boq_items?id=eq.'+changes[k].it.id,{method:'PATCH',body:JSON.stringify({quantity:changes[k].to})});
+      changes[k].it.quantity=changes[k].to;
+    }
+    await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'BOQ quantities changed',
+      detail:summary.join('; ')+(below.length?' — now below what has been quoted or invoiced on '+below.join(', '):'')})});
+    boqQtyEdit=null;
+    await renderProjectTab();
+    toast(changes.length+' quantit'+(changes.length===1?'y':'ies')+' updated &#10003;');
+  }catch(e){
+    if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-device-floppy"></i> Save quantities';}
+    toast('Could not save the quantities: '+e.message,'error');
+  }
+}
+
 function boqTrackerHtml(){
   var p=boqProgress||{quoted:{},drafted:{},invoiced:{},partBilled:{},shipped:{}};
   var head=parentProjectBannerHtml()+'<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">'
     +'<div><div style="font-size:14px;font-weight:700"><i class="ti ti-list-details"></i> Bill of quantities</div>'
     +'<div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Items and quantities for the whole project. Quote, invoice and ship portions of it over time.</div></div>'
     +'<div style="display:flex;gap:8px;flex-wrap:wrap">'
-    +(boqItems.length?'<button class="btn btn-primary btn-sm" onclick="quoteFromBoq()"><i class="ti ti-file-invoice"></i> New quote from BOQ</button>':'')
+    /* While quantities are being edited the other actions are hidden: quoting from a
+       BOQ that is half-rewritten would carry the old numbers onto the quote. */
+    +(boqQtyEdit?'<button class="btn btn-green btn-sm" id="boq-qty-save" onclick="saveBoqQuantities()"><i class="ti ti-device-floppy"></i> Save quantities</button>'
+      +'<button class="btn btn-sm" onclick="cancelBoqQtyEdit()">Cancel</button>'
+     :(boqItems.length?'<button class="btn btn-primary btn-sm" onclick="quoteFromBoq()"><i class="ti ti-file-invoice"></i> New quote from BOQ</button>'
+        +'<button class="btn btn-sm" onclick="startBoqQtyEdit()" title="Change the BOQ quantities when the contractor amends them"><i class="ti ti-pencil"></i> Edit quantities</button>':'')
     +'<label class="btn btn-sm'+(boqItems.length?'':' btn-primary')+'" style="cursor:pointer"><i class="ti ti-file-spreadsheet"></i> Upload BOQ (.xlsx)'
-    +'<input type="file" accept=".xlsx,.xlsm" style="display:none" onchange="if(this.files[0])handleBoqFile(this.files[0]);this.value=\'\'"></label>'
+    +'<input type="file" accept=".xlsx,.xlsm" style="display:none" onchange="if(this.files[0])handleBoqFile(this.files[0]);this.value=\'\'"></label>')
     +'</div></div>';
   if(!boqItems.length){
     return head+'<div class="empty-state" style="padding:28px 12px">No BOQ on this project yet. Upload the BOQ spreadsheet to list every item the job needs.'
@@ -3438,7 +3516,7 @@ function boqTrackerHtml(){
   var body=groups.map(function(g){
     var section=null;
     var rows=g.items.map(function(it){
-      var q=Number(it.quantity)||0,qd=p.quoted[it.id]||0,inv=p.invoiced[it.id]||0,left=round2(q-qd);
+      var q=boqQty(it),qd=p.quoted[it.id]||0,inv=p.invoiced[it.id]||0,left=round2(q-qd);
       /* Quoting past the BOQ is usually a pack size (12 twin packs for 23 tubes), so it
          reads as "1 over" in amber rather than as an error. */
       var leftCol=left<-0.0001?'#b45309':(left<=0.0001?'var(--green)':'#b45309');
@@ -3449,17 +3527,19 @@ function boqTrackerHtml(){
         +'<td style="padding:6px 8px;min-width:200px"><div>'+escHtml(it.description||'')+'</div>'
         +(it.remarks?'<div style="font-size:11px;color:var(--text-tertiary)">'+escHtml(it.remarks)+'</div>':'')+'</td>'
         +'<td style="padding:6px 8px;color:var(--text-secondary)">'+escHtml(it.unit||'')+'</td>'
-        +'<td style="'+cell+';font-weight:600">'+fmtQty(q)+'</td>'
+        +'<td style="'+cell+';font-weight:600">'
+        +(boqQtyEdit?'<input class="form-input" type="number" step="any" min="0" value="'+escHtml(boqQtyEdit[it.id]!=null?String(boqQtyEdit[it.id]):String(Number(it.quantity)||0))+'" oninput="setBoqQty('+escHtml(JSON.stringify(it.id))+',this.value)" style="width:84px;font-size:12px;text-align:right">'
+          :fmtQty(q))+'</td>'
         +'<td style="'+cell+'">'+(qd?fmtQty(qd):'<span style="color:var(--text-tertiary)">0</span>')
         +(p.drafted&&p.drafted[it.id]?'<div style="font-size:10px;color:var(--text-tertiary)">+'+fmtQty(p.drafted[it.id])+' in draft</div>':'')+'</td>'
         +'<td style="'+cell+'">'+(inv?fmtQty(inv):(p.partBilled[it.id]?'<span style="color:#b45309;font-size:11px" title="Billed by a percentage or deposit invoice, which does not bill specific units">part</span>':'<span style="color:var(--text-tertiary)">0</span>'))+'</td>'
         +'<td style="'+cell+'">'+(p.shipped&&p.shipped[it.id]?fmtQty(p.shipped[it.id]):'<span style="color:var(--text-tertiary)">0</span>')+'</td>'
         +'<td style="'+cell+'">'+(p.paid&&p.paid[it.id]?'<span style="color:var(--green);font-weight:600">'+fmtQty(p.paid[it.id])+'</span>'
           :(p.partPaid&&p.partPaid[it.id]?'<span style="color:#b45309;font-size:11px" title="Paid through a percentage or deposit invoice, which does not pay for specific units">part</span>':'<span style="color:var(--text-tertiary)">0</span>'))+'</td>'
-        +'<td style="'+cell+';font-weight:600;color:'+leftCol+'">'+(left<=0.0001&&left>=-0.0001?'<i class="ti ti-check"></i>':(left<0?'<span title="More quoted than the BOQ quantity">'+fmtQty(-left)+' over</span>':fmtQty(left)))+'</td>'
+        +'<td id="boq-left-'+escHtml(it.id)+'" style="'+cell+';font-weight:600;color:'+leftCol+'">'+boqLeftCellHtml(left)+'</td>'
         +'</tr>';
     }).join('');
-    var done=g.items.filter(function(it){return round2((Number(it.quantity)||0)-(p.quoted[it.id]||0))<=0.0001;}).length;
+    var done=g.items.filter(function(it){return round2(boqQty(it)-(p.quoted[it.id]||0))<=0.0001;}).length;
     return '<div style="margin-bottom:16px;border:1px solid var(--border-t);border-radius:var(--radius-md);overflow:hidden">'
       +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 12px;background:var(--bg-secondary)">'
       +'<div><div style="font-size:13px;font-weight:700">'+escHtml(g.name)+'</div>'

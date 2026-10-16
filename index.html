@@ -3120,11 +3120,15 @@ function fmtQty(n){return String(round2(n));}
 /* The header row is the first one naming both a description and a quantity column. */
 function boqFindHeader(rows){
   for(var r=0;r<Math.min(rows.length,60);r++){
-    var row=rows[r]||[],cols={desc:-1,qty:-1,unit:-1,item:-1,remarks:-1},ignored=[];
+    var row=rows[r]||[],cols={desc:-1,qty:-1,unit:-1,item:-1,remarks:-1},ignored=[],money=[];
     for(var c=0;c<row.length;c++){
       var raw=boqText(row[c]),h=raw.toLowerCase().replace(/[:.]+$/,'');
       if(!h) continue;
-      if(BOQ_MONEY_HEAD.test(h)){ignored.push(raw);continue;}
+      /* Money columns are still never imported by default. They are listed by heading
+         so the user can point at the one holding OUR agreed price to GEL; any other
+         price column — above all GEL's rate with their own end client — is left
+         alone and its figures are never shown. */
+      if(BOQ_MONEY_HEAD.test(h)){ignored.push(raw);money.push({c:c,head:raw});continue;}
       if(cols.desc<0&&/^desc/.test(h)) cols.desc=c;
       else if(cols.qty<0&&/^(qty|quantity|quan|no\. of)/.test(h)) cols.qty=c;
       else if(cols.unit<0&&/^(unit|units|uom)$/.test(h)) cols.unit=c;
@@ -3132,7 +3136,7 @@ function boqFindHeader(rows){
       else if(cols.remarks<0&&/remark|comment|note/.test(h)) cols.remarks=c;
       else ignored.push(raw);
     }
-    if(cols.desc>=0&&cols.qty>=0) return {row:r,cols:cols,ignored:ignored};
+    if(cols.desc>=0&&cols.qty>=0) return {row:r,cols:cols,ignored:ignored,money:money};
   }
   return null;
 }
@@ -3165,9 +3169,14 @@ function boqParseSheet(rows,fallbackName,rowOffset){
     var desc=boqText(row[c.desc]),qty=boqNumber(row[c.qty]);
     var itemNo=c.item>=0?boqText(row[c.item]):'';
     if(!desc) continue;
+    /* Every money column's figure is held here so the one the user points at can be
+       saved. Only the chosen column is ever displayed, and none is saved unless a
+       column is chosen. */
+    var money={};
+    (hdr.money||[]).forEach(function(m){var v=boqNumber(row[m.c]);if(isFinite(v)) money[m.c]=v;});
     var base={section:section,item_no:BOQ_ITEM_NO.test(itemNo)?itemNo:'',description:desc,
       remarks:c.remarks>=0?boqText(row[c.remarks]):'',unit:c.unit>=0?boqText(row[c.unit]):'',
-      source_row:r+1+(rowOffset||0)};
+      money:money,source_row:r+1+(rowOffset||0)};
     if(isFinite(qty)&&qty>0){
       items.push(Object.assign(base,{quantity:qty,include:true}));
     }else if(BOQ_ITEM_NO.test(itemNo)){
@@ -3189,7 +3198,10 @@ function boqParseSheet(rows,fallbackName,rowOffset){
     }
     it.section=section;out.push(it);
   });
-  return {name:boqTitle(rows,hdr.row,fallbackName),items:out,ignored:hdr.ignored,notes:notes,headerRow:hdr.row+1+(rowOffset||0)};
+  return {name:boqTitle(rows,hdr.row,fallbackName),items:out,ignored:hdr.ignored,money:hdr.money||[],
+    /* priceCol null = import no price at all, which is what every BOQ did before
+       agreed rates went on the tender. */
+    priceCol:null,notes:notes,headerRow:hdr.row+1+(rowOffset||0)};
 }
 
 async function renderProjectTab(){
@@ -3465,7 +3477,7 @@ function toggleBoqRemove(id){
 }
 function addBoqItemRow(ref){
   if(!boqEdit) return;
-  boqNewItems.push({ref:ref,item_no:'',description:'',unit:'',quantity:''});
+  boqNewItems.push({ref:ref,item_no:'',description:'',unit:'',budget_rate:'',quantity:''});
   redrawBoqTracker();
   var el=document.getElementById('boq-new-desc-'+(boqNewItems.length-1));
   if(el) el.focus();
@@ -3494,6 +3506,7 @@ function boqNewRowHtml(n,i){
     +'<td style="padding:6px 8px">'+inp('item_no','#','52px')+'</td>'
     +'<td style="padding:6px 8px;min-width:200px">'+inp('description','Description — required','100%')+'</td>'
     +'<td style="padding:6px 8px">'+inp('unit','ea','54px')+'</td>'
+    +'<td style="'+cell+'">'+inp('budget_rate','—','86px',true)+'</td>'
     +'<td style="'+cell+'">'+inp('quantity','0','84px',true)+'</td>'
     +dash+dash+dash+dash
     +'<td style="'+cell+'"><button class="btn btn-sm" title="Discard this new item" onclick="removeBoqNewRow('+i+')" style="padding:2px 7px"><i class="ti ti-x"></i></button></td>'
@@ -3554,6 +3567,16 @@ async function saveBoqEdit(){
           :(k==='unit'?('unit '+(from2||'—')+' → '+(to2||'—'))
           :('"'+from2+'" → "'+to2+'"')));
       });
+      /* Numeric, so compared as a number: "1285.90" and "1285.9" are the same rate. */
+      if(f.budget_rate!=null){
+        var rs=String(f.budget_rate).trim();
+        var rTo=rs===''?null:round2(Number(rs)||0);
+        var rFrom=it.budget_rate==null?null:round2(Number(it.budget_rate));
+        if(rTo!==rFrom){
+          patch.budget_rate=rTo;
+          bits.push('our rate '+(rFrom==null?'—':fmtAud(rFrom))+' → '+(rTo==null?'—':fmtAud(rTo)));
+        }
+      }
       if(bits.length) edits.push({it:it,patch:patch,text:(boqLineName(it)||it.description||'item')+': '+bits.join(', ')});
     }
   });
@@ -3568,8 +3591,10 @@ async function saveBoqEdit(){
       if(String(n.item_no||'').trim()||String(n.quantity||'').trim()||String(n.unit||'').trim()) halfDone++;
       return;
     }
+    var br=String(n.budget_rate==null?'':n.budget_rate).trim();
     adds.push({ref:n.ref,item_no:String(n.item_no||'').trim()||null,description:desc,
-      unit:String(n.unit||'').trim()||null,quantity:round2(Number(n.quantity)||0)});
+      unit:String(n.unit||'').trim()||null,quantity:round2(Number(n.quantity)||0),
+      budget_rate:br===''?null:round2(Number(br)||0)});
   });
   if(halfDone){toast(halfDone+' new line'+(halfDone===1?' needs a':'s need')+' description before it can be saved','error');return;}
   if(!changes.length&&!adds.length&&!edits.length&&!drops.length){boqEdit=null;boqNewItems=[];renderProjectTab();toast('Nothing changed');return;}
@@ -3621,7 +3646,7 @@ async function saveBoqEdit(){
         nextOrder[k2]=(nextOrder[k2]==null?-1:nextOrder[k2])+1;
         return {lead_id:currentLead.id,boq_ref:a.ref||null,sort_order:nextOrder[k2],item_no:a.item_no,
           description:a.description,remarks:null,unit:a.unit,quantity:a.quantity,
-          source_file:null,source_row:null};
+          budget_rate:a.budget_rate,source_file:null,source_row:null};
       });
       await sbWrite('boq_items',{method:'POST',body:JSON.stringify(payload)});
     }
@@ -3673,7 +3698,7 @@ function boqTrackerHtml(){
          reads as "1 over" in amber rather than as an error. */
       var leftCol=left<-0.0001?'#b45309':(left<=0.0001?'var(--green)':'#b45309');
       var sec='';
-      if((it.section||'')!==section){section=it.section||'';if(section) sec='<tr><td colspan="9" style="padding:8px 8px 4px;font-size:11px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.03em">'+escHtml(section)+'</td></tr>';}
+      if((it.section||'')!==section){section=it.section||'';if(section) sec='<tr><td colspan="10" style="padding:8px 8px 4px;font-size:11px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.03em">'+escHtml(section)+'</td></tr>';}
       var rm=boqIsRemoved(it);
       var jid=escHtml(JSON.stringify(it.id));
       /* A row marked for removal is struck through and its boxes locked, so it is
@@ -3690,6 +3715,10 @@ function boqTrackerHtml(){
         +(it.remarks?'<div style="font-size:11px;color:var(--text-tertiary)">'+escHtml(it.remarks)+'</div>':'')+'</td>'
         +'<td style="padding:6px 8px;color:var(--text-secondary)">'
         +(boqEdit?fin('unit','54px'):escHtml(it.unit||''))+'</td>'
+        +'<td style="'+cell+';color:var(--text-secondary)" title="What we charge GEL per unit, from the tender BOQ">'
+        +(boqEdit?(rm?'<span style="text-decoration:line-through;color:var(--text-tertiary)">'+(Number(it.budget_rate)>0?fmtAud(it.budget_rate):'&#8212;')+'</span>'
+            :'<input class="form-input" type="number" step="any" min="0" placeholder="&#8212;" value="'+escHtml(boqField(it,'budget_rate'))+'" oninput="setBoqField('+jid+',\'budget_rate\',this.value)" style="width:86px;font-size:12px;text-align:right">')
+          :(Number(it.budget_rate)>0?fmtAud(it.budget_rate):'<span style="color:var(--text-tertiary)">&#8212;</span>'))+'</td>'
         +'<td style="'+cell+';font-weight:600">'
         +(boqEdit?(rm?'<span style="text-decoration:line-through;color:var(--text-tertiary)">'+fmtQty(Number(it.quantity)||0)+'</span>'
             :'<input class="form-input" type="number" step="any" min="0" value="'+escHtml(boqEdit.qty[it.id]!=null?String(boqEdit.qty[it.id]):String(Number(it.quantity)||0))+'" oninput="setBoqQty('+jid+',this.value)" style="width:84px;font-size:12px;text-align:right">')
@@ -3719,6 +3748,7 @@ function boqTrackerHtml(){
       +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'
       +'<thead><tr style="background:var(--bg-primary)">'
       +'<th style="padding:6px 8px;text-align:left">#</th><th style="padding:6px 8px;text-align:left">Item</th><th style="padding:6px 8px;text-align:left">Unit</th>'
+      +'<th style="'+cell+'" title="What we charge GEL per unit, from the tender BOQ">Our rate</th>'
       +'<th style="'+cell+'">BOQ</th><th style="'+cell+'">Quoted</th><th style="'+cell+'">Invoiced</th><th style="'+cell+'" title="Recorded on the Freight tab">Shipped</th><th style="'+cell+'" title="Units on invoices QuickBooks shows as paid in full">Paid</th><th style="'+cell+'">Left to quote</th>'
       +'</tr></thead><tbody>'+rows+newRows+'</tbody></table></div>'
       +(boqEdit?'<div style="padding:8px 12px;border-top:1px solid var(--border-t);background:var(--bg-secondary)">'
@@ -3771,9 +3801,24 @@ function boqImportHtml(){
         +'<td style="padding:5px 6px"><input class="form-input" style="font-size:12px;min-width:110px" value="'+escHtml(it.remarks)+'" oninput="setBoqImport('+gi+','+ii+',\'remarks\',this.value)"></td>'
         +'<td style="padding:5px 6px"><input class="form-input" type="number" step="any" min="0" style="font-size:12px;width:80px;text-align:right'+(bad?';border-color:var(--danger)':'')+'" value="'+escHtml(String(it.quantity))+'" oninput="setBoqImport('+gi+','+ii+',\'quantity\',this.value)"></td>'
         +'<td style="padding:5px 6px"><input class="form-input" style="font-size:12px;width:70px" value="'+escHtml(it.unit)+'" oninput="setBoqImport('+gi+','+ii+',\'unit\',this.value)"></td>'
+        +(g.priceCol==null?'':'<td style="padding:5px 6px"><input class="form-input" type="number" step="any" min="0" style="font-size:12px;width:92px;text-align:right" value="'+escHtml(it.budget_rate!=null?String(it.budget_rate):(it.money&&it.money[g.priceCol]!=null?String(it.money[g.priceCol]):''))+'" oninput="setBoqImport('+gi+','+ii+',\'budget_rate\',this.value)"></td>')
         +'<td style="padding:5px 6px;color:var(--text-tertiary);font-size:11px;text-align:right">'+it.source_row+'</td>'
         +'</tr>';
     }).join('');
+    /* Default is no price, so a BOQ that carries GEL's end-client rates imports
+       exactly as it always has. The headings are shown; the figures are not, until
+       a column is chosen. */
+    var priceSel='';
+    if(g.money&&g.money.length){
+      priceSel='<div style="margin-top:8px">'
+        +'<label class="form-label" style="margin-bottom:3px">Our agreed price to GEL</label>'
+        +'<select class="form-input" style="width:auto;font-size:12px" onchange="setBoqImportPrice('+gi+',this.value)">'
+        +'<option value=""'+(g.priceCol==null?' selected':'')+'>&mdash; Do not import any price &mdash;</option>'
+        +g.money.map(function(m){return '<option value="'+m.c+'"'+(String(g.priceCol)===String(m.c)?' selected':'')+'>'+escHtml(m.head)+'</option>';}).join('')
+        +'</select>'
+        +'<div style="font-size:11px;color:var(--text-secondary);margin-top:4px">Pick the column holding <strong>what we charge GEL</strong>. It becomes the default rate on every quote raised from this BOQ. Leave it unset for a BOQ carrying GEL&rsquo;s own rates with their client &mdash; those must never be imported.</div>'
+        +'</div>';
+    }
     return '<div style="margin-bottom:14px;border:1px solid var(--border-t);border-radius:var(--radius-md);overflow:hidden">'
       +'<div style="padding:9px 12px;background:var(--bg-secondary)">'
       +'<label class="form-label" style="margin-bottom:4px">BOQ name</label>'
@@ -3783,10 +3828,13 @@ function boqImportHtml(){
       +' &middot; header on row '+g.headerRow
       +(g.notes?' &middot; '+g.notes+' note row'+(g.notes===1?'':'s')+' skipped':'')+'</div>'
       +(g.ignored.length?'<div style="font-size:11px;color:var(--text-tertiary);margin-top:2px"><i class="ti ti-eye-off"></i> Not imported: '+g.ignored.map(escHtml).join(', ')+'</div>':'')
+      +priceSel
       +'</div>'
       +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:var(--bg-primary)">'
       +'<th></th><th style="padding:5px 6px;text-align:left">#</th><th style="padding:5px 6px;text-align:left">Description</th><th style="padding:5px 6px;text-align:left">Remarks</th>'
-      +'<th style="padding:5px 6px;text-align:right">Qty</th><th style="padding:5px 6px;text-align:left">Unit</th><th style="padding:5px 6px;text-align:right" title="Row in the spreadsheet">Row</th>'
+      +'<th style="padding:5px 6px;text-align:right">Qty</th><th style="padding:5px 6px;text-align:left">Unit</th>'
+      +(g.priceCol==null?'':'<th style="padding:5px 6px;text-align:right" title="What we charge GEL per unit">Our price</th>')
+      +'<th style="padding:5px 6px;text-align:right" title="Row in the spreadsheet">Row</th>'
       +'</tr></thead><tbody>'+rows+'</tbody></table></div></div>';
   }).join('');
   return '<div style="font-size:14px;font-weight:700;margin-bottom:2px"><i class="ti ti-file-spreadsheet"></i> Check the BOQ before saving</div>'
@@ -3807,6 +3855,15 @@ function setBoqImport(gi,ii,k,v){
   it[k]=v;
 }
 function setBoqImportName(gi,v){if(boqImport&&boqImport.groups[gi]) boqImport.groups[gi].name=v;}
+/* Choosing a price column shows that column and no other. Switching columns clears any
+   hand-edited figure, so what is on screen always came from the column now selected. */
+function setBoqImportPrice(gi,v){
+  var g=boqImport&&boqImport.groups[gi];
+  if(!g) return;
+  g.priceCol=v===''?null:Number(v);
+  g.items.forEach(function(it){delete it.budget_rate;});
+  renderProjectTab();
+}
 function cancelBoqImport(){boqImport=null;renderProjectTab();}
 
 async function saveBoqImport(){
@@ -3825,8 +3882,15 @@ async function saveBoqImport(){
       var q=Number(it.quantity),d=boqText(it.description);
       if(!d) problems.push(name+', row '+it.source_row+': description is empty');
       if(!(q>0)) problems.push(name+', row '+it.source_row+': enter a quantity or untick it');
+      /* Only the column the user pointed at reaches the database; with none chosen,
+         budget_rate stays null and the payload is exactly what it always was. */
+      var rate=null;
+      if(g.priceCol!=null){
+        var rv=it.budget_rate!=null?Number(it.budget_rate):(it.money?it.money[g.priceCol]:undefined);
+        if(rv!=null&&isFinite(rv)&&rv>0) rate=round2(rv);
+      }
       payload.push({lead_id:leadId,boq_ref:name,sort_order:i,item_no:it.item_no||null,description:d,
-        remarks:boqText(it.remarks)||null,unit:boqText(it.unit)||null,quantity:q,
+        remarks:boqText(it.remarks)||null,unit:boqText(it.unit)||null,quantity:q,budget_rate:rate,
         source_file:imp.fileName,source_row:it.source_row});
     });
   }
@@ -4022,8 +4086,13 @@ async function createQuoteFromBoq(){
   var bad=chosen.filter(function(c){return !(c.qty>0);});
   if(bad.length){toast('Enter a quantity for '+escHtml(boqLineName(bad[0].it)||bad[0].it.description),'error');return;}
   var lineFor=function(c,i){
-    return {item_name:boqLineName(c.it),description:c.it.description||'',quantity:c.qty,cost:0,rate:0,
-      gst_applicable:false,manual:false,amount:0,sort_order:i,boq_item_id:c.it.id};
+    /* The rate comes from the BOQ's agreed price to GEL where the tender carried one,
+       so the job is charged at the approved budget. Costing up from the supplier price
+       and a markup is what left the last two projects under budget. Cost stays 0 until
+       the purchase order fills it. */
+    var rate=Number(c.it.budget_rate)||0;
+    return {item_name:boqLineName(c.it),description:c.it.description||'',quantity:c.qty,cost:0,rate:rate,
+      gst_applicable:false,manual:false,amount:round2(c.qty*rate),sort_order:i,boq_item_id:c.it.id};
   };
   if(f.mode==='append'){
     var start=currentLineItems.length;
@@ -4538,6 +4607,34 @@ async function createNewQuote(type){
   }catch(e){toast('Could not create quote: '+e.message,'error');}
 }
 
+/* Lines priced under the BOQ's agreed rate to GEL. Returned rather than blocked: a
+   deliberate discount is the user's call, but quietly charging less than the approved
+   budget is how A$85,600 was left on the table across two projects. */
+function budgetShortfalls(){
+  var out=[];
+  (currentLineItems||[]).forEach(function(l){
+    if(!l.boq_item_id) return;
+    var b=boqItems.find(function(x){return x.id===l.boq_item_id;});
+    var budget=b?Number(b.budget_rate)||0:0;
+    if(!(budget>0)) return;
+    var rate=Number(l.rate)||0;
+    if(rate>=budget-0.004) return;
+    var qty=Number(l.quantity)||0;
+    out.push({name:l.item_name||l.description||'item',rate:rate,budget:budget,qty:qty,gap:round2((budget-rate)*qty)});
+  });
+  return out;
+}
+function budgetShortfallHtml(){
+  var s=budgetShortfalls();
+  if(!s.length) return '';
+  var total=round2(s.reduce(function(t,x){return t+x.gap;},0));
+  return '<div style="background:rgba(180,83,9,0.06);border:0.5px solid rgba(180,83,9,0.4);border-radius:var(--radius-md);padding:10px 13px;margin-bottom:10px;font-size:12px;color:#b45309">'
+    +'<strong><i class="ti ti-alert-triangle"></i> '+fmtAud(total)+' under the BOQ budget</strong>'
+    +'<div style="margin-top:5px">'+s.map(function(x){
+      return escHtml(x.name)+' &mdash; charging '+fmtAud(x.rate)+' against an agreed '+fmtAud(x.budget)+' ('+fmtQty(x.qty)+' &times; '+fmtAud(round2(x.budget-x.rate))+' = '+fmtAud(x.gap)+')';
+    }).join('<br>')+'</div></div>';
+}
+
 function renderPricingStep(el){
   if(!currentQuote||!el) return;
   var markup=(typeof currentQuote.markup_pct==='number')?currentQuote.markup_pct:(parseFloat(currentQuote.markup_pct)||0);
@@ -4575,6 +4672,7 @@ function renderPricingStep(el){
     +'<div style="margin-bottom:8px"><label class="form-label">PO reference <span style="font-size:11px;color:var(--text-tertiary);font-weight:400">&mdash; client purchase order number</span></label><input class="form-input" id="eq-po-reference" placeholder="Client PO number" value="'+escHtml(currentQuote.po_reference||'')+'" onchange="saveQuotePOReference(this.value)"></div>'
     +'<div style="margin-bottom:8px"><input class="form-input" id="eq-client-name" placeholder="Client name" value="'+escHtml(currentQuote.client_name||'')+'"></div>'    +'<div style="margin-bottom:12px"><input class="form-input" id="eq-client-addr" placeholder="Client address" value="'+escHtml(currentQuote.client_address||'')+'"></div>'
     +'<div style="margin-bottom:12px"><label class="form-label">Expiry date</label><input class="form-input" id="eq-expiry" type="date" value="'+(currentQuote.expiry_date||'')+'"></div>'
+    +budgetShortfallHtml()
     +'<table class="line-items-table" style="margin-bottom:8px"><thead><tr>'
     +'<th>Item</th><th>Description</th><th style="text-align:right">Qty</th><th style="text-align:right">Cost</th><th style="text-align:right">Rate (sell)</th><th style="text-align:right">Amount</th><th style="text-align:center">Status</th><th></th>'
     +'</tr></thead><tbody id="liTbody">'+itemRows+'</tbody></table>'
@@ -4803,6 +4901,18 @@ async function sendQuoteToClient(){
   if(!currentQuote||!currentQuote.id){toast('No quote loaded. Please reopen the quote and try again.','error');return;}
   if(!currentLead){toast('No lead selected.','error');return;}
   if(!currentLead.contact){toast('This lead has no email address. Add one in the Details tab before sending.','error');return;}
+  /* Last chance before the figures leave the building. */
+  var short=budgetShortfalls();
+  if(short.length){
+    var tot=round2(short.reduce(function(t,x){return t+x.gap;},0));
+    if(!confirm('This quote is '+fmtAud(tot)+' under the BOQ budget.\n\n'
+      +short.map(function(x){return x.name+': '+fmtAud(x.rate)+' against an agreed '+fmtAud(x.budget)+' — '+fmtAud(x.gap)+' on '+fmtQty(x.qty);}).join('\n')
+      +'\n\nSend it anyway?')) {
+      var b0=document.getElementById('previewSendBtn');
+      if(b0){b0.disabled=false;b0.innerHTML='<i class="ti ti-send"></i> Save &amp; send to client';}
+      return;
+    }
+  }
   var pvClient=document.getElementById('pv-client');
   var pvAddr=document.getElementById('pv-addr');
   if(pvClient) currentQuote.client_name=pvClient.innerText.trim()||currentQuote.client_name;

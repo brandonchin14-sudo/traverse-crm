@@ -370,6 +370,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <div class="nav-tab" onclick="switchView('drive',this)"><i class="ti ti-brand-google-drive"></i> Drive</div>
   <div class="nav-tab" onclick="switchView('reports',this)"><i class="ti ti-chart-bar"></i> Reports</div>
   <div class="nav-tab" onclick="switchView('brief',this)"><i class="ti ti-checklist"></i> Brief</div>
+  <div class="nav-tab" onclick="switchView('freight',this)"><i class="ti ti-ship"></i> Freight</div>
   <div style="margin-left:auto;display:flex;align-items:center;gap:10px">
     <button class="btn" onclick="openPackingList()" title="Build a container packing list from several leads' SLIs"><i class="ti ti-clipboard-list"></i> Packing list</button>
     <button class="btn" onclick="openClearanceModal()" title="Customs clearance invoices for shipments to GEL"><i class="ti ti-file-certificate"></i> Clearance</button>
@@ -419,6 +420,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <div id="briefSummary"></div>
   <div id="briefAddForm"></div>
   <div id="briefBoard"><div class="empty-state"><i class="ti ti-loader"></i> Loading...</div></div>
+</div>
+
+<!-- FREIGHT CALCULATOR -->
+<div id="view-freight" class="view main">
+  <div id="freightView"><div class="empty-state"><i class="ti ti-loader"></i> Loading...</div></div>
 </div>
 
 <!-- CUSTOMS CLEARANCE -->
@@ -1703,6 +1709,7 @@ function switchView(view,el){
   if(view==='reports') renderReports();
   if(view==='drive') renderDriveView();
   if(view==='brief') renderBrief();
+  if(view==='freight') renderFreightCalc();
 }
 function escHtml(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
@@ -7292,6 +7299,394 @@ function blobToBase64(blob){
     checkSession().catch(function(e){console.warn('Session restore failed:',e);});
   }
 })();
+
+/* ===== FREIGHT CALCULATOR =====
+   Internal only: forwarder charge lines are never shown to customers.
+   Rates are data: every price comes from freight_rates. A new invoice means new rows, not a
+   code change. Code only changes when a forwarder introduces a new KIND of charge (basis). */
+/*FREIGHT-ENGINE-START*/
+var FREIGHT_VOL_FALLBACK=6000;
+function freightNum(v){var n=Number(v);return (isFinite(n)&&n>0)?n:0;}
+/* The one place a charge line is rounded. Each line rounds DOWN to the cent because that is
+   what reproduces Kalgin S00452896 (BAF 11.604 x 58.95 = 684.0558, billed so the invoice
+   totals 4,054.63). toFixed strips floating-point noise so 2842.98 cannot become 2842.97. */
+function freightLineCents(x){return Math.floor(Number((x*100).toFixed(6)));}
+function freightMoney(n){return Number(n).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2});}
+function freightTrim(n,dp){return String(Number(Number(n).toFixed(dp)));}
+function freightMeasure(c,divisor){
+  var p=freightNum(c.pieces),cm3=p*freightNum(c.l)*freightNum(c.w)*freightNum(c.h),kg=p*freightNum(c.kg);
+  return {kg:kg,m3:cm3/1e6,volKg:cm3/divisor};
+}
+function freightCalcCarrier(rates,carrier,cargo,options){
+  options=options||{};
+  var rows=rates.filter(function(r){return r.carrier===carrier&&r.active!==false;})
+    .sort(function(a,b){return (a.sort_order||0)-(b.sort_order||0);});
+  if(!rows.length) return null;
+  var mode=rows[0].mode,warnings=[],lines=[];
+  var divRow=rows.find(function(r){return Number(r.volumetric_divisor)>0;});
+  var divisor=divRow?Number(divRow.volumetric_divisor):FREIGHT_VOL_FALLBACK;
+  var usd=freightNum(options.usd_aud),extras=options.extras||{};
+  var trucks=options.trucks==null?1:freightNum(options.trucks),edns=options.edns==null?1:freightNum(options.edns);
+  var hazCount=0,sum={kg:0,m3:0},dg={kg:0,volKg:0},std={kg:0,volKg:0};
+  (cargo||[]).forEach(function(c){
+    var m=freightMeasure(c,divisor),p=c.hazardous?dg:std;
+    sum.kg+=m.kg;sum.m3+=m.m3;p.kg+=m.kg;p.volKg+=m.volKg;
+    if(c.hazardous&&(m.kg>0||m.m3>0)) hazCount++;
+  });
+  var anyHaz=hazCount>0;
+  var seaCh=Number(Math.max(sum.m3,sum.kg/1000).toFixed(3));
+  var dgCh=Number(Math.max(dg.kg,dg.volKg).toFixed(2)),stdCh=Number(Math.max(std.kg,std.volKg).toFixed(2));
+  var airCh=Number((dgCh+stdCh).toFixed(2));
+  /* Hazardous and non-hazardous portions each find their own weight break and minimum. */
+  var breakQty=new Map();
+  if(mode==='air'){
+    var cls=options.cargo_class||'general';
+    [{cls:'dg',kg:dgCh},{cls:cls,kg:stdCh}].forEach(function(p){
+      if(!(p.kg>0)) return;
+      var bands=rows.filter(function(r){return r.basis==='weight_break'&&r.cargo_class===p.cls;})
+        .sort(function(a,b){return Number(a.break_from_kg)-Number(b.break_from_kg);});
+      if(!bands.length){warnings.push('No '+p.cls+' air freight rate on file.');return;}
+      var hit=bands.find(function(r){return p.kg>=Number(r.break_from_kg)&&(r.break_to_kg==null||p.kg<Number(r.break_to_kg));})||bands[0];
+      breakQty.set(hit,p.kg);
+    });
+    if(!divRow) warnings.push('Volumetric weight uses the standard 6000 divisor because this forwarder has not confirmed one.');
+  }
+  if(anyHaz&&mode==='sea'&&!rows.some(function(r){return r.applies==='dg_only';})) warnings.push('Hazardous cargo, but no dangerous goods surcharge is on file for this forwarder.');
+  rows.forEach(function(r){
+    if(r.applies==='dg_only'&&!anyHaz) return;
+    var qty,unit='',b=r.basis;
+    if(b==='weight_break'){if(!breakQty.has(r)) return;qty=breakQty.get(r);unit=' kg';}
+    else if(r.applies==='optional'){qty=freightNum(extras[r.charge_name]);}
+    else if(b==='fixed'){qty=1;}
+    else if(b==='per_kg'){qty=airCh;unit=' kg';}
+    else if(b==='per_m3'){qty=seaCh;unit=' m³';}
+    else if(b==='per_truck'){qty=trucks;unit=trucks===1?' truck':' trucks';}
+    else if(b==='per_edn'){qty=edns;unit=edns===1?' EDN':' EDNs';}
+    else if(b==='per_unit'){qty=r.applies==='dg_only'?Math.ceil(hazCount/3):1;}
+    else{warnings.push(r.charge_name+': unknown charge type "'+b+'", not included.');return;}
+    if(!(qty>0)) return;
+    if(r.rate==null){warnings.push(r.charge_name+': amount is not on the forwarder’s document, so it is not included.');return;}
+    var rate=Number(r.rate),plus=Number(r.plus_fixed)||0,cur=r.currency||'AUD',amount=rate*qty+plus;
+    var how=b==='fixed'?'Per shipment':(freightTrim(qty,3)+unit+' × '+(cur==='AUD'?'A$':cur+' ')+freightMoney(rate)+(plus?' + A$'+freightMoney(plus):''));
+    if(cur==='USD'){
+      if(!(usd>0)){warnings.push(r.charge_name+': needs a USD to AUD rate, not included.');return;}
+      amount*=usd;how+=(b==='fixed'?' USD '+freightMoney(rate):'')+' @ '+usd;
+    }else if(cur!=='AUD'){warnings.push(r.charge_name+': currency '+cur+' is not supported, not included.');return;}
+    var minApplied=r.min_charge!=null&&amount<Number(r.min_charge);
+    if(minApplied){amount=Number(r.min_charge);how+=' (minimum applied)';}
+    lines.push({charge:r.charge_name,how:how,gst:!!r.gst,amount:freightLineCents(amount)/100,cents:freightLineCents(amount),rates_as_of:r.rates_as_of||null,source_ref:r.source_ref||null});
+  });
+  var exC=0,baseC=0,dates={};
+  lines.forEach(function(l){exC+=l.cents;if(l.gst) baseC+=l.cents;if(l.rates_as_of) dates[l.rates_as_of]=1;});
+  var gstC=Math.round(baseC/10),asOf=Object.keys(dates).sort();
+  lines.forEach(function(l){delete l.cents;});
+  return {carrier:carrier,mode:mode,lines:lines,ex:exC/100,gst:gstC/100,inc:(exC+gstC)/100,
+    chargeable:mode==='air'?airCh:seaCh,unit:mode==='air'?'kg':'m³',
+    actual_kg:Number(sum.kg.toFixed(2)),volume_m3:Number(sum.m3.toFixed(3)),
+    rates_from:asOf[0]||null,rates_to:asOf[asOf.length-1]||null,warnings:warnings,
+    split:freightSplit(cargo,mode,divisor,exC)};
+}
+/* Each lead's share of the ex-GST total, fixed charges included, by its share of chargeable
+   volume (sea) or chargeable weight (air). Largest remainder, so shares always sum exactly. */
+function freightSplit(cargo,mode,divisor,exC){
+  var order=[],by={},total=0;
+  (cargo||[]).forEach(function(c){
+    var m=freightMeasure(c,divisor),w=mode==='air'?Math.max(m.kg,m.volKg):Math.max(m.m3,m.kg/1000);
+    if(!(w>0)) return;
+    var k=c.lead_id||'';
+    if(!by[k]){by[k]={lead_id:c.lead_id||null,label:c.lead_id?(c.lead_label||'Lead'):'No lead assigned',weight:0};order.push(k);}
+    by[k].weight+=w;total+=w;
+  });
+  if(!(total>0)) return [];
+  var out=order.map(function(k){var b=by[k],raw=exC*b.weight/total,c=Math.floor(Number(raw.toFixed(6)));return {lead_id:b.lead_id,label:b.label,weight:b.weight,share:b.weight/total,c:c,rem:raw-c};});
+  var left=exC-out.reduce(function(s,x){return s+x.c;},0);
+  out.slice().sort(function(a,b){return b.rem-a.rem;}).slice(0,left).forEach(function(x){x.c++;});
+  return out.map(function(x){return {lead_id:x.lead_id,label:x.label,share:x.share,amount:x.c/100};});
+}
+/*FREIGHT-ENGINE-END*/
+
+var freightRates=[],freightUsdAud=null,freightConsignments=[],freightDraft=null,freightSaving=false;
+
+function freightCarrierName(id){
+  var name=id;
+  Object.values(FREIGHT_CARRIERS).forEach(function(a){a.forEach(function(c){if(c.id===id) name=c.name;});});
+  return name;
+}
+function freightCarriersWithRates(){
+  var seen={};freightRates.forEach(function(r){seen[r.carrier]=1;});
+  return Object.keys(seen).sort(function(a,b){return freightCarrierName(a).localeCompare(freightCarrierName(b));});
+}
+function freightDate(iso){
+  if(!iso) return '';
+  var p=String(iso).slice(0,10).split('-');
+  return Number(p[2])+' '+['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][Number(p[1])-1]+' '+p[0];
+}
+function freightLeadLabel(l){return (l.company||l.name||'Lead')+(l.project?' · '+l.project:'');}
+function freightLeadOptions(){
+  var seen={};
+  return leads.map(function(l){
+    var t=freightLeadLabel(l);
+    if(seen[t]) t+=' ['+String(l.id).slice(0,4)+']';
+    seen[t]=l.id;
+    return {id:l.id,label:t};
+  });
+}
+function freightBlankLine(){return {description:'',lead_id:null,lead_label:'',pieces:1,l:'',w:'',h:'',kg:'',hazardous:false};}
+
+async function renderFreightCalc(){
+  var el=document.getElementById('freightView');
+  if(!el) return;
+  try{
+    var res=await Promise.all([
+      sb('freight_rates?select=*&active=eq.true&order=carrier.asc,sort_order.asc'),
+      sb('freight_settings?select=*&limit=1'),
+      sb('freight_consignments?select=*&order=updated_at.desc')
+    ]);
+    if(res.some(function(r){return !r.ok;})) throw new Error('Could not load freight data');
+    freightRates=await res[0].json();
+    var s=await res[1].json();
+    freightUsdAud=s.length?Number(s[0].usd_aud_rate):null;
+    freightConsignments=await res[2].json();
+    if(freightDraft) freightRenderEditor(); else freightRenderList();
+  }catch(e){
+    el.innerHTML='<div class="empty-state"><i class="ti ti-alert-circle"></i> '+escHtml(e.message||'Could not load freight data')+'</div>';
+    toast('Could not load freight data','error');
+  }
+}
+
+function freightRenderList(){
+  var el=document.getElementById('freightView');
+  var head='<div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;flex-wrap:wrap">'
+    +'<div style="flex:1;min-width:200px"><div style="font-size:16px;font-weight:600;margin-bottom:3px">Freight</div>'
+    +'<div style="font-size:13px;color:var(--text-secondary)">Internal freight costing &#8212; customers never see these charge lines</div></div>'
+    +'<button class="btn" onclick="renderFreightCalc()"><i class="ti ti-refresh"></i></button>'
+    +'<button class="btn btn-primary" onclick="freightNew()"><i class="ti ti-plus"></i> New consignment</button></div>';
+  if(!freightConsignments.length){el.innerHTML=head+'<div class="empty-state"><i class="ti ti-ship"></i> No saved consignments yet</div>';return;}
+  var rows=freightConsignments.map(function(c,i){
+    var names={};(c.cargo||[]).forEach(function(x){if(x.lead_id) names[x.lead_label||'Lead']=1;});
+    var lead=Object.keys(names).join(', ')||'&#8212;';
+    if(lead!=='&#8212;') lead=escHtml(lead);
+    var r=c.result||{};
+    return '<tr style="cursor:pointer" onclick="freightOpen('+i+')">'
+      +'<td style="padding:8px;font-weight:500">'+escHtml(c.name||'Untitled')+'</td>'
+      +'<td style="padding:8px">'+(c.carrier?escHtml(freightCarrierName(c.carrier)):'Comparing')+'</td>'
+      +'<td style="padding:8px">'+lead+'</td>'
+      +'<td style="padding:8px;text-align:right;font-weight:600">'+(r.total_ex!=null?fmtAud(r.total_ex):'&#8212;')+'</td>'
+      +'<td style="padding:8px">'+escHtml(c.status||'draft')+'</td>'
+      +'<td style="padding:8px;white-space:nowrap">'+freightDate(c.updated_at)+'</td></tr>';
+  }).join('');
+  el.innerHTML=head+'<div style="overflow-x:auto"><table class="line-items-table" style="min-width:640px"><thead><tr><th>Name</th><th>Forwarder</th><th>Leads</th><th style="text-align:right">Total ex GST</th><th>Status</th><th>Updated</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+}
+
+function freightNew(){
+  freightDraft={id:null,name:'',carrier:'compare',cargo:[freightBlankLine()],options:{trucks:1,edns:1,cargo_class:'general',extras:{},usd_aud:freightUsdAud},status:'draft',frozen:false,saved:null,notice:null,dirty:false};
+  freightRenderEditor();
+}
+
+function freightOpen(i){
+  var c=freightConsignments[i];
+  if(!c) return;
+  var o=Object.assign({trucks:1,edns:1,cargo_class:'general',extras:{},usd_aud:freightUsdAud},JSON.parse(JSON.stringify(c.options||{})));
+  freightDraft={id:c.id,name:c.name||'',carrier:c.carrier||'compare',cargo:JSON.parse(JSON.stringify(c.cargo||[])),options:o,status:c.status||'draft',frozen:false,saved:c.result||null,notice:null,dirty:false};
+  if(!freightDraft.cargo.length) freightDraft.cargo.push(freightBlankLine());
+  var now=freightBuildResult(freightDraft);
+  if(c.result&&c.result.total_inc!=null&&Math.abs(c.result.total_inc-now.total_inc)>0.005){
+    freightDraft.notice={was:c.result.total_inc,now:now.total_inc};
+    freightDraft.frozen=true;
+  }
+  freightRenderEditor();
+}
+
+function freightBuildResult(d){
+  var ids=d.carrier==='compare'?freightCarriersWithRates():[d.carrier];
+  var list=ids.map(function(id){return freightCalcCarrier(freightRates,id,d.cargo,d.options);}).filter(Boolean);
+  var best=list.slice().sort(function(a,b){return a.ex-b.ex;})[0]||null;
+  var pick=d.carrier==='compare'?best:list[0]||null;
+  return {compare:d.carrier==='compare',carriers:list,cheapest:best?best.carrier:null,
+    total_ex:pick?pick.ex:0,total_gst:pick?pick.gst:0,total_inc:pick?pick.inc:0};
+}
+
+function freightRelevantRates(d){return d.carrier==='compare'?freightRates:freightRates.filter(function(r){return r.carrier===d.carrier;});}
+
+function freightRenderEditor(){
+  var d=freightDraft,el=document.getElementById('freightView');
+  var withRates=freightCarriersWithRates();
+  var carrierOpts='<option value="compare"'+(d.carrier==='compare'?' selected':'')+'>Compare all</option>'
+    +['sea','air'].map(function(m){
+      return '<optgroup label="'+(m==='sea'?'Sea':'Air')+'">'+FREIGHT_CARRIERS[m].map(function(c){
+        var has=withRates.indexOf(c.id)>=0;
+        return '<option value="'+c.id+'"'+(d.carrier===c.id?' selected':'')+(has?'':' disabled')+'>'+escHtml(c.name)+(has?'':' (no rates yet)')+'</option>';
+      }).join('')+'</optgroup>';
+    }).join('');
+  var rel=freightRelevantRates(d),seenExtra={};
+  var extras=rel.filter(function(r){if(r.applies!=='optional'||seenExtra[r.charge_name]) return false;seenExtra[r.charge_name]=1;return true;});
+  var o=d.options,fields=[];
+  function numField(label,val,handler,step){return '<div style="width:130px"><label class="form-label">'+label+'</label><input class="form-input" type="number" min="0" step="'+step+'" value="'+escHtml(String(val==null?'':val))+'" oninput="'+handler+'"></div>';}
+  if(rel.some(function(r){return r.basis==='per_truck'&&r.applies==='input';})) fields.push(numField('Truck deliveries',o.trucks,"freightSetOption('trucks',this.value)",1));
+  if(rel.some(function(r){return r.basis==='per_edn'&&r.applies==='input';})) fields.push(numField('EDNs',o.edns,"freightSetOption('edns',this.value)",1));
+  if(rel.some(function(r){return r.basis==='weight_break';})) fields.push('<div style="width:150px"><label class="form-label">Air cargo class</label><select class="form-input" onchange="freightSetOption(\'cargo_class\',this.value)"><option value="general"'+(o.cargo_class==='general'?' selected':'')+'>General</option><option value="perishable"'+(o.cargo_class==='perishable'?' selected':'')+'>Perishable</option></select></div>');
+  if(rel.some(function(r){return r.currency==='USD';})) fields.push(numField('USD to AUD',o.usd_aud,"freightSetOption('usd_aud',this.value)",'0.0001'));
+  var extraHtml=extras.length?'<div style="margin-top:12px"><div class="form-label">Optional extras (quantity)</div><div style="display:flex;gap:10px;flex-wrap:wrap">'
+    +extras.map(function(r){
+      return '<div style="width:170px"><label style="font-size:11px;color:var(--text-secondary);display:block;margin-bottom:3px;min-height:28px">'+escHtml(r.charge_name)+'</label><input class="form-input" type="number" min="0" step="1" data-extra="'+escHtml(r.charge_name)+'" value="'+escHtml(String(o.extras[r.charge_name]||''))+'" oninput="freightSetExtra(this)"></div>';
+    }).join('')+'</div></div>':'';
+  var cargoRows=d.cargo.map(function(c,i){
+    function cell(f,w){return '<td style="width:'+w+'px"><input type="number" min="0" step="any" value="'+escHtml(String(c[f]==null?'':c[f]))+'" oninput="freightSetCargo('+i+',\''+f+'\',this.value)"></td>';}
+    return '<tr><td><input value="'+escHtml(c.description||'')+'" placeholder="Description" oninput="freightSetCargo('+i+',\'description\',this.value)"></td>'
+      +'<td><input list="fc-lead-list" value="'+escHtml(c.lead_label||'')+'" placeholder="Optional" onchange="freightSetLead('+i+',this)"></td>'
+      +cell('pieces',60)+cell('l',70)+cell('w',70)+cell('h',70)+cell('kg',80)
+      +'<td style="text-align:center;width:50px"><input type="checkbox" style="width:auto" title="Hazardous"'+(c.hazardous?' checked':'')+' onchange="freightSetCargo('+i+',\'hazardous\',this.checked)"></td>'
+      +'<td style="width:40px"><button class="btn btn-danger btn-sm" title="Remove line" onclick="freightRemoveLine('+i+')"><i class="ti ti-trash"></i></button></td></tr>';
+  }).join('');
+  el.innerHTML='<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">'
+    +'<button class="btn" onclick="freightBack()"><i class="ti ti-arrow-left"></i> Consignments</button>'
+    +'<input class="form-input" style="flex:1;min-width:220px" placeholder="Consignment name, e.g. Coral Chief Nov" value="'+escHtml(d.name)+'" oninput="freightSetName(this.value)">'
+    +'<button class="btn btn-primary" onclick="freightSave(false)"><i class="ti ti-device-floppy"></i> Save</button>'
+    +(d.id?'<button class="btn" onclick="freightSave(true)"><i class="ti ti-copy"></i> Save as new</button><button class="btn btn-danger" onclick="freightDelete()"><i class="ti ti-trash"></i> Delete</button>':'')
+    +'</div>'
+    +'<div style="overflow-x:auto"><table class="line-items-table" style="min-width:820px;margin-bottom:8px"><thead><tr><th>Cargo</th><th>Lead</th><th>Pieces</th><th>L cm</th><th>W cm</th><th>H cm</th><th>kg/piece</th><th>Haz</th><th></th></tr></thead><tbody>'+cargoRows+'</tbody></table></div>'
+    +'<datalist id="fc-lead-list">'+freightLeadOptions().map(function(x){return '<option value="'+escHtml(x.label)+'"></option>';}).join('')+'</datalist>'
+    +'<button class="btn btn-sm" style="margin-bottom:16px" onclick="freightAddLine()"><i class="ti ti-plus"></i> Add cargo line</button>'
+    +'<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end"><div style="width:220px"><label class="form-label">Forwarder</label><select class="form-input" onchange="freightSetCarrier(this.value)">'+carrierOpts+'</select></div>'+fields.join('')+'</div>'
+    +extraHtml
+    +'<div id="fc-results" style="margin-top:20px"></div>';
+  freightRenderResults();
+}
+
+function freightWarnHtml(list){
+  if(!list.length) return '';
+  return '<div style="background:rgba(180,83,9,0.06);border:0.5px solid rgba(180,83,9,0.4);border-radius:var(--radius-md);padding:10px 13px;margin-bottom:10px;font-size:12px;color:#b45309">'
+    +list.map(function(w){return '<div><i class="ti ti-alert-triangle"></i> '+escHtml(w)+'</div>';}).join('')+'</div>';
+}
+function freightAsOf(c){
+  if(!c.rates_from) return '';
+  return c.rates_from===c.rates_to?freightDate(c.rates_from):freightDate(c.rates_from)+' to '+freightDate(c.rates_to);
+}
+function freightSingleHtml(c){
+  var rows=c.lines.map(function(l){
+    return '<tr><td style="padding:6px 8px">'+escHtml(l.charge)+'</td><td style="padding:6px 8px;color:var(--text-secondary)">'+escHtml(l.how)+'</td><td style="padding:6px 8px;text-align:center">'+(l.gst?'10%':'&#8212;')+'</td><td style="padding:6px 8px;text-align:right">'+fmtAud(l.amount)+'</td></tr>';
+  }).join('');
+  var split=c.split.length?'<div style="font-size:13px;font-weight:600;margin:16px 0 6px">Split by lead (ex GST)</div><div style="overflow-x:auto"><table class="line-items-table" style="min-width:420px"><thead><tr><th>Lead</th><th style="text-align:right">Share of '+(c.mode==='air'?'chargeable weight':'chargeable volume')+'</th><th style="text-align:right">Amount</th></tr></thead><tbody>'
+    +c.split.map(function(s){return '<tr><td style="padding:6px 8px">'+escHtml(s.label)+'</td><td style="padding:6px 8px;text-align:right">'+(s.share*100).toFixed(1)+'%</td><td style="padding:6px 8px;text-align:right;font-weight:600">'+fmtAud(s.amount)+'</td></tr>';}).join('')+'</tbody></table></div>':'';
+  return freightWarnHtml(c.warnings)
+    +'<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:6px"><div style="font-size:14px;font-weight:600">'+escHtml(freightCarrierName(c.carrier))+' &#8212; '+freightTrim(c.chargeable,3)+' '+c.unit+' chargeable</div>'
+    +'<div style="font-size:12px;color:var(--text-secondary)">'+freightTrim(c.actual_kg,2)+' kg actual, '+freightTrim(c.volume_m3,3)+' m&sup3;'+(freightAsOf(c)?' &middot; Rates as of '+freightAsOf(c):'')+'</div></div>'
+    +'<div style="overflow-x:auto"><table class="line-items-table" style="min-width:560px"><thead><tr><th>Charge</th><th>Calculation</th><th style="text-align:center">GST</th><th style="text-align:right">Amount</th></tr></thead><tbody>'+rows+'</tbody></table></div>'
+    +'<div style="max-width:300px;margin-left:auto;font-size:13px"><div style="display:flex;justify-content:space-between;padding:3px 0"><span>Subtotal ex GST (cost)</span><strong>'+fmtAud(c.ex)+'</strong></div>'
+    +'<div style="display:flex;justify-content:space-between;padding:3px 0;color:var(--text-secondary)"><span>Forwarder GST (information only)</span><span>'+fmtAud(c.gst)+'</span></div>'
+    +'<div style="display:flex;justify-content:space-between;padding:3px 0"><span>Total inc GST</span><span>'+fmtAud(c.inc)+'</span></div></div>'
+    +split;
+}
+function freightCompareHtml(r){
+  var rows=r.carriers.map(function(c){
+    var best=c.carrier===r.cheapest;
+    return '<tr style="'+(best?'background:var(--green-light)':'')+'"><td style="padding:8px;font-weight:600">'+escHtml(freightCarrierName(c.carrier))+(best?' <span style="font-size:11px;color:var(--green)">cheapest</span>':'')+'</td>'
+      +'<td style="padding:8px">'+(c.mode==='air'?'Air':'Sea')+'</td>'
+      +'<td style="padding:8px;text-align:right">'+freightTrim(c.chargeable,3)+' '+c.unit+'</td>'
+      +'<td style="padding:8px;text-align:right;font-weight:600">'+fmtAud(c.ex)+'</td>'
+      +'<td style="padding:8px;text-align:right">'+fmtAud(c.gst)+'</td>'
+      +'<td style="padding:8px;text-align:right">'+fmtAud(c.inc)+'</td>'
+      +'<td style="padding:8px">'+freightAsOf(c)+'</td>'
+      +'<td style="padding:8px"><button class="btn btn-sm" onclick="freightSetCarrier(\''+c.carrier+'\')">Use</button></td></tr>';
+  }).join('');
+  var warn=[];
+  r.carriers.forEach(function(c){c.warnings.forEach(function(w){warn.push(freightCarrierName(c.carrier)+': '+w);});});
+  return freightWarnHtml(warn)
+    +'<div style="overflow-x:auto"><table class="line-items-table" style="min-width:680px"><thead><tr><th>Forwarder</th><th>Mode</th><th style="text-align:right">Chargeable</th><th style="text-align:right">Ex GST</th><th style="text-align:right">GST</th><th style="text-align:right">Inc GST</th><th>Rates as of</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>'
+    +'<div style="font-size:12px;color:var(--text-secondary)">Choose a forwarder to see the line-by-line breakdown and split by lead.</div>';
+}
+function freightCargoWarnings(d){
+  var w=[];
+  d.cargo.forEach(function(c,i){
+    var m=freightMeasure(c,FREIGHT_VOL_FALLBACK);
+    if(!(m.kg>0)&&!(m.m3>0)) return;
+    if(!(m.kg>0)||!(m.m3>0)) w.push('Cargo line '+(i+1)+' is missing '+(m.kg>0?'dimensions':'a weight')+', so its chargeable amount may be understated.');
+  });
+  return w;
+}
+function freightRenderResults(){
+  var d=freightDraft,el=document.getElementById('fc-results');
+  if(!d||!el) return;
+  var r=(d.frozen&&d.saved)?d.saved:freightBuildResult(d);
+  var banner=d.notice?'<div style="background:rgba(180,83,9,0.06);border:0.5px solid rgba(180,83,9,0.4);border-radius:var(--radius-md);padding:10px 13px;margin-bottom:10px;font-size:13px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+    +'<div style="flex:1;min-width:220px"><strong>Rates have changed since this was saved:</strong> was '+fmtAud(d.notice.was)+', now '+fmtAud(d.notice.now)+' (inc GST).'+(d.frozen?' Showing the saved figures.':'')+'</div>'
+    +(d.frozen?'<button class="btn btn-sm btn-primary" onclick="freightUseCurrent()">Use current rates</button>':'<button class="btn btn-sm" onclick="freightKeepSaved()">Back to saved figures</button>')+'</div>':'';
+  var hasCargo=d.cargo.some(function(c){var m=freightMeasure(c,FREIGHT_VOL_FALLBACK);return m.kg>0||m.m3>0;});
+  if(!hasCargo){el.innerHTML=banner+'<div class="empty-state"><i class="ti ti-calculator"></i> Enter cargo to see the freight cost</div>';return;}
+  if(!r.carriers.length){el.innerHTML=banner+'<div class="empty-state"><i class="ti ti-alert-circle"></i> No rates on file for this forwarder</div>';return;}
+  el.innerHTML=banner+freightWarnHtml(freightCargoWarnings(d))+(r.compare?freightCompareHtml(r):freightSingleHtml(r.carriers[0]));
+}
+function freightChanged(){
+  var d=freightDraft;
+  d.dirty=true;
+  if(d.frozen||d.notice){d.frozen=false;d.notice=null;}
+  freightRenderResults();
+}
+function freightSetName(v){freightDraft.name=v;freightDraft.dirty=true;}
+function freightSetCargo(i,f,v){freightDraft.cargo[i][f]=v;freightChanged();}
+function freightSetOption(k,v){freightDraft.options[k]=v;freightChanged();}
+function freightSetExtra(input){freightDraft.options.extras[input.getAttribute('data-extra')]=input.value;freightChanged();}
+function freightSetLead(i,input){
+  var c=freightDraft.cargo[i],txt=input.value.trim();
+  var hit=freightLeadOptions().find(function(x){return x.label===txt;});
+  if(txt&&!hit){toast('Pick a lead from the list','error');input.value=c.lead_label||'';return;}
+  c.lead_id=hit?hit.id:null;c.lead_label=hit?hit.label:'';
+  freightChanged();
+}
+function freightSetCarrier(v){freightDraft.carrier=v;freightDraft.dirty=true;freightDraft.frozen=false;freightDraft.notice=null;freightRenderEditor();}
+function freightAddLine(){freightDraft.cargo.push(freightBlankLine());freightDraft.dirty=true;freightDraft.frozen=false;freightDraft.notice=null;freightRenderEditor();}
+function freightRemoveLine(i){
+  freightDraft.cargo.splice(i,1);
+  if(!freightDraft.cargo.length) freightDraft.cargo.push(freightBlankLine());
+  freightDraft.dirty=true;freightDraft.frozen=false;freightDraft.notice=null;
+  freightRenderEditor();
+}
+function freightUseCurrent(){freightDraft.frozen=false;freightDraft.dirty=true;freightRenderResults();}
+function freightKeepSaved(){freightDraft.frozen=true;freightRenderResults();}
+function freightBack(){
+  if(freightDraft&&freightDraft.dirty&&!confirm('Leave without saving your changes?')) return;
+  freightDraft=null;
+  renderFreightCalc();
+}
+async function freightSave(asNew){
+  var d=freightDraft;
+  if(!d||freightSaving) return;
+  var name=d.name.trim();
+  if(!name){toast('Give the consignment a name first','error');return;}
+  var result=(d.frozen&&d.saved)?d.saved:freightBuildResult(d);
+  var single=d.carrier==='compare'?null:d.carrier;
+  var isCopy=asNew||!d.id;
+  if(asNew&&d.id){
+    var orig=freightConsignments.find(function(c){return c.id===d.id;});
+    if(orig&&orig.name===name) name+=' (copy)';
+  }
+  var body={name:name,carrier:single,mode:single&&result.carriers[0]?result.carriers[0].mode:null,cargo:d.cargo,options:d.options,result:result,updated_at:new Date().toISOString()};
+  freightSaving=true;
+  try{
+    var res;
+    if(isCopy){body.status='draft';res=await sbWrite('freight_consignments',{method:'POST',body:JSON.stringify(body),prefer:'return=representation'});}
+    else res=await sbWrite('freight_consignments?id=eq.'+encodeURIComponent(d.id),{method:'PATCH',body:JSON.stringify(body),prefer:'return=representation'});
+    var rows=await res.json();
+    if(!rows||!rows.length) throw new Error('Nothing was saved');
+    d.id=rows[0].id;d.name=name;d.status=rows[0].status||'draft';d.saved=result;d.frozen=false;d.notice=null;d.dirty=false;
+    var at=freightConsignments.findIndex(function(c){return c.id===rows[0].id;});
+    if(at>=0) freightConsignments[at]=rows[0]; else freightConsignments.unshift(rows[0]);
+    freightRenderEditor();
+    toast('Consignment saved');
+  }catch(e){toast('Could not save: '+e.message,'error');}
+  freightSaving=false;
+}
+async function freightDelete(){
+  var d=freightDraft;
+  if(!d||!d.id) return;
+  if(!confirm('Delete "'+(d.name||'this consignment')+'"? This cannot be undone.')) return;
+  try{
+    await sbWrite('freight_consignments?id=eq.'+encodeURIComponent(d.id),{method:'DELETE'});
+    freightDraft=null;
+    toast('Consignment deleted');
+    renderFreightCalc();
+  }catch(e){toast('Could not delete: '+e.message,'error');}
+}
 </script>
 </body>
 </html>

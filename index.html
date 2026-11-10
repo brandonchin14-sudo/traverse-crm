@@ -4657,7 +4657,7 @@ function renderPricingStep(el){
       +'<td><input class="form-input" style="font-size:12px;width:75px;text-align:right;color:var(--text-secondary)" type="number" step="0.01" value="'+(Number(item.cost)||0)+'" oninput="updateLineField('+i+',String.fromCharCode(99,111,115,116),this.value)" title="Supplier cost (ex GST)"></td>'
       +'<td><input class="form-input" id="rate-'+i+'" style="font-size:12px;width:80px;text-align:right;font-weight:600'+(locked?';border-color:var(--amber)':'')+'" type="number" step="0.01" value="'+(Number(item.rate)||0).toFixed(2)+'" oninput="updateLineField('+i+',String.fromCharCode(114,97,116,101),this.value)" title="'+(locked?'Manually set - excluded from markup':'Sell rate')+'"></td>'
       +'<td style="text-align:right;padding:6px 8px" id="lineamt-'+i+'">A$'+(((item.quantity||1)*(item.rate||0))).toFixed(2)+'</td>'
-      +'<td style="text-align:center">'+(locked?'<i class="ti ti-lock" style="color:var(--amber);font-size:13px" title="Manual rate"></i> <button class="btn btn-sm" style="padding:1px 5px;font-size:10px" onclick="unlockLine('+i+')">unlock</button>':'<span style="color:var(--text-tertiary);font-size:11px">auto</span>')+'</td>'
+      +'<td style="text-align:center">'+(item.freight_consignment_id?freightGstTickHtml(item,i):'')+(locked?'<i class="ti ti-lock" style="color:var(--amber);font-size:13px" title="Manual rate"></i> <button class="btn btn-sm" style="padding:1px 5px;font-size:10px" onclick="unlockLine('+i+')">unlock</button>':'<span style="color:var(--text-tertiary);font-size:11px">auto</span>')+'</td>'
       +'<td><button class="btn btn-danger btn-sm" onclick="removeLineItem('+i+')"><i class="ti ti-trash"></i></button></td>'
       +'</tr>';
   }).join('');
@@ -4684,6 +4684,7 @@ function renderPricingStep(el){
     +'<th>Item</th><th>Description</th><th style="text-align:right">Qty</th><th style="text-align:right">Cost</th><th style="text-align:right">Rate (sell)</th><th style="text-align:right">Amount</th><th style="text-align:center">Status</th><th></th>'
     +'</tr></thead><tbody id="liTbody">'+itemRows+'</tbody></table>'
     +'<button class="btn btn-sm" style="margin-bottom:12px" onclick="addLineItem()"><i class="ti ti-plus"></i> Add item</button>'
+    +((currentQuote.quote_type||'goods')==='freight'?' <button class="btn btn-sm" style="margin-bottom:12px" onclick="freightFromQuote()" title="Opens the Freight tab. Save any changes here first."><i class="ti ti-calculator"></i> Calculate freight</button>':'')
     +(isProjectLead()&&(currentQuote.quote_type||'goods')!=='freight'
       ?(boqPick&&boqPick.mode==='append'
         ?'<div id="boq-picker" style="margin:0 0 12px">'+boqPickerHtml()+'</div>'
@@ -4692,7 +4693,7 @@ function renderPricingStep(el){
     // Markup box
     +'<div style="background:rgba(124,58,237,0.06);border:1px solid rgba(124,58,237,0.2);border-radius:var(--radius-md);padding:12px 14px;margin-bottom:12px">'
     +'<div style="font-size:12px;font-weight:700;color:var(--purple);margin-bottom:6px"><i class="ti ti-percentage"></i> Pricing Formula</div>'
-    +'<div style="font-size:11px;color:var(--text-secondary);margin-bottom:8px">Each rate = Cost + 10% GST + your markup %. Manually edited rates (locked) are not changed.</div>'
+    +'<div style="font-size:11px;color:var(--text-secondary);margin-bottom:8px">Each rate = Cost + 10% GST + your markup %. Manually edited rates (locked) are not changed.'+(currentLineItems.some(function(x){return x.freight_consignment_id;})?' Lines from the Freight tab are Cost + markup %, with GST added separately.':'')+'</div>'
     +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
     +'<span style="font-size:13px">Markup %</span>'
     +'<input class="form-input" id="markup-pct" type="number" step="0.1" style="width:90px;text-align:right" value="'+(markup||'')+'" placeholder="e.g. 15">'
@@ -4701,8 +4702,9 @@ function renderPricingStep(el){
     +'</div>'
     +'</div>'
     +'<div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:10px 14px">'
-    +'<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>Subtotal (GST incl.)</span><span id="ps-subtotal">A$'+sub.toFixed(2)+'</span></div>'
-    +'<div style="display:flex;justify-content:space-between;font-weight:700;font-size:15px;border-top:0.5px solid var(--border-t);padding-top:8px;margin-top:6px"><span>Total</span><span id="ps-total" style="color:var(--accent)">A$'+sub.toFixed(2)+'</span></div>'
+    +'<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span id="ps-subtotal-label">'+(gst>0?'Subtotal ex GST':'Subtotal (GST incl.)')+'</span><span id="ps-subtotal">A$'+sub.toFixed(2)+'</span></div>'
+    +'<div id="ps-gst-row" style="display:'+(gst>0?'flex':'none')+';justify-content:space-between;font-size:13px;margin-bottom:4px"><span>GST</span><span id="ps-gst">A$'+gst.toFixed(2)+'</span></div>'
+    +'<div style="display:flex;justify-content:space-between;font-weight:700;font-size:15px;border-top:0.5px solid var(--border-t);padding-top:8px;margin-top:6px"><span>Total</span><span id="ps-total" style="color:var(--accent)">A$'+total.toFixed(2)+'</span></div>'
     +'</div>';
   // hidden gst total ref for compatibility
   var sdz=document.getElementById('scan-dropzone-pricing');
@@ -4734,8 +4736,12 @@ function recalcTotalsInPlace(i){
     if(amtEl) amtEl.textContent='A$'+((it.quantity||0)*(it.rate||0)).toFixed(2);
   }
   var sub=currentLineItems.reduce(function(s,x){return s+(x.quantity||0)*(x.rate||0);},0);
+  var gst=currentLineItems.reduce(function(s,x){return s+(x.gst_applicable?(x.quantity||0)*(x.rate||0)*0.1:0);},0);
   var subEl=document.getElementById('ps-subtotal');if(subEl)subEl.textContent='A$'+sub.toFixed(2);
-  var totEl=document.getElementById('ps-total');if(totEl)totEl.textContent='A$'+sub.toFixed(2);
+  var subLbl=document.getElementById('ps-subtotal-label');if(subLbl)subLbl.textContent=gst>0?'Subtotal ex GST':'Subtotal (GST incl.)';
+  var gstRow=document.getElementById('ps-gst-row');if(gstRow)gstRow.style.display=gst>0?'flex':'none';
+  var gstEl=document.getElementById('ps-gst');if(gstEl)gstEl.textContent='A$'+gst.toFixed(2);
+  var totEl=document.getElementById('ps-total');if(totEl)totEl.textContent='A$'+(sub+gst).toFixed(2);
 }
 
 function markLineLocked(i){
@@ -4752,6 +4758,8 @@ function applyMarkup(){
   currentLineItems.forEach(function(it){
     if(it.manual===true) return; // keep manual overrides
     var cost=Number(it.cost)||0;
+    /* Freight Calculator lines charge GST as its own line, so it is not built into the rate. */
+    if(it.freight_consignment_id){it.rate=Math.round(cost*(1+markup/100)*100)/100;changed++;return;}
     it.rate=Math.round(cost*factor*100)/100;
     it.gst_applicable=false; // GST baked into price
     changed++;
@@ -4766,7 +4774,7 @@ function unlockLine(i){
   // recompute this line from cost using current markup
   var markup=parseFloat(currentQuote.markup_pct)||0;
   var cost=Number(currentLineItems[i].cost)||0;
-  currentLineItems[i].rate=Math.round(cost*1.10*(1+markup/100)*100)/100;
+  currentLineItems[i].rate=Math.round(cost*(currentLineItems[i].freight_consignment_id?1:1.10)*(1+markup/100)*100)/100;
   renderPricingStep(document.getElementById('dtab-quote'));
 }
 function addLineItem(){currentLineItems.push({item_name:'',description:'',quantity:1,cost:0,rate:0,gst_applicable:false,manual:false,amount:0});renderPricingStep(document.getElementById('dtab-quote'));}
@@ -4890,7 +4898,8 @@ async function saveQuoteChanges(){
           quantity:Number(item.quantity)||1,cost:Number(item.cost)||0,rate:Number(item.rate)||0,
           gst_applicable:item.gst_applicable===true,manual:item.manual===true,
           amount:(Number(item.quantity)||1)*(Number(item.rate)||0),sort_order:i,
-          boq_item_id:item.boq_item_id||null,boq_qty:item.boq_item_id&&item.boq_qty!=null?Number(item.boq_qty):null};
+          boq_item_id:item.boq_item_id||null,boq_qty:item.boq_item_id&&item.boq_qty!=null?Number(item.boq_qty):null,
+          freight_consignment_id:item.freight_consignment_id||null};
       }))});
     }
     await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:currentLead.id,action:'Quote amended',
@@ -4935,7 +4944,7 @@ async function sendQuoteToClient(){
     if(currentLineItems.length>0){
       /* Lines are rewritten on every send, so boq_item_id and boq_qty must be carried or a
          project quote would silently lose its link to the BOQ the first time it is sent. */
-      var ins=currentLineItems.map(function(item,i){return {quote_id:currentQuote.id,item_name:item.item_name||'',description:item.description||'',quantity:Number(item.quantity)||1,cost:Number(item.cost)||0,rate:Number(item.rate)||0,gst_applicable:item.gst_applicable===true,manual:item.manual===true,amount:(Number(item.quantity)||1)*(Number(item.rate)||0),sort_order:i,boq_item_id:item.boq_item_id||null,boq_qty:item.boq_item_id&&item.boq_qty!=null?Number(item.boq_qty):null};});
+      var ins=currentLineItems.map(function(item,i){return {quote_id:currentQuote.id,item_name:item.item_name||'',description:item.description||'',quantity:Number(item.quantity)||1,cost:Number(item.cost)||0,rate:Number(item.rate)||0,gst_applicable:item.gst_applicable===true,manual:item.manual===true,amount:(Number(item.quantity)||1)*(Number(item.rate)||0),sort_order:i,boq_item_id:item.boq_item_id||null,boq_qty:item.boq_item_id&&item.boq_qty!=null?Number(item.boq_qty):null,freight_consignment_id:item.freight_consignment_id||null};});
       await sbWrite('quote_line_items',{method:'POST',body:JSON.stringify(ins)});
     }
     if(btn) btn.innerHTML='<i class="ti ti-loader"></i> Sending...';
@@ -7410,14 +7419,76 @@ function freightSplit(cargo,mode,divisor,exC){
     by[k].weight+=w;total+=w;
   });
   if(!(total>0)) return [];
-  var out=order.map(function(k){var b=by[k],raw=exC*b.weight/total,c=Math.floor(Number(raw.toFixed(6)));return {lead_id:b.lead_id,label:b.label,weight:b.weight,share:b.weight/total,c:c,rem:raw-c};});
+  var out=order.map(function(k){var b=by[k],raw=exC*b.weight/total,c=Math.floor(Number(raw.toFixed(6)));return {lead_id:b.lead_id,label:b.label,weight:b.weight,qty:b.weight,share:b.weight/total,c:c,rem:raw-c};});
   var left=exC-out.reduce(function(s,x){return s+x.c;},0);
   out.slice().sort(function(a,b){return b.rem-a.rem;}).slice(0,left).forEach(function(x){x.c++;});
-  return out.map(function(x){return {lead_id:x.lead_id,label:x.label,share:x.share,amount:x.c/100};});
+  return out.map(function(x){return {lead_id:x.lead_id,label:x.label,share:x.share,qty:x.qty,amount:x.c/100};});
+}
+/* Freight lines are priced ex GST: cost + markup, with GST as its own line. */
+function freightSellRate(cost,markup){return Math.round(cost*(1+(Number(markup)||0)/100)*100)/100;}
+function freightQuoteLocked(q,invoiced){return q.status==='invoiced'||!!q.qb_invoice_id||!!invoiced[q.id];}
+/* Decides what a send would do to each quote. Writes nothing.
+   o: {carrier, split, leads, quotes (freight quotes of every lead involved), lines (lines
+   already linked to this consignment), invoiced {quote_id:1}, goodsMarkup {lead_id:n}, sentLines}. */
+function freightPlanSend(o){
+  var rows=[],quoteById={},linesByLead={};
+  o.quotes.forEach(function(q){quoteById[q.id]=q;});
+  o.lines.forEach(function(l){var q=quoteById[l.quote_id];if(!q) return;(linesByLead[q.lead_id]=linesByLead[q.lead_id]||[]).push(l);});
+  function locked(q){return freightQuoteLocked(q,o.invoiced);}
+  function reopens(q){return !!q&&(q.status==='sent'||q.status==='approved');}
+  function markupFor(lead,q,line){
+    var m=q?Number(q.markup_pct)||0:0;
+    if(m>0) return {value:m,editable:false};
+    if(line) return {value:0,editable:true};
+    var g=Number(o.goodsMarkup[lead])||0;
+    return {value:g>0?g:null,editable:true};
+  }
+  function removal(lead,label,l){
+    var q=quoteById[l.quote_id];
+    if(locked(q)) rows.push({kind:'blocked',lead_id:lead,label:label,quote:q,note:'Quote is invoiced, so its freight line was left alone. This lead is no longer on the consignment.'});
+    else rows.push({kind:'remove',lead_id:lead,label:label,quote:q,line:l,reopen:reopens(q),cost:0,note:'No longer on this consignment: its freight line comes off the quote.'});
+  }
+  var inSplit={};
+  o.split.forEach(function(s){
+    if(!s.lead_id) return;
+    inSplit[s.lead_id]=1;
+    var lead=o.leads.find(function(l){return l.id===s.lead_id;});
+    var name='Freight — '+o.carrier.name+(s.qty!=null?', '+freightTrim(s.qty,3)+' '+o.carrier.unit:'');
+    var base={lead_id:s.lead_id,label:s.label,cost:s.amount,item_name:name};
+    if(!lead){rows.push(Object.assign(base,{kind:'blocked',note:'This lead no longer exists.'}));return;}
+    var all=linesByLead[s.lead_id]||[];
+    var line=all.find(function(l){return !locked(quoteById[l.quote_id]);})||all[0]||null;
+    all.forEach(function(l){if(l!==line) removal(s.lead_id,s.label,l);});
+    var mine=o.quotes.filter(function(q){return q.lead_id===s.lead_id;});
+    var q=line?quoteById[line.quote_id]:null,kind;
+    if(q&&locked(q)){rows.push(Object.assign(base,{kind:'blocked',quote:q,note:'Quote is invoiced, so its freight line was left alone.'}));return;}
+    if(q) kind='update';
+    else{
+      var open=mine.filter(function(x){return !locked(x);});
+      if(open.length){q=open[open.length-1];kind='add';}
+      else if(!mine.length||lead.lead_type==='project') kind='create';
+      else{rows.push(Object.assign(base,{kind:'blocked',quote:mine[mine.length-1],note:'Its only freight quote is invoiced, and this lead can only have one.'}));return;}
+    }
+    var mk=markupFor(s.lead_id,q,line),manual=!!(line&&line.manual);
+    var r=Object.assign(base,{kind:kind,lead:lead,quote:q,line:line,markup:mk.value,markupEditable:mk.editable,manual:manual,
+      gst:line?line.gst_applicable===true:true,reopen:reopens(q),note:''});
+    if(kind==='add'&&o.sentLines&&o.sentLines[s.lead_id]&&o.sentLines[s.lead_id].quote_id===q.id) r.note='Its freight line had been removed from the quote, so it will be added back.';
+    if(kind==='create') r.note='New freight quote.';
+    if(manual) r.note='Price was set by hand, so only the cost is updated.';
+    r.rate=manual?Number(line.rate)||0:(r.markup==null?null:freightSellRate(r.cost,r.markup));
+    if(kind==='update'&&r.rate!=null&&Math.round(Number(line.cost)*100)===Math.round(r.cost*100)&&Math.round(Number(line.rate)*100)===Math.round(r.rate*100)&&line.item_name===name){r.kind='same';r.reopen=false;r.note='Already up to date.';}
+    rows.push(r);
+  });
+  Object.keys(linesByLead).forEach(function(k){
+    if(inSplit[k]) return;
+    var ld=o.leads.find(function(l){return l.id===k;});
+    linesByLead[k].forEach(function(l){removal(k,ld?freightLeadLabel(ld):'Removed lead',l);});
+  });
+  return rows;
 }
 /*FREIGHT-ENGINE-END*/
 
-var freightRates=[],freightUsdAud=null,freightConsignments=[],freightDraft=null,freightSaving=false;
+var freightRates=[],freightUsdAud=null,freightConsignments=[],freightDraft=null,freightSaving=false,freightPending=null,freightSending=false;
 
 function freightCarrierName(id){
   var name=id;
@@ -7459,6 +7530,19 @@ async function renderFreightCalc(){
     var s=await res[1].json();
     freightUsdAud=s.length?Number(s[0].usd_aud_rate):null;
     freightConsignments=await res[2].json();
+    if(freightPending){
+      var p=freightPending;freightPending=null;
+      if(p.id){
+        var at=freightConsignments.findIndex(function(c){return c.id===p.id;});
+        if(at>=0){freightOpen(at);return;}
+        toast('That consignment no longer exists','error');
+      }else{
+        freightNew();
+        var pick=freightLeadOptions().find(function(x){return x.id===p.lead_id;});
+        if(pick){freightDraft.cargo[0].lead_id=pick.id;freightDraft.cargo[0].lead_label=pick.label;freightRenderEditor();}
+        return;
+      }
+    }
     if(freightDraft) freightRenderEditor(); else freightRenderList();
   }catch(e){
     el.innerHTML='<div class="empty-state"><i class="ti ti-alert-circle"></i> '+escHtml(e.message||'Could not load freight data')+'</div>';
@@ -7491,7 +7575,7 @@ function freightRenderList(){
 }
 
 function freightNew(){
-  freightDraft={id:null,name:'',carrier:'compare',cargo:[freightBlankLine()],options:{trucks:1,edns:1,cargo_class:'general',extras:{},usd_aud:freightUsdAud},status:'draft',frozen:false,saved:null,notice:null,dirty:false};
+  freightDraft={id:null,name:'',carrier:'compare',cargo:[freightBlankLine()],options:{trucks:1,edns:1,cargo_class:'general',extras:{},usd_aud:freightUsdAud},status:'draft',sent_lines:{},frozen:false,saved:null,notice:null,dirty:false,sendPlan:null};
   freightRenderEditor();
 }
 
@@ -7499,7 +7583,7 @@ function freightOpen(i){
   var c=freightConsignments[i];
   if(!c) return;
   var o=Object.assign({trucks:1,edns:1,cargo_class:'general',extras:{},usd_aud:freightUsdAud},JSON.parse(JSON.stringify(c.options||{})));
-  freightDraft={id:c.id,name:c.name||'',carrier:c.carrier||'compare',cargo:JSON.parse(JSON.stringify(c.cargo||[])),options:o,status:c.status||'draft',frozen:false,saved:c.result||null,notice:null,dirty:false};
+  freightDraft={id:c.id,name:c.name||'',carrier:c.carrier||'compare',cargo:JSON.parse(JSON.stringify(c.cargo||[])),options:o,status:c.status||'draft',sent_lines:JSON.parse(JSON.stringify(c.sent_lines||{})),frozen:false,saved:c.result||null,notice:null,dirty:false,sendPlan:null};
   if(!freightDraft.cargo.length) freightDraft.cargo.push(freightBlankLine());
   var now=freightBuildResult(freightDraft);
   if(c.result&&c.result.total_inc!=null&&Math.abs(c.result.total_inc-now.total_inc)>0.005){
@@ -7555,7 +7639,9 @@ function freightRenderEditor(){
     +'<input class="form-input" style="flex:1;min-width:220px" placeholder="Consignment name, e.g. Coral Chief Nov" value="'+escHtml(d.name)+'" oninput="freightSetName(this.value)">'
     +'<button class="btn btn-primary" onclick="freightSave(false)"><i class="ti ti-device-floppy"></i> Save</button>'
     +(d.id?'<button class="btn" onclick="freightSave(true)"><i class="ti ti-copy"></i> Save as new</button><button class="btn btn-danger" onclick="freightDelete()"><i class="ti ti-trash"></i> Delete</button>':'')
+    +(d.id&&d.carrier!=='compare'?'<button class="btn btn-green" onclick="freightPrepareSend()"><i class="ti ti-send"></i> '+(d.status==='sent'?'Re-send':'Send')+' to quotes</button>':'')
     +'</div>'
+    +'<div id="fc-send"></div>'
     +'<div style="overflow-x:auto"><table class="line-items-table" style="min-width:820px;margin-bottom:8px"><thead><tr><th>Cargo</th><th>Lead</th><th>Pieces</th><th>L cm</th><th>W cm</th><th>H cm</th><th>kg/piece</th><th>Haz</th><th></th></tr></thead><tbody>'+cargoRows+'</tbody></table></div>'
     +'<datalist id="fc-lead-list">'+freightLeadOptions().map(function(x){return '<option value="'+escHtml(x.label)+'"></option>';}).join('')+'</datalist>'
     +'<button class="btn btn-sm" style="margin-bottom:16px" onclick="freightAddLine()"><i class="ti ti-plus"></i> Add cargo line</button>'
@@ -7563,6 +7649,8 @@ function freightRenderEditor(){
     +extraHtml
     +'<div id="fc-results" style="margin-top:20px"></div>';
   freightRenderResults();
+  if(d.dirty) d.sendPlan=null;
+  freightRenderSend();
 }
 
 function freightWarnHtml(list){
@@ -7628,13 +7716,15 @@ function freightRenderResults(){
   if(!r.carriers.length){el.innerHTML=banner+'<div class="empty-state"><i class="ti ti-alert-circle"></i> No rates on file for this forwarder</div>';return;}
   el.innerHTML=banner+freightWarnHtml(freightCargoWarnings(d))+(r.compare?freightCompareHtml(r):freightSingleHtml(r.carriers[0]));
 }
+function freightDropSend(){freightDraft.sendPlan=null;freightDraft.sendReport=null;freightRenderSend();}
 function freightChanged(){
   var d=freightDraft;
   d.dirty=true;
+  freightDropSend();
   if(d.frozen||d.notice){d.frozen=false;d.notice=null;}
   freightRenderResults();
 }
-function freightSetName(v){freightDraft.name=v;freightDraft.dirty=true;}
+function freightSetName(v){freightDraft.name=v;freightDraft.dirty=true;freightDropSend();}
 function freightSetCargo(i,f,v){freightDraft.cargo[i][f]=v;freightChanged();}
 function freightSetOption(k,v){freightDraft.options[k]=v;freightChanged();}
 function freightSetExtra(input){freightDraft.options.extras[input.getAttribute('data-extra')]=input.value;freightChanged();}
@@ -7653,8 +7743,8 @@ function freightRemoveLine(i){
   freightDraft.dirty=true;freightDraft.frozen=false;freightDraft.notice=null;
   freightRenderEditor();
 }
-function freightUseCurrent(){freightDraft.frozen=false;freightDraft.dirty=true;freightRenderResults();}
-function freightKeepSaved(){freightDraft.frozen=true;freightRenderResults();}
+function freightUseCurrent(){freightDraft.frozen=false;freightDraft.dirty=true;freightDropSend();freightRenderResults();}
+function freightKeepSaved(){freightDraft.frozen=true;freightDropSend();freightRenderResults();}
 function freightBack(){
   if(freightDraft&&freightDraft.dirty&&!confirm('Leave without saving your changes?')) return;
   freightDraft=null;
@@ -7680,7 +7770,7 @@ async function freightSave(asNew){
     else res=await sbWrite('freight_consignments?id=eq.'+encodeURIComponent(d.id),{method:'PATCH',body:JSON.stringify(body),prefer:'return=representation'});
     var rows=await res.json();
     if(!rows||!rows.length) throw new Error('Nothing was saved');
-    d.id=rows[0].id;d.name=name;d.status=rows[0].status||'draft';d.saved=result;d.frozen=false;d.notice=null;d.dirty=false;
+    d.id=rows[0].id;d.name=name;d.status=rows[0].status||'draft';d.sent_lines=rows[0].sent_lines||{};d.saved=result;d.frozen=false;d.notice=null;d.dirty=false;d.sendPlan=null;d.sendReport=null;
     var at=freightConsignments.findIndex(function(c){return c.id===rows[0].id;});
     if(at>=0) freightConsignments[at]=rows[0]; else freightConsignments.unshift(rows[0]);
     freightRenderEditor();
@@ -7691,13 +7781,194 @@ async function freightSave(asNew){
 async function freightDelete(){
   var d=freightDraft;
   if(!d||!d.id) return;
-  if(!confirm('Delete "'+(d.name||'this consignment')+'"? This cannot be undone.')) return;
+  if(!confirm('Delete "'+(d.name||'this consignment')+'"? This cannot be undone.'+(d.status==='sent'?'\n\nIts freight lines stay on the quotes, but can no longer be updated from here.':''))) return;
   try{
     await sbWrite('freight_consignments?id=eq.'+encodeURIComponent(d.id),{method:'DELETE'});
     freightDraft=null;
     toast('Consignment deleted');
     renderFreightCalc();
   }catch(e){toast('Could not delete: '+e.message,'error');}
+}
+
+/* ----- Send to quotes -----
+   Staff-facing only up to the quote: the customer sees one freight line, never the charges. */
+function freightGstTickHtml(item,i){
+  return '<label style="font-size:11px;display:inline-flex;align-items:center;gap:3px;margin-right:6px;white-space:nowrap" title="Charge GST on this freight line"><input type="checkbox" style="width:auto"'+(item.gst_applicable?' checked':'')+' onchange="updateLineField('+i+',\'gst\',this.checked)"> GST</label>';
+}
+function freightFromQuote(){
+  if(!currentLead) return;
+  if(freightDraft&&freightDraft.dirty&&!confirm('The Freight tab has unsaved changes. Discard them?')) return;
+  var hit=(currentLineItems||[]).find(function(l){return l.freight_consignment_id;});
+  freightPending=hit?{id:hit.freight_consignment_id}:{lead_id:currentLead.id};
+  freightDraft=null;
+  closeModal('detailOverlay');
+  var tab=Array.prototype.find.call(document.querySelectorAll('.nav-tab'),function(t){return (t.getAttribute('onclick')||'').indexOf("'freight'")>=0;});
+  switchView('freight',tab);
+}
+async function freightJson(path){
+  var r=await sb(path);
+  if(!r.ok) throw new Error('Could not read '+path.split('?')[0]);
+  return r.json();
+}
+async function freightPrepareSend(){
+  var d=freightDraft;
+  if(!d||!d.id||d.carrier==='compare') return;
+  if(d.dirty){toast('Save your changes before sending','error');return;}
+  var result=(d.frozen&&d.saved)?d.saved:freightBuildResult(d),c=result.carriers[0];
+  if(!c){toast('No rates on file for this forwarder','error');return;}
+  if(!c.split.some(function(s){return s.lead_id;})&&!Object.keys(d.sent_lines||{}).length){toast('Add a lead to at least one cargo line first','error');return;}
+  try{
+    var lines=await freightJson('quote_line_items?freight_consignment_id=eq.'+d.id+'&select=*');
+    var leadIds={};
+    c.split.forEach(function(s){if(s.lead_id) leadIds[s.lead_id]=1;});
+    var linkedIds=lines.map(function(l){return l.quote_id;});
+    var linked=linkedIds.length?await freightJson('quotes?id=in.('+linkedIds.join(',')+')&select=*'):[];
+    linked.forEach(function(q){leadIds[q.lead_id]=1;});
+    var ids=Object.keys(leadIds);
+    var quotes=[],goods=[],invoices=[];
+    if(ids.length){
+      var res=await Promise.all([
+        freightJson('quotes?lead_id=in.('+ids.join(',')+')&quote_type=eq.freight&select=*&order=created_at.asc'),
+        freightJson('quotes?lead_id=in.('+ids.join(',')+')&quote_type=neq.freight&select=lead_id,markup_pct&order=created_at.asc')
+      ]);
+      quotes=res[0];goods=res[1];
+      if(quotes.length) invoices=await freightJson('quote_invoices?quote_id=in.('+quotes.map(function(q){return q.id;}).join(',')+')&select=quote_id');
+    }
+    var goodsMarkup={},invoiced={};
+    goods.forEach(function(g){if(Number(g.markup_pct)>0) goodsMarkup[g.lead_id]=Number(g.markup_pct);});
+    invoices.forEach(function(x){invoiced[x.quote_id]=1;});
+    var unassigned=c.split.filter(function(s){return !s.lead_id;}).reduce(function(t,s){return t+s.amount;},0);
+    d.sendPlan={rows:freightPlanSend({carrier:{name:freightCarrierName(c.carrier),unit:c.unit},split:c.split,leads:leads,quotes:quotes,lines:lines,invoiced:invoiced,goodsMarkup:goodsMarkup,sentLines:d.sent_lines}),unassigned:unassigned};
+    d.sendReport=null;
+    freightRenderSend();
+  }catch(e){toast('Could not prepare the send: '+e.message,'error');}
+}
+var FREIGHT_SEND_LABEL={add:'Add line',update:'Update line',create:'New quote + line',remove:'Remove line',same:'No change',blocked:'Not changed'};
+function freightSendGst(r){return r.gst&&r.rate!=null?Math.round(r.rate*10)/100:0;}
+function freightRenderSend(){
+  var d=freightDraft,el=document.getElementById('fc-send');
+  if(!d||!el) return;
+  if(d.sendReport){
+    el.innerHTML='<div style="border:0.5px solid var(--border-s);border-radius:var(--radius-md);padding:12px 14px;margin-bottom:14px"><div style="font-size:13px;font-weight:600;margin-bottom:6px">Send results</div>'
+      +d.sendReport.map(function(x){return '<div style="font-size:12px;padding:2px 0;color:'+(x.ok?'var(--text-primary)':'var(--danger)')+'"><i class="ti ti-'+(x.ok?'check':'alert-circle')+'"></i> '+escHtml(x.text)+'</div>';}).join('')
+      +'<div style="margin-top:8px"><button class="btn btn-sm" onclick="freightDropSend()">Close</button></div></div>';
+    return;
+  }
+  if(!d.sendPlan){el.innerHTML='';return;}
+  var rows=d.sendPlan.rows.map(function(r,i){
+    var quoteNo=r.quote?escHtml(r.quote.quote_number||'')+' <span style="color:var(--text-tertiary)">('+escHtml(r.quote.status||'')+')</span>':'New';
+    var note=(r.reopen?'Goes back to draft'+(r.quote&&r.quote.qb_estimate_id?'; QuickBooks estimate becomes out of date':'')+'. ':'')+(r.note||'');
+    var priced=r.kind!=='blocked'&&r.kind!=='remove';
+    var mk=!priced?'':(r.markupEditable&&r.kind!=='same'?'<input class="form-input" type="number" min="0" step="0.1" style="width:70px;text-align:right;font-size:12px;padding:4px 6px" value="'+(r.markup==null?'':r.markup)+'" oninput="freightSetSendMarkup('+i+',this.value)">':(r.markup==null?'&#8212;':r.markup+'%'));
+    var money=function(v){return v==null?'&#8212;':fmtAud(v);};
+    return '<tr><td style="padding:6px 8px">'+escHtml(r.label||'')+'</td><td style="padding:6px 8px">'+quoteNo+'</td>'
+      +'<td style="padding:6px 8px"><strong>'+FREIGHT_SEND_LABEL[r.kind]+'</strong>'+(note?'<div style="font-size:11px;color:var(--text-secondary)">'+escHtml(note)+'</div>':'')+'</td>'
+      +'<td style="padding:6px 8px;text-align:right">'+(priced?fmtAud(r.cost):'')+'</td>'
+      +'<td style="padding:6px 8px;text-align:right">'+mk+'</td>'
+      +'<td style="padding:6px 8px;text-align:right" id="fc-send-rate-'+i+'">'+(priced?money(r.rate):'')+'</td>'
+      +'<td style="padding:6px 8px;text-align:right" id="fc-send-gst-'+i+'">'+(priced&&r.rate!=null?fmtAud(freightSendGst(r)):'')+'</td>'
+      +'<td style="padding:6px 8px;text-align:right;font-weight:600" id="fc-send-inc-'+i+'">'+(priced&&r.rate!=null?fmtAud(r.rate+freightSendGst(r)):'')+'</td></tr>';
+  }).join('');
+  var canSend=d.sendPlan.rows.some(function(r){return ['add','update','create','remove'].indexOf(r.kind)>=0;});
+  el.innerHTML='<div style="border:0.5px solid var(--accent);border-radius:var(--radius-md);padding:12px 14px;margin-bottom:14px">'
+    +'<div style="font-size:13px;font-weight:600;margin-bottom:8px">Check before sending &#8212; nothing has been changed yet</div>'
+    +(d.sendPlan.unassigned>0?freightWarnHtml([fmtAud(d.sendPlan.unassigned)+' of this consignment has no lead, so it will not go on any quote.']):'')
+    +'<div style="overflow-x:auto"><table class="line-items-table" style="min-width:760px"><thead><tr><th>Lead</th><th>Quote</th><th>What happens</th><th style="text-align:right">Cost ex GST</th><th style="text-align:right">Markup</th><th style="text-align:right">Price ex GST</th><th style="text-align:right">GST</th><th style="text-align:right">Customer pays</th></tr></thead><tbody>'+rows+'</tbody></table></div>'
+    +'<div style="display:flex;gap:8px">'+(canSend?'<button class="btn btn-primary btn-sm" onclick="freightConfirmSend()"><i class="ti ti-send"></i> Confirm</button>':'')
+    +'<button class="btn btn-sm" onclick="freightDropSend()">Cancel</button></div></div>';
+}
+function freightSetSendMarkup(i,v){
+  var r=freightDraft.sendPlan.rows[i];
+  r.markup=v===''?null:freightNum(v);
+  r.rate=r.manual?r.rate:(r.markup==null?null:freightSellRate(r.cost,r.markup));
+  var set=function(id,t){var e=document.getElementById(id);if(e) e.textContent=t;};
+  var gst=freightSendGst(r);
+  set('fc-send-rate-'+i,r.rate==null?'—':fmtAud(r.rate));
+  set('fc-send-gst-'+i,r.rate==null?'':fmtAud(gst));
+  set('fc-send-inc-'+i,r.rate==null?'':fmtAud(r.rate+gst));
+}
+async function freightApplyRow(r,consignmentId){
+  var q=r.quote;
+  if(q){
+    /* Read again right before writing: invoiced quotes must never be touched. */
+    var fresh=await freightJson('quotes?id=eq.'+q.id+'&select=status,qb_invoice_id');
+    var inv=await freightJson('quote_invoices?quote_id=eq.'+q.id+'&select=quote_id&limit=1');
+    if(!fresh.length) throw new Error('quote no longer exists');
+    if(freightQuoteLocked(fresh[0],inv.length?(function(){var o={};o[q.id]=1;return o;})():{})) throw new Error('quote has been invoiced since this was prepared, so it was not changed');
+  }else{
+    var made=await sbWrite('quotes',{method:'POST',prefer:'return=representation',body:JSON.stringify({lead_id:r.lead_id,quote_number:newQuoteNumber('freight'),quote_type:'freight',status:'draft',client_name:r.lead.company||r.lead.name,client_address:'',subtotal:0,gst_total:0,total:0,markup_pct:Number(r.markup)||0})});
+    var mr=await made.json();
+    if(!mr.length) throw new Error('quote was not created');
+    q=mr[0];
+  }
+  var lineId=r.line?r.line.id:null;
+  if(r.kind==='remove'){
+    var del=await sbWrite('quote_line_items?id=eq.'+lineId,{method:'DELETE',prefer:'return=representation'});
+    if(!(await del.json()).length) throw new Error('quote was edited meanwhile, so prepare the send again');
+  }else if(r.kind==='update'){
+    var patch={item_name:r.item_name,quantity:1,cost:r.cost};
+    patch.rate=r.rate;patch.amount=r.rate;
+    var up=await sbWrite('quote_line_items?id=eq.'+lineId,{method:'PATCH',prefer:'return=representation',body:JSON.stringify(patch)});
+    if(!(await up.json()).length) throw new Error('quote was edited meanwhile, so prepare the send again');
+  }else{
+    var existing=await freightJson('quote_line_items?quote_id=eq.'+q.id+'&select=sort_order&order=sort_order.desc&limit=1');
+    var add=await sbWrite('quote_line_items',{method:'POST',prefer:'return=representation',body:JSON.stringify({quote_id:q.id,item_name:r.item_name,description:'',quantity:1,cost:r.cost,rate:r.rate,amount:r.rate,gst_applicable:true,manual:false,sort_order:existing.length?(Number(existing[0].sort_order)||0)+1:0,freight_consignment_id:consignmentId})});
+    var ar=await add.json();
+    if(!ar.length) throw new Error('line was not added');
+    lineId=ar[0].id;
+  }
+  /* Same totals rule as saveQuoteChanges. */
+  var all=await freightJson('quote_line_items?quote_id=eq.'+q.id+'&select=quantity,rate,gst_applicable');
+  var sub=0,gst=0;
+  all.forEach(function(it){var a=(Number(it.quantity)||1)*(Number(it.rate)||0);sub+=a;if(it.gst_applicable) gst+=a*0.1;});
+  var qp={subtotal:round2(sub),gst_total:round2(gst),total:round2(sub+gst),updated_at:new Date().toISOString()};
+  if(r.markupEditable&&r.markup!=null) qp.markup_pct=r.markup;
+  if(r.reopen){qp.status='draft';if(q.qb_estimate_id) qp.qb_estimate_stale=true;}
+  await sbWrite('quotes?id=eq.'+q.id,{method:'PATCH',body:JSON.stringify(qp)});
+  await sb('activity_log',{method:'POST',body:JSON.stringify({lead_id:q.lead_id||r.lead_id,action:'Freight quote updated',detail:q.quote_number+': '+FREIGHT_SEND_LABEL[r.kind].toLowerCase()+' from the Freight tab, total now '+fmtAud(qp.total)+(r.reopen?' (back to draft)':'')})});
+  return {quote_id:q.id,quote_number:q.quote_number,line_id:lineId};
+}
+async function freightConfirmSend(){
+  var d=freightDraft;
+  if(!d||!d.sendPlan||freightSending) return;
+  var todo=d.sendPlan.rows.filter(function(r){return ['add','update','create','remove'].indexOf(r.kind)>=0;});
+  var unpriced=todo.filter(function(r){return r.kind!=='remove'&&r.rate==null;});
+  if(unpriced.length){toast('Enter a markup for '+unpriced[0].label,'error');return;}
+  var warn=[];
+  todo.forEach(function(r){
+    if(r.kind==='remove') warn.push('Remove the freight line from '+(r.quote.quote_number||'the quote')+' ('+r.label+').');
+    if(r.reopen) warn.push('Move '+r.quote.quote_number+' back to draft'+(r.quote.qb_estimate_id?' and mark its QuickBooks estimate out of date':'')+' ('+r.label+').');
+  });
+  if(warn.length&&!confirm('This will:\n\n'+warn.join('\n')+'\n\nContinue?')) return;
+  freightSending=true;
+  var report=[],failed=0,sent=Object.assign({},d.sent_lines||{});
+  d.sendPlan.rows.forEach(function(r){
+    if(r.kind==='blocked') report.push({ok:false,text:r.label+': '+r.note});
+    if(r.kind==='same'){report.push({ok:true,text:r.label+': already up to date'});if(r.quote) sent[r.lead_id]={quote_id:r.quote.id,quote_number:r.quote.quote_number,line_id:r.line.id};}
+  });
+  for(var i=0;i<todo.length;i++){
+    var r=todo[i];
+    try{
+      var out=await freightApplyRow(r,d.id);
+      if(r.kind==='remove') delete sent[r.lead_id]; else sent[r.lead_id]=out;
+      report.push({ok:true,text:r.label+': '+FREIGHT_SEND_LABEL[r.kind].toLowerCase()+' on '+out.quote_number});
+    }catch(e){failed++;report.push({ok:false,text:r.label+': '+e.message});}
+  }
+  try{
+    var body={sent_lines:sent,updated_at:new Date().toISOString()};
+    if(!failed) body.status='sent';
+    var res=await sbWrite('freight_consignments?id=eq.'+d.id,{method:'PATCH',prefer:'return=representation',body:JSON.stringify(body)});
+    var rows=await res.json();
+    d.sent_lines=sent;
+    if(!failed) d.status='sent';
+    var at=freightConsignments.findIndex(function(c){return c.id===d.id;});
+    if(at>=0&&rows.length) freightConsignments[at]=rows[0];
+  }catch(e){failed++;report.push({ok:false,text:'The consignment record could not be updated: '+e.message+'. Prepare the send again to check.'});}
+  freightSending=false;
+  d.sendPlan=null;d.sendReport=report;
+  freightRenderEditor();
+  toast(failed?'Some quotes could not be updated':'Sent to quotes',failed?'error':undefined);
+  loadLeads();
 }
 </script>
 </body>

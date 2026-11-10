@@ -5213,6 +5213,18 @@ async function createPartialInvoice(){
       await sbWrite('quotes?id=eq.'+currentQuote.id,{method:'PATCH',body:JSON.stringify({qb_invoice_id:String(data.invoice_id)})});
       currentQuote.qb_invoice_id=String(data.invoice_id);
     }
+    /* The full-invoice path writes the lead's status as well as the quote's; a staged
+       invoice must do the same. Without this the lead detail keeps reading "Sent" while
+       real money has been invoiced — the board card was right only because it reads the
+       quote row. Wrapped so it can never report a failure: by this point the invoice
+       already exists in QuickBooks. */
+    if(currentLead&&currentLead.quote_status!=='invoiced'){
+      try{
+        await sbWrite('leads?id=eq.'+currentLead.id,{method:'PATCH',body:JSON.stringify({quote_status:'invoiced',updated_at:new Date().toISOString()})});
+        currentLead.quote_status='invoiced';
+        leads.forEach(function(l,i){if(l.id===currentLead.id)leads[i].quote_status='invoiced';});
+      }catch(le){console.warn('Lead quote status not updated:',le);}
+    }
     await applyLeadInvoiceTotal();
     /* Keep the per-invoice report data current for a BOQ project. */
     if(ledgerLeads[currentLead.id]) loadInvoiceLedger();
